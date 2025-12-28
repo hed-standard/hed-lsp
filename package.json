@@ -1,0 +1,30 @@
+{
+	"name": "hed-lsp",
+	"description": "Language Server Protocol implementation for HED (Hierarchical Event Descriptors)",
+	"author": "HED Working Group",
+	"license": "MIT",
+	"version": "0.1.0",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/hed-standard/hed-lsp"
+	},
+	"publisher": "hed-standard",
+	"workspaces": [
+		"client",
+		"server"
+	],
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -b",
+		"watch": "tsc -b -w",
+		"lint": "eslint",
+		"postinstall": "cd client && npm install && cd ../server && npm install && cd .."
+	},
+	"devDependencies": {
+		"@eslint/js": "^9.13.0",
+		"@types/node": "^22",
+		"eslint": "^9.13.0",
+		"typescript": "^5.7.2",
+		"typescript-eslint": "^8.39.0"
+	}
+}
