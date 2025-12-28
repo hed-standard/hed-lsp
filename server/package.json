@@ -1,0 +1,19 @@
+{
+	"name": "hed-lsp-server",
+	"description": "HED Language Server",
+	"version": "0.1.0",
+	"license": "MIT",
+	"main": "./out/server.js",
+	"scripts": {
+		"compile": "tsc -b",
+		"watch": "tsc -b -w"
+	},
+	"dependencies": {
+		"hed-validator": "^4.1.4",
+		"vscode-languageserver": "^9.0.1",
+		"vscode-languageserver-textdocument": "^1.0.11"
+	},
+	"devDependencies": {
+		"@types/node": "^22"
+	}
+}
