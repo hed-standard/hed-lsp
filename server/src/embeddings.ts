@@ -67,6 +67,104 @@ const DEFAULT_CONFIG: EmbeddingConfig = {
 };
 
 /**
+ * Keyword index for direct semantic mappings.
+ * Maps search terms to HED tags that should be suggested.
+ * This bypasses the embedding model for known relationships.
+ */
+const KEYWORD_INDEX: Record<string, string[]> = {
+	// Animals → Animal, Animal-agent
+	'dog': ['Animal', 'Animal-agent'],
+	'cat': ['Animal', 'Animal-agent'],
+	'horse': ['Animal', 'Animal-agent'],
+	'bird': ['Animal', 'Animal-agent'],
+	'mouse': ['Animal', 'Animal-agent', 'Computer-mouse'],
+	'monkey': ['Animal', 'Animal-agent'],
+	'fish': ['Animal', 'Animal-agent'],
+	'snake': ['Animal', 'Animal-agent'],
+	'rat': ['Animal', 'Animal-agent'],
+	'pig': ['Animal', 'Animal-agent'],
+	'cow': ['Animal', 'Animal-agent'],
+	'sheep': ['Animal', 'Animal-agent'],
+	'goat': ['Animal', 'Animal-agent'],
+	'deer': ['Animal', 'Animal-agent'],
+	'rabbit': ['Animal', 'Animal-agent'],
+	'squirrel': ['Animal', 'Animal-agent'],
+	'marmoset': ['Animal', 'Animal-agent'],
+	'primate': ['Animal', 'Animal-agent'],
+	'mammal': ['Animal', 'Animal-agent'],
+	'creature': ['Animal', 'Animal-agent', 'Organism'],
+	'beast': ['Animal', 'Animal-agent'],
+	'pet': ['Animal', 'Animal-agent'],
+
+	// People → Human, Human-agent
+	'person': ['Human', 'Human-agent'],
+	'people': ['Human', 'Human-agent'],
+	'man': ['Human', 'Human-agent'],
+	'woman': ['Human', 'Human-agent'],
+	'child': ['Human', 'Human-agent'],
+	'adult': ['Human', 'Human-agent'],
+	'human': ['Human', 'Human-agent'],
+
+	// Buildings → Building
+	'house': ['Building'],
+	'home': ['Building'],
+	'office': ['Building'],
+	'school': ['Building'],
+	'hospital': ['Building'],
+	'church': ['Building'],
+	'store': ['Building'],
+	'shop': ['Building'],
+	'factory': ['Building'],
+	'warehouse': ['Building'],
+	'residence': ['Building'],
+	'apartment': ['Building'],
+
+	// Vehicles → Vehicle
+	'car': ['Vehicle'],
+	'truck': ['Vehicle'],
+	'bus': ['Vehicle'],
+	'train': ['Vehicle'],
+	'plane': ['Vehicle'],
+	'boat': ['Vehicle'],
+	'ship': ['Vehicle'],
+	'motorcycle': ['Vehicle'],
+	'bicycle': ['Vehicle'],
+	'bike': ['Vehicle'],
+
+	// Food/Drink
+	'food': ['Food'],
+	'meal': ['Food'],
+	'eat': ['Food'],
+	'eating': ['Food'],
+	'drink': ['Drink'],
+	'beverage': ['Drink'],
+	'juice': ['Drink', 'Food'],
+	'water': ['Drink'],
+	'coffee': ['Drink'],
+	'tea': ['Drink'],
+
+	// Plants
+	'tree': ['Plant'],
+	'flower': ['Plant'],
+	'grass': ['Plant'],
+	'plant': ['Plant'],
+	'vegetation': ['Plant'],
+
+	// Furniture
+	'chair': ['Furniture'],
+	'table': ['Furniture'],
+	'desk': ['Furniture'],
+	'bed': ['Furniture'],
+	'sofa': ['Furniture'],
+	'couch': ['Furniture'],
+
+	// Sounds
+	'music': ['Musical-sound', 'Sound'],
+	'noise': ['Sound', 'Environmental-sound'],
+	'audio': ['Sound'],
+};
+
+/**
  * Embeddings Manager for semantic search using Qwen3-Embedding.
  */
 class EmbeddingsManager {
@@ -244,7 +342,38 @@ class EmbeddingsManager {
 	}
 
 	/**
+	 * Find tags matching a keyword from the index.
+	 * Returns tags with boosted similarity (0.95) for keyword matches.
+	 */
+	findByKeyword(query: string): SemanticMatch[] {
+		const normalizedQuery = query.toLowerCase().trim();
+		const matchingTags = KEYWORD_INDEX[normalizedQuery];
+
+		if (!matchingTags) {
+			return [];
+		}
+
+		const results: SemanticMatch[] = [];
+		for (const tagName of matchingTags) {
+			// Find the tag in our embeddings to get full info
+			const key = tagName.toLowerCase();
+			const entry = this.embeddings.get(key);
+			if (entry) {
+				results.push({
+					tag: entry.tag,
+					longForm: entry.longForm,
+					prefix: entry.prefix,
+					similarity: 0.95 // High similarity for keyword matches
+				});
+			}
+		}
+
+		return results;
+	}
+
+	/**
 	 * Find semantically similar tags to a query.
+	 * First checks keyword index, then falls back to embedding search.
 	 */
 	async findSimilar(query: string, topK: number = 10): Promise<SemanticMatch[]> {
 		// Try to load pre-computed embeddings first
@@ -255,18 +384,26 @@ class EmbeddingsManager {
 			return [];
 		}
 
-		// Generate query embedding (lowercase for case-insensitive matching)
+		// First, check keyword index for direct matches
+		const keywordMatches = this.findByKeyword(query);
+		const keywordTagNames = new Set(keywordMatches.map(m => m.tag));
+
+		// Generate query embedding for semantic search (lowercase)
 		const queryEmbedding = await this.embed(query.toLowerCase());
 		if (!queryEmbedding) {
-			return [];
+			// Return keyword matches if embedding fails
+			return keywordMatches.slice(0, topK);
 		}
 
-		// Compute similarities
-		const results: SemanticMatch[] = [];
+		// Compute similarities for embedding-based search
+		const embeddingResults: SemanticMatch[] = [];
 
 		for (const [_key, entry] of this.embeddings) {
+			// Skip tags already matched by keyword
+			if (keywordTagNames.has(entry.tag)) continue;
+
 			const similarity = this.cosineSimilarity(queryEmbedding, entry.vector);
-			results.push({
+			embeddingResults.push({
 				tag: entry.tag,
 				longForm: entry.longForm,
 				prefix: entry.prefix,
@@ -274,9 +411,12 @@ class EmbeddingsManager {
 			});
 		}
 
-		// Sort by similarity and return top K
-		results.sort((a, b) => b.similarity - a.similarity);
-		return results.slice(0, topK);
+		// Sort embedding results by similarity
+		embeddingResults.sort((a, b) => b.similarity - a.similarity);
+
+		// Combine: keyword matches first, then top embedding results
+		const combined = [...keywordMatches, ...embeddingResults];
+		return combined.slice(0, topK);
 	}
 
 	/**

@@ -17,6 +17,60 @@ const DTYPE = 'q8';
 const BATCH_SIZE = 32;
 const OUTPUT_PATH = path.join(__dirname, '..', 'data', 'tag-embeddings.json');
 
+/**
+ * Semantic enrichment for category tags.
+ * Adds common examples/synonyms so users can find them with natural terms.
+ * Key format: tag short name (case-sensitive)
+ */
+const SEMANTIC_ENRICHMENT: Record<string, string> = {
+	// Living things
+	'Animal': 'animal dog cat horse bird mouse monkey fish snake lizard frog rat pig cow sheep goat deer rabbit squirrel marmoset primate mammal',
+	'Animal-agent': 'animal agent creature beast dog cat horse bird mouse monkey',
+	'Human-agent': 'human person people man woman child adult',
+	'Human': 'human person people body',
+	'Plant': 'plant tree flower grass bush shrub vegetation flora',
+	'Organism': 'organism living creature being life',
+
+	// Structures
+	'Building': 'building house home office school hospital church store shop factory warehouse residence apartment',
+	'Building-part': 'building part room wall floor ceiling door window roof',
+	'Room': 'room bedroom bathroom kitchen living office',
+
+	// Objects
+	'Device': 'device machine equipment apparatus tool gadget',
+	'Computer-mouse': 'computer mouse pointer cursor click',
+	'Furniture': 'furniture chair table desk bed sofa couch shelf',
+	'Vehicle': 'vehicle car truck bus train plane boat ship motorcycle bicycle',
+	'Clothing': 'clothing clothes shirt pants dress shoes hat coat jacket',
+	'Tool': 'tool hammer screwdriver wrench pliers saw drill',
+
+	// Food and drink
+	'Food': 'food meal dish cuisine eat eating edible snack',
+	'Drink': 'drink beverage liquid water juice soda coffee tea',
+	'Fruit': 'fruit apple orange banana grape berry melon',
+	'Vegetable': 'vegetable carrot potato tomato lettuce onion',
+
+	// Sounds
+	'Sound': 'sound audio noise tone voice music',
+	'Musical-sound': 'musical sound music melody rhythm beat tune song',
+	'Environmental-sound': 'environmental sound ambient background noise',
+
+	// Actions
+	'Move': 'move motion movement walk run jump',
+	'Communicate': 'communicate talk speak say tell conversation',
+	'Think': 'think thought mental cognitive brain mind',
+	'Perceive': 'perceive sense feel detect notice observe',
+
+	// Properties
+	'Color': 'color colour hue shade tint',
+	'Size': 'size dimension measure big small large tiny huge',
+	'Shape': 'shape form figure outline contour',
+
+	// Events
+	'Event': 'event occurrence happening incident',
+	'Sensory-event': 'sensory event stimulus perception',
+};
+
 interface TagInfo {
 	tag: string;
 	longForm: string;
@@ -88,9 +142,15 @@ async function getAllTags(): Promise<TagInfo[]> {
 }
 
 function createEmbeddingText(tag: TagInfo): string {
-	// Use only the tag short form, expanded and lowercased
-	// e.g., "Animal-agent" → "animal agent", "Computer-mouse" → "computer mouse"
-	// Hierarchy was diluting semantic signal, so we keep it simple
+	// Check if this tag has semantic enrichment
+	const enrichment = SEMANTIC_ENRICHMENT[tag.tag];
+	if (enrichment) {
+		// Use enriched text for category tags
+		return enrichment.toLowerCase();
+	}
+
+	// Default: use tag short form, expanded and lowercased
+	// e.g., "Banana" → "banana", "Line-noise" → "line noise"
 	return tag.tag
 		.replace(/([a-z])([A-Z])/g, '$1 $2')
 		.replace(/-/g, ' ')
