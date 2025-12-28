@@ -113,7 +113,7 @@ const internalCodeToHedCode: Record<string, string> = {
  * Extracts position information from various parameter formats.
  */
 function convertIssue(issue: any, hedString: string): ValidationIssue {
-	// Parse parameters if it's a string
+	// Parse parameters if it's a string (may be nested)
 	let params = issue.parameters || {};
 	if (typeof params === 'string') {
 		try {
@@ -122,18 +122,39 @@ function convertIssue(issue: any, hedString: string): ValidationIssue {
 			params = {};
 		}
 	}
+	// Handle nested parameters string
+	if (params.parameters && typeof params.parameters === 'string') {
+		try {
+			const nestedParams = JSON.parse(params.parameters.replace('Issue parameters: ', ''));
+			params = { ...params, ...nestedParams };
+		} catch {
+			// Ignore nested parsing errors
+		}
+	}
 
 	// Get HED code - if it's a generic error, try to use the internal code instead
 	let hedCode = issue.hedCode || issue.code;
-	const internalCode = issue.internalCode || params.internalCode;
+
+	// Try multiple sources for internal code
+	let internalCode = issue.internalCode || params.internalCode;
+
+	// If still no internal code, try to extract from message
+	if (!internalCode && issue.message) {
+		const match = issue.message.match(/"internalCode"\s*:\s*"([^"]+)"/);
+		if (match) {
+			internalCode = match[1];
+		}
+	}
 
 	// Generic error codes that should be remapped using internal code
 	const genericCodes = ['INTERNAL_ERROR', 'GENERICERROR', 'GENERIC_ERROR', 'UNKNOWN'];
 
 	// If hedCode is generic or missing, try to map from internal code
 	if (!hedCode || genericCodes.includes(hedCode)) {
-		if (internalCode) {
-			hedCode = internalCodeToHedCode[internalCode] || internalCode.toUpperCase();
+		if (internalCode && internalCodeToHedCode[internalCode]) {
+			hedCode = internalCodeToHedCode[internalCode];
+		} else if (internalCode) {
+			hedCode = internalCode.toUpperCase();
 		}
 	}
 	hedCode = hedCode || 'UNKNOWN';
