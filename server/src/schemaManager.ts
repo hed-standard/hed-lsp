@@ -352,6 +352,98 @@ export class SchemaManager {
 	}
 
 	/**
+	 * Search for tags containing a substring anywhere in the name.
+	 * Returns matches sorted by relevance (prefix matches first, then contains).
+	 */
+	async searchTagsContaining(query: string, version?: string): Promise<HedTag[]> {
+		const schemas = await this.getSchema(version);
+		const prefixMatches: HedTag[] = [];
+		const containsMatches: HedTag[] = [];
+		const lowerQuery = query.toLowerCase();
+
+		for (const { schema, prefix } of this.getAllSchemaObjects(schemas)) {
+			if (schema?.entries?.tags) {
+				for (const [_key, entry] of schema.entries.tags) {
+					const tagName = entry.name || '';
+					const lowerName = tagName.toLowerCase();
+
+					if (lowerName.startsWith(lowerQuery)) {
+						const tag = this.schemaEntryToHedTag(entry, prefix);
+						if (tag) prefixMatches.push(tag);
+					} else if (lowerName.includes(lowerQuery)) {
+						const tag = this.schemaEntryToHedTag(entry, prefix);
+						if (tag) containsMatches.push(tag);
+					}
+				}
+			}
+		}
+
+		// Return prefix matches first, then contains matches
+		return [...prefixMatches, ...containsMatches];
+	}
+
+	/**
+	 * Get all tags from all schemas.
+	 */
+	async getAllTags(version?: string): Promise<HedTag[]> {
+		const schemas = await this.getSchema(version);
+		const tags: HedTag[] = [];
+
+		for (const { schema, prefix } of this.getAllSchemaObjects(schemas)) {
+			if (schema?.entries?.tags) {
+				for (const [_key, entry] of schema.entries.tags) {
+					const tag = this.schemaEntryToHedTag(entry, prefix);
+					if (tag) tags.push(tag);
+				}
+			}
+		}
+
+		return tags;
+	}
+
+	/**
+	 * Find tags that allow extension and could be parent for a given term.
+	 * Uses fuzzy matching on tag names and descriptions.
+	 */
+	async findExtensibleParents(term: string, version?: string): Promise<HedTag[]> {
+		const schemas = await this.getSchema(version);
+		const matches: HedTag[] = [];
+		const lowerTerm = term.toLowerCase();
+		const termWords = lowerTerm.split(/[-_\s]+/);
+
+		for (const { schema, prefix } of this.getAllSchemaObjects(schemas)) {
+			if (schema?.entries?.tags) {
+				for (const [_key, entry] of schema.entries.tags) {
+					// Only consider tags that allow extension
+					if (!entry.hasBooleanAttribute?.('extensionAllowed')) continue;
+
+					const tagName = (entry.name || '').toLowerCase();
+					const description = (entry.valueAttributeNames?.get?.('description') || '').toLowerCase();
+
+					// Check if term or its parts appear in tag name or description
+					let score = 0;
+					for (const word of termWords) {
+						if (tagName.includes(word)) score += 3;
+						if (description.includes(word)) score += 1;
+					}
+
+					if (score > 0) {
+						const tag = this.schemaEntryToHedTag(entry, prefix);
+						if (tag) {
+							(tag as any).matchScore = score;
+							matches.push(tag);
+						}
+					}
+				}
+			}
+		}
+
+		// Sort by match score (highest first)
+		matches.sort((a, b) => ((b as any).matchScore || 0) - ((a as any).matchScore || 0));
+		return matches.slice(0, 10); // Limit to top 10
+	}
+
+	/**
 	 * Convert a schema entry to our HedTag type.
 	 * @param entry The schema entry
 	 * @param prefix Library schema prefix (e.g., "sc:" for SCORE) or empty for standard

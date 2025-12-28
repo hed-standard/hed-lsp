@@ -31,6 +31,98 @@ function getRegionAtPosition(document: TextDocument, position: Position): HedReg
 export const completionTriggerCharacters = ['/', ',', '(', ' '];
 
 /**
+ * Semantic word mappings: common terms to their HED equivalents.
+ * Maps words that users might type to similar HED tags.
+ */
+const SEMANTIC_MAPPINGS: Record<string, string[]> = {
+	// Buildings and places
+	'house': ['Building', 'Residence', 'Structure'],
+	'home': ['Building', 'Residence'],
+	'room': ['Room', 'Indoor-place'],
+	'office': ['Building', 'Workplace'],
+	'school': ['Building', 'Educational-institution'],
+	'hospital': ['Building', 'Medical-facility'],
+
+	// People
+	'person': ['Human', 'Agent', 'Human-agent'],
+	'man': ['Human', 'Male', 'Adult'],
+	'woman': ['Human', 'Female', 'Adult'],
+	'child': ['Human', 'Youth'],
+	'doctor': ['Human', 'Medical-practitioner'],
+
+	// Actions
+	'walk': ['Walk', 'Ambulate', 'Move'],
+	'run': ['Run', 'Move-quickly'],
+	'speak': ['Speak', 'Vocalize', 'Communicate'],
+	'talk': ['Speak', 'Vocalize'],
+	'look': ['Fixate', 'Attend-to', 'View'],
+	'see': ['View', 'Perceive', 'Detect'],
+	'hear': ['Hear', 'Listen', 'Perceive'],
+	'touch': ['Touch', 'Feel', 'Tactile-action'],
+	'grab': ['Grasp', 'Reach', 'Move-hand'],
+	'hold': ['Grasp', 'Hold'],
+	'push': ['Push', 'Press', 'Move'],
+	'pull': ['Pull', 'Move'],
+	'click': ['Press', 'Click', 'Mouse-button-press'],
+	'press': ['Press', 'Push'],
+	'type': ['Keyboard-key-press', 'Type'],
+
+	// Sensory
+	'sound': ['Sound', 'Auditory-presentation', 'Noise'],
+	'noise': ['Noise', 'Sound', 'Signal-noise'],
+	'music': ['Music', 'Sound', 'Auditory-presentation'],
+	'light': ['Light', 'Illumination', 'Visual-presentation'],
+	'color': ['Color', 'Hue'],
+	'image': ['Image', 'Picture', 'Visual-presentation'],
+	'picture': ['Image', 'Picture', 'Photograph'],
+	'video': ['Video', 'Movie', 'Motion-picture'],
+	'movie': ['Movie', 'Video', 'Motion-picture'],
+
+	// Shapes
+	'square': ['Square', 'Rectangle', '2D-shape'],
+	'triangle': ['Triangle', '2D-shape'],
+	'circle': ['Circle', 'Ellipse', '2D-shape'],
+	'rectangle': ['Rectangle', '2D-shape'],
+
+	// Time
+	'start': ['Onset', 'Start', 'Beginning'],
+	'end': ['Offset', 'End', 'Termination'],
+	'begin': ['Onset', 'Start', 'Beginning'],
+	'stop': ['Offset', 'Stop', 'Termination'],
+	'pause': ['Pause', 'Break'],
+	'wait': ['Delay', 'Wait', 'Pause'],
+
+	// Experiment
+	'trial': ['Trial', 'Experimental-trial'],
+	'block': ['Block', 'Experimental-block'],
+	'stimulus': ['Stimulus', 'Experimental-stimulus', 'Sensory-event'],
+	'response': ['Response', 'Participant-response'],
+	'feedback': ['Feedback', 'Informational-stimulus'],
+	'cue': ['Cue', 'Warning', 'Signal'],
+	'target': ['Target', 'Goal'],
+	'distractor': ['Distractor', 'Non-target'],
+
+	// Equipment
+	'button': ['Button', 'Response-button', 'Mouse-button'],
+	'keyboard': ['Keyboard', 'Keyboard-key'],
+	'mouse': ['Mouse', 'Computer-mouse'],
+	'screen': ['Screen', 'Computer-screen', 'Display'],
+	'monitor': ['Screen', 'Computer-screen', 'Display'],
+	'speaker': ['Speaker', 'Loudspeaker', 'Audio-device'],
+	'headphone': ['Headphones', 'Audio-device'],
+
+	// Body parts
+	'eye': ['Eye', 'Eyes'],
+	'hand': ['Hand', 'Hands'],
+	'finger': ['Finger', 'Fingers'],
+	'face': ['Face', 'Head'],
+	'head': ['Head'],
+	'arm': ['Arm', 'Upper-extremity'],
+	'leg': ['Leg', 'Lower-extremity'],
+	'foot': ['Foot', 'Feet'],
+};
+
+/**
  * Provide completion items for a position in a document.
  */
 export async function provideCompletions(
@@ -183,9 +275,42 @@ async function getCompletionsForContext(context: CompletionContext): Promise<Com
 
 		case 'partial':
 			if (context.prefix) {
-				const matchingTags = await schemaManager.searchTags(context.prefix);
-				for (const tag of matchingTags) {
-					items.push(createCompletionItem(tag, false));
+				// Use enhanced search that finds tags containing the query anywhere
+				const matchingTags = await schemaManager.searchTagsContaining(context.prefix);
+
+				if (matchingTags.length > 0) {
+					// Add exact and partial matches
+					for (const tag of matchingTags) {
+						items.push(createCompletionItem(tag, false));
+					}
+				}
+
+				// Check for semantic mappings if few matches
+				const lowerPrefix = context.prefix.toLowerCase();
+				if (matchingTags.length < 3 && SEMANTIC_MAPPINGS[lowerPrefix]) {
+					const semanticSuggestions = SEMANTIC_MAPPINGS[lowerPrefix];
+					for (const suggestion of semanticSuggestions) {
+						const tag = await schemaManager.findTag(suggestion);
+						if (tag && !items.some(item => item.label === tag.shortForm)) {
+							items.push(createSemanticSuggestion(tag, context.prefix));
+						}
+					}
+				}
+
+				// If few or no matches, suggest extensible parent tags
+				if (matchingTags.length < 5) {
+					const extensibleParents = await schemaManager.findExtensibleParents(context.prefix);
+					for (const parent of extensibleParents) {
+						// Don't add if already in items
+						if (!items.some(item => item.label === parent.shortForm)) {
+							items.push(createExtensionSuggestion(parent, context.prefix));
+						}
+					}
+				}
+
+				// If still no matches, add a hint about the unknown term
+				if (items.length === 0) {
+					items.push(createNoMatchHint(context.prefix));
 				}
 			}
 			break;
@@ -275,10 +400,123 @@ function formatTagDocumentation(tag: HedTag): string {
  * Get sort text for ordering completions.
  * Lower values appear first.
  */
-function getSortText(tag: HedTag): string {
-	// Prioritize commonly used tags
-	// This could be enhanced with usage statistics
-	return tag.shortForm.toLowerCase();
+function getSortText(tag: HedTag, priority: number = 2): string {
+	// Priority: 1 = exact match, 2 = normal, 3 = extension suggestion
+	return `${priority}-${tag.shortForm.toLowerCase()}`;
+}
+
+/**
+ * Create a completion item for a semantic suggestion.
+ */
+function createSemanticSuggestion(tag: HedTag, searchTerm: string): CompletionItem {
+	const item: CompletionItem = {
+		label: tag.shortForm,
+		kind: CompletionItemKind.Reference,
+		detail: `Similar to "${searchTerm}"`,
+		documentation: formatSemanticDocumentation(tag, searchTerm),
+		insertText: tag.shortForm,
+		insertTextFormat: InsertTextFormat.PlainText,
+		sortText: getSortText(tag, 1), // High priority for semantic matches
+		labelDetails: {
+			description: `(for "${searchTerm}")`
+		}
+	};
+
+	return item;
+}
+
+/**
+ * Format documentation for a semantic suggestion.
+ */
+function formatSemanticDocumentation(tag: HedTag, searchTerm: string): string {
+	const lines: string[] = [];
+
+	lines.push(`**Did you mean \`${tag.shortForm}\`?**`);
+	lines.push('');
+	lines.push(`The term "${searchTerm}" is not in HED, but \`${tag.shortForm}\` is similar.`);
+	lines.push('');
+
+	if (tag.description) {
+		lines.push(tag.description);
+		lines.push('');
+	}
+
+	lines.push(`**Path:** ${tag.longForm}`);
+
+	if (tag.attributes.extensionAllowed) {
+		lines.push('');
+		lines.push(`**Tip:** You can extend this tag: \`${tag.shortForm}/${searchTerm}\``);
+	}
+
+	return lines.join('\n');
+}
+
+/**
+ * Create a completion item suggesting to extend a parent tag.
+ */
+function createExtensionSuggestion(parent: HedTag, searchTerm: string): CompletionItem {
+	// Format the extension: Parent/SearchTerm
+	const extensionName = searchTerm.charAt(0).toUpperCase() + searchTerm.slice(1).toLowerCase();
+	const insertText = `${parent.shortForm}/${extensionName}`;
+
+	return {
+		label: `${parent.shortForm}/${extensionName}`,
+		kind: CompletionItemKind.Snippet,
+		detail: `Extend ${parent.shortForm} with "${extensionName}"`,
+		documentation: formatExtensionDocumentation(parent, searchTerm),
+		insertText,
+		insertTextFormat: InsertTextFormat.PlainText,
+		sortText: getSortText(parent, 3),
+		labelDetails: {
+			description: '(extension)'
+		}
+	};
+}
+
+/**
+ * Format documentation for an extension suggestion.
+ */
+function formatExtensionDocumentation(parent: HedTag, searchTerm: string): string {
+	const lines: string[] = [];
+
+	lines.push(`**"${searchTerm}" is not in the HED schema**`);
+	lines.push('');
+	lines.push(`Consider extending \`${parent.shortForm}\` to create \`${parent.shortForm}/${searchTerm}\``);
+	lines.push('');
+
+	if (parent.description) {
+		lines.push(`**${parent.shortForm}:** ${parent.description}`);
+		lines.push('');
+	}
+
+	lines.push(`**Path:** ${parent.longForm}`);
+	lines.push('');
+	lines.push('**Note:** Extensions should maintain the is-a relationship with the parent tag.');
+
+	return lines.join('\n');
+}
+
+/**
+ * Create a hint when no matching tags are found.
+ */
+function createNoMatchHint(searchTerm: string): CompletionItem {
+	return {
+		label: `"${searchTerm}" - not found`,
+		kind: CompletionItemKind.Text,
+		detail: 'No matching HED tags found',
+		documentation: [
+			`**"${searchTerm}" is not in the HED schema**`,
+			'',
+			'Suggestions:',
+			'- Check for typos in the tag name',
+			'- Browse the HED schema for similar tags',
+			'- If needed, extend an existing tag using Parent/Extension syntax',
+			'',
+			'**Tip:** Use a more general term to find related tags.'
+		].join('\n'),
+		insertText: '',
+		sortText: '9-not-found'
+	};
 }
 
 /**
