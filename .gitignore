@@ -3,6 +3,9 @@ CLAUDE.md
 .rules/
 .context/
 
+# Test files
+test-files/
+
 # Dependencies
 node_modules/
 

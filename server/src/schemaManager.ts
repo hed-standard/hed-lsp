@@ -28,8 +28,7 @@ function normalizeVersion(hedVersion: string): string {
  */
 export class SchemaManager {
 	private schemaCache: Map<string, Schemas> = new Map();
-	private tagCache: Map<string, Map<string, HedTag>> = new Map();
-	private currentVersion: string = '8.4.0';
+	private currentVersion: string = '8.3.0';
 
 	/**
 	 * Get or load a schema for a given version.
@@ -72,13 +71,15 @@ export class SchemaManager {
 		const schemas = await this.getSchema(version);
 		const tags: HedTag[] = [];
 
-		// Access the base schema's tag entries
 		const schema = schemas.baseSchema;
 		if (schema?.entries?.tags) {
-			for (const [_name, entry] of schema.entries.tags) {
-				const tag = this.schemaEntryToHedTag(entry);
-				if (tag && !tag.parent) {
-					tags.push(tag);
+			for (const [_key, entry] of schema.entries.tags) {
+				// Top-level tags have no parent
+				if (!entry.parent) {
+					const tag = this.schemaEntryToHedTag(entry);
+					if (tag) {
+						tags.push(tag);
+					}
 				}
 			}
 		}
@@ -95,10 +96,13 @@ export class SchemaManager {
 
 		const schema = schemas.baseSchema;
 		if (schema?.entries?.tags) {
-			for (const [_name, entry] of schema.entries.tags) {
-				const tag = this.schemaEntryToHedTag(entry);
-				if (tag && tag.parent === parentShortForm) {
-					children.push(tag);
+			for (const [_key, entry] of schema.entries.tags) {
+				// Check if parent name matches (case-insensitive)
+				if (entry.parent && entry.parent.name.toLowerCase() === parentShortForm.toLowerCase()) {
+					const tag = this.schemaEntryToHedTag(entry);
+					if (tag) {
+						children.push(tag);
+					}
 				}
 			}
 		}
@@ -107,23 +111,18 @@ export class SchemaManager {
 	}
 
 	/**
-	 * Find a tag by its short form.
+	 * Find a tag by its short form (case-insensitive).
 	 */
 	async findTag(shortForm: string, version?: string): Promise<HedTag | null> {
 		const schemas = await this.getSchema(version);
 		const schema = schemas.baseSchema;
 
 		if (schema?.entries?.tags) {
-			// Try direct lookup first
-			if (schema.entries.tags.hasEntry(shortForm)) {
-				const entry = schema.entries.tags.getEntry(shortForm);
+			// Keys in the schema are lowercase
+			const lowerKey = shortForm.toLowerCase();
+			if (schema.entries.tags.hasEntry(lowerKey)) {
+				const entry = schema.entries.tags.getEntry(lowerKey);
 				return this.schemaEntryToHedTag(entry);
-			}
-			// Search by short name
-			for (const [_name, entry] of schema.entries.tags) {
-				if (entry.shortTagName === shortForm) {
-					return this.schemaEntryToHedTag(entry);
-				}
 			}
 		}
 
@@ -131,7 +130,7 @@ export class SchemaManager {
 	}
 
 	/**
-	 * Search for tags matching a prefix.
+	 * Search for tags matching a prefix (case-insensitive).
 	 */
 	async searchTags(prefix: string, version?: string): Promise<HedTag[]> {
 		const schemas = await this.getSchema(version);
@@ -140,9 +139,10 @@ export class SchemaManager {
 
 		const schema = schemas.baseSchema;
 		if (schema?.entries?.tags) {
-			for (const [_name, entry] of schema.entries.tags) {
-				const shortName = entry.shortTagName || entry.name || '';
-				if (shortName.toLowerCase().startsWith(lowerPrefix)) {
+			for (const [_key, entry] of schema.entries.tags) {
+				// entry.name has proper casing
+				const tagName = entry.name || '';
+				if (tagName.toLowerCase().startsWith(lowerPrefix)) {
 					const tag = this.schemaEntryToHedTag(entry);
 					if (tag) {
 						matches.push(tag);
@@ -160,35 +160,45 @@ export class SchemaManager {
 	private schemaEntryToHedTag(entry: any): HedTag | null {
 		if (!entry) return null;
 
+		// Get description from valueAttributeNames Map
+		const description = entry.valueAttributeNames?.get?.('description') || '';
+
+		// Get suggested and related tags
+		const suggestedTag = this.getValueAttribute(entry, 'suggestedTag');
+		const relatedTag = this.getValueAttribute(entry, 'relatedTag');
+		const unitClass = this.getValueAttribute(entry, 'unitClass');
+		const defaultUnits = entry.valueAttributeNames?.get?.('defaultUnits') || undefined;
+
 		const attributes: HedTagAttributes = {
 			extensionAllowed: entry.hasBooleanAttribute?.('extensionAllowed') ?? false,
 			takesValue: entry.hasBooleanAttribute?.('takesValue') ?? false,
-			unitClass: this.getAttributeArray(entry, 'unitClass'),
-			suggestedTag: this.getAttributeArray(entry, 'suggestedTag'),
-			relatedTag: this.getAttributeArray(entry, 'relatedTag'),
+			unitClass,
+			suggestedTag,
+			relatedTag,
 			requireChild: entry.hasBooleanAttribute?.('requireChild') ?? false,
 			unique: entry.hasBooleanAttribute?.('unique') ?? false,
-			defaultUnits: entry.getValue?.('defaultUnits')
+			defaultUnits
 		};
 
 		return {
-			shortForm: entry.shortTagName || entry.name || '',
-			longForm: entry.longTagName || entry.name || '',
-			description: entry.getValue?.('description') || '',
-			parent: entry.parent?.shortTagName || entry.parent?.name || null,
-			children: [], // Will be populated by iterating over all tags
+			shortForm: entry.name || '',
+			longForm: entry.longName || entry.name || '',
+			description,
+			parent: entry.parent?.name || null,
+			children: [], // Could be populated but not needed for basic features
 			attributes
 		};
 	}
 
 	/**
-	 * Get an attribute value as an array.
+	 * Get a value attribute as an array.
 	 */
-	private getAttributeArray(entry: any, attrName: string): string[] {
-		const value = entry.getValue?.(attrName);
+	private getValueAttribute(entry: any, attrName: string): string[] {
+		const value = entry.valueAttributeNames?.get?.(attrName);
 		if (!value) return [];
 		if (Array.isArray(value)) return value;
-		return [value];
+		if (typeof value === 'string') return [value];
+		return [];
 	}
 
 	/**
@@ -196,7 +206,6 @@ export class SchemaManager {
 	 */
 	clearCache(): void {
 		this.schemaCache.clear();
-		this.tagCache.clear();
 	}
 }
 
