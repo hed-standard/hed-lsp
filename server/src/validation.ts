@@ -109,6 +109,16 @@ const internalCodeToHedCode: Record<string, string> = {
 };
 
 /**
+ * HED codes that are warnings rather than errors.
+ * Based on HED specification Appendix B.
+ */
+const WARNING_CODES = new Set([
+	'SIDECAR_KEY_MISSING',
+	'TAG_EXTENDED',
+	'ELEMENT_DEPRECATED',
+]);
+
+/**
  * Convert a hed-validator Issue to our ValidationIssue type.
  * Extracts position information from various parameter formats.
  */
@@ -215,10 +225,16 @@ function convertIssue(issue: any, hedString: string): ValidationIssue {
 		}
 	}
 
+	// Determine level from issue or from HED code classification
+	let level: 'error' | 'warning' = 'error';
+	if (issue.level === 'warning' || WARNING_CODES.has(hedCode)) {
+		level = 'warning';
+	}
+
 	return {
 		hedCode,
 		internalCode: issue.internalCode || '',
-		level: issue.level === 'warning' ? 'warning' : 'error',
+		level,
 		message,
 		bounds
 	};
