@@ -17,8 +17,7 @@
 		"vscode:prepublish": "npm run compile",
 		"compile": "tsc -b",
 		"watch": "tsc -b -w",
-		"lint": "eslint",
-		"postinstall": "cd client && npm install && cd ../server && npm install && cd .."
+		"lint": "eslint"
 	},
 	"devDependencies": {
 		"@eslint/js": "^9.13.0",
