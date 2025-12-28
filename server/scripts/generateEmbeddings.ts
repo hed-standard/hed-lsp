@@ -88,17 +88,13 @@ async function getAllTags(): Promise<TagInfo[]> {
 }
 
 function createEmbeddingText(tag: TagInfo): string {
-	// Include last 3 levels of hierarchy for parent context
-	// e.g., "Item/Biological-item/Organism/Animal/Mammal/Mouse" → "animal mammal mouse"
-	const pathParts = tag.longForm.replace(/^[a-z]+:/, '').split('/'); // Remove prefix like "sc:"
-	const relevantParts = pathParts.slice(-3); // Last 3 levels
-
-	// Expand camelCase and hyphens, then lowercase for case-insensitive matching
-	const expanded = relevantParts.map(part =>
-		part.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/-/g, ' ').toLowerCase()
-	);
-
-	return expanded.join(' ');
+	// Use only the tag short form, expanded and lowercased
+	// e.g., "Animal-agent" → "animal agent", "Computer-mouse" → "computer mouse"
+	// Hierarchy was diluting semantic signal, so we keep it simple
+	return tag.tag
+		.replace(/([a-z])([A-Z])/g, '$1 $2')
+		.replace(/-/g, ' ')
+		.toLowerCase();
 }
 
 async function generateEmbeddings(tags: TagInfo[]): Promise<{ embeddings: TagEmbedding[]; dimensions: number }> {

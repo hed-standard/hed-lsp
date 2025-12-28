@@ -286,15 +286,14 @@ async function getCompletionsForContext(context: CompletionContext): Promise<Com
 					}
 				}
 
-				// Use embedding-based semantic search if few matches
-				if (matchingTags.length < 3) {
-					const semanticMatches = await getSemanticSuggestions(context.prefix);
-					for (const match of semanticMatches) {
-						// Skip if already in items
-						const fullTag = match.prefix + match.tag;
-						if (!items.some(item => item.label === fullTag)) {
-							items.push(createSemanticSuggestionFromMatch(match, context.prefix));
-						}
+				// Always run semantic search (fast with pre-loaded embeddings)
+				// Direct matches are ranked higher via sortText priority
+				const semanticMatches = await getSemanticSuggestions(context.prefix);
+				for (const match of semanticMatches) {
+					// Skip if already in items (direct match takes precedence)
+					const fullTag = match.prefix + match.tag;
+					if (!items.some(item => item.label === fullTag)) {
+						items.push(createSemanticSuggestionFromMatch(match, context.prefix));
 					}
 				}
 
