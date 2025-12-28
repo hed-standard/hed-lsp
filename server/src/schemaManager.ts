@@ -444,38 +444,12 @@ export class SchemaManager {
 	}
 
 	/**
-	 * Check if a tag entry belongs to a specific library schema.
-	 * Tags have an 'inLibrary' attribute if they're from a library.
-	 */
-	private isTagFromLibrary(entry: any, libraryPrefix: string): boolean {
-		if (!libraryPrefix) return true; // Base schema tags always belong
-
-		// Check if the tag has the inLibrary attribute matching this library
-		const inLibrary = entry.valueAttributeNames?.get?.('inLibrary');
-		if (inLibrary) {
-			// inLibrary value is the library name without the prefix
-			// e.g., "score" for sc: prefix
-			const prefixWithoutColon = libraryPrefix.replace(':', '');
-			return inLibrary === prefixWithoutColon ||
-			       inLibrary.toLowerCase() === prefixWithoutColon.toLowerCase();
-		}
-
-		// If no inLibrary attribute, it's a base schema tag
-		return false;
-	}
-
-	/**
 	 * Convert a schema entry to our HedTag type.
 	 * @param entry The schema entry
 	 * @param prefix Library schema prefix (e.g., "sc:" for SCORE) or empty for standard
 	 */
 	private schemaEntryToHedTag(entry: any, prefix: string = ''): HedTag | null {
 		if (!entry) return null;
-
-		// Skip tags that don't belong to this schema's library
-		if (prefix && !this.isTagFromLibrary(entry, prefix)) {
-			return null;
-		}
 
 		// Get description from valueAttributeNames Map
 		const description = entry.valueAttributeNames?.get?.('description') || '';
