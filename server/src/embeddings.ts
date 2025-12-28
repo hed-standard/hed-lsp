@@ -255,8 +255,8 @@ class EmbeddingsManager {
 			return [];
 		}
 
-		// Generate query embedding
-		const queryEmbedding = await this.embed(query);
+		// Generate query embedding (lowercase for case-insensitive matching)
+		const queryEmbedding = await this.embed(query.toLowerCase());
 		if (!queryEmbedding) {
 			return [];
 		}

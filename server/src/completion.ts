@@ -504,7 +504,8 @@ function createSemanticSuggestionFromMatch(match: SemanticMatch, searchTerm: str
 		documentation: formatSemanticMatchDocumentation(match, searchTerm),
 		insertText: fullTag,
 		insertTextFormat: InsertTextFormat.PlainText,
-		sortText: `1-${String(100 - similarityPercent).padStart(3, '0')}-${fullTag.toLowerCase()}`,
+		// Priority 4 = after direct matches (2) and extension suggestions (3)
+		sortText: `4-${String(100 - similarityPercent).padStart(3, '0')}-${fullTag.toLowerCase()}`,
 		filterText: searchTerm,
 		labelDetails: {
 			description: `(semantic match)`
