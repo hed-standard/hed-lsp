@@ -113,9 +113,19 @@ const internalCodeToHedCode: Record<string, string> = {
  * Extracts position information from various parameter formats.
  */
 function convertIssue(issue: any, hedString: string): ValidationIssue {
+	// Parse parameters if it's a string
+	let params = issue.parameters || {};
+	if (typeof params === 'string') {
+		try {
+			params = JSON.parse(params);
+		} catch {
+			params = {};
+		}
+	}
+
 	// Get HED code - if it's a generic error, try to use the internal code instead
 	let hedCode = issue.hedCode || issue.code;
-	const internalCode = issue.internalCode || issue.parameters?.internalCode;
+	const internalCode = issue.internalCode || params.internalCode;
 
 	// Generic error codes that should be remapped using internal code
 	const genericCodes = ['INTERNAL_ERROR', 'GENERICERROR', 'GENERIC_ERROR', 'UNKNOWN'];
@@ -127,8 +137,6 @@ function convertIssue(issue: any, hedString: string): ValidationIssue {
 		}
 	}
 	hedCode = hedCode || 'UNKNOWN';
-
-	const params = issue.parameters || {};
 
 	// Try to extract bounds from different parameter formats
 	let bounds: [number, number] | undefined = params.bounds;
