@@ -38,9 +38,10 @@ export function parseJsonForHedStrings(document: TextDocument): HedRegion[] {
 }
 
 /**
- * Recursively find all paths to "HED" keys in a JSON object.
+ * Recursively find all paths to HED string values in a JSON object.
+ * Handles both direct "HED": "string" and nested "HED": { "key": "string" } patterns.
  */
-function findHedPaths(obj: any, currentPath: string[]): string[][] {
+function findHedPaths(obj: any, currentPath: string[], insideHed: boolean = false): string[][] {
 	const paths: string[][] = [];
 
 	if (obj === null || typeof obj !== 'object') {
@@ -49,11 +50,23 @@ function findHedPaths(obj: any, currentPath: string[]): string[][] {
 
 	for (const key of Object.keys(obj)) {
 		const newPath = [...currentPath, key];
+		const value = obj[key];
 
-		if (key === 'HED' && typeof obj[key] === 'string') {
+		if (key === 'HED') {
+			if (typeof value === 'string') {
+				// Direct HED string: "HED": "Sensory-event, ..."
+				paths.push(newPath);
+			} else if (typeof value === 'object' && value !== null) {
+				// Nested HED object: "HED": { "go": "...", "stop": "..." }
+				// Recursively find all string values inside
+				paths.push(...findHedPaths(value, newPath, true));
+			}
+		} else if (insideHed && typeof value === 'string') {
+			// Inside a HED object, all string values are HED strings
 			paths.push(newPath);
-		} else if (typeof obj[key] === 'object' && obj[key] !== null) {
-			paths.push(...findHedPaths(obj[key], newPath));
+		} else if (typeof value === 'object' && value !== null) {
+			// Continue searching in nested objects
+			paths.push(...findHedPaths(value, newPath, insideHed));
 		}
 	}
 
@@ -68,13 +81,10 @@ function locateHedRegion(
 	path: string[],
 	document: TextDocument
 ): HedRegion | null {
-	// Build a pattern to find this specific "HED" key
-	// We need to find the key and its string value
-
 	// Strategy: Navigate through the JSON structure to find the offset
 	let searchStart = 0;
 
-	// For each path segment (except the last "HED"), find the key
+	// For each path segment except the last, find the key
 	for (let i = 0; i < path.length - 1; i++) {
 		const key = path[i];
 		const keyPattern = new RegExp(`"${escapeRegex(key)}"\\s*:`);
@@ -87,16 +97,16 @@ function locateHedRegion(
 		searchStart += match.index + match[0].length;
 	}
 
-	// Now find the "HED" key and its value
-	const hedKeyPattern = /"HED"\s*:\s*"/;
-	const hedMatch = hedKeyPattern.exec(text.slice(searchStart));
+	// Find the last key in the path and its string value
+	const lastKey = path[path.length - 1];
+	const keyPattern = new RegExp(`"${escapeRegex(lastKey)}"\\s*:\\s*"`);
+	const keyMatch = keyPattern.exec(text.slice(searchStart));
 
-	if (!hedMatch) {
+	if (!keyMatch) {
 		return null;
 	}
 
-	const hedKeyStart = searchStart + hedMatch.index;
-	const valueStart = searchStart + hedMatch.index + hedMatch[0].length;
+	const valueStart = searchStart + keyMatch.index + keyMatch[0].length;
 
 	// Find the end of the string value (handle escaped quotes)
 	let valueEnd = valueStart;

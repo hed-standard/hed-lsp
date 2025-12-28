@@ -113,10 +113,15 @@ const internalCodeToHedCode: Record<string, string> = {
  * Extracts position information from various parameter formats.
  */
 function convertIssue(issue: any, hedString: string): ValidationIssue {
-	// Get HED code, falling back to internal code mapping or the internal code itself
+	// Get HED code - if it's INTERNAL_ERROR, try to use the internal code instead
 	let hedCode = issue.hedCode || issue.code;
-	if (!hedCode && issue.internalCode) {
-		hedCode = internalCodeToHedCode[issue.internalCode] || issue.internalCode.toUpperCase();
+	const internalCode = issue.internalCode || issue.parameters?.internalCode;
+
+	// If hedCode is INTERNAL_ERROR or missing, try to map from internal code
+	if (!hedCode || hedCode === 'INTERNAL_ERROR') {
+		if (internalCode) {
+			hedCode = internalCodeToHedCode[internalCode] || internalCode.toUpperCase();
+		}
 	}
 	hedCode = hedCode || 'UNKNOWN';
 
@@ -164,11 +169,20 @@ function convertIssue(issue: any, hedString: string): ValidationIssue {
 		}
 	}
 
+	// Clean up message - remove embedded error codes if we've remapped them
+	let message = issue.message || 'Unknown validation error';
+	if (hedCode !== 'INTERNAL_ERROR' && message.includes('[INTERNAL_ERROR]')) {
+		// Replace the embedded INTERNAL_ERROR with our mapped code
+		message = message.replace('[INTERNAL_ERROR]', `[${hedCode}]`);
+		message = message.replace(/Unknown HED error "[^"]+"/,
+			`${hedCode.replace(/_/g, ' ').toLowerCase()}`);
+	}
+
 	return {
 		hedCode,
 		internalCode: issue.internalCode || '',
 		level: issue.level === 'warning' ? 'warning' : 'error',
-		message: issue.message || 'Unknown validation error',
+		message,
 		bounds
 	};
 }

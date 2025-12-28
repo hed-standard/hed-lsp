@@ -91,7 +91,9 @@ connection.onInitialized(() => {
 		});
 	}
 
-	connection.console.log('HED Language Server initialized');
+	connection.console.log('HED Language Server initialized successfully');
+	connection.console.log('Completion trigger characters: ' + completionTriggerCharacters.join(', '));
+	connection.console.log('Hover and completion providers are ready');
 });
 
 /**
@@ -226,13 +228,18 @@ async function validateDocumentNow(document: TextDocument): Promise<void> {
  */
 connection.onCompletion(
 	async (params: TextDocumentPositionParams): Promise<CompletionItem[]> => {
+		connection.console.log(`[HED] onCompletion called at line ${params.position.line}, char ${params.position.character}`);
+
 		const document = documents.get(params.textDocument.uri);
 		if (!document) {
+			connection.console.log('[HED] No document found for completion');
 			return [];
 		}
 
 		try {
-			return await provideCompletions(document, params.position);
+			const items = await provideCompletions(document, params.position);
+			connection.console.log(`[HED] Returning ${items.length} completion items`);
+			return items;
 		} catch (error) {
 			connection.console.error(`Completion error: ${error}`);
 			return [];

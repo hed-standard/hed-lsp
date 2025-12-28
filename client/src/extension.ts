@@ -52,7 +52,9 @@ export function activate(context: ExtensionContext) {
 				workspace.createFileSystemWatcher('**/*_events.json'),
 				workspace.createFileSystemWatcher('**/dataset_description.json')
 			]
-		}
+		},
+		// Output channel for debug messages
+		outputChannelName: 'HED Language Server'
 	};
 
 	// Create the language client
