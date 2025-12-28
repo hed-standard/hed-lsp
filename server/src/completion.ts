@@ -26,25 +26,36 @@ export async function provideCompletions(
 	document: TextDocument,
 	position: Position
 ): Promise<CompletionItem[]> {
+	// Debug: log that completion was triggered
+	console.log(`[HED] Completion triggered at line ${position.line}, char ${position.character}`);
+
 	// Check if we're inside a HED string
 	const region = getHedRegionAtPosition(document, position);
 	if (!region) {
+		console.log('[HED] No HED region found at position');
 		return [];
 	}
 
+	console.log(`[HED] Found region: ${region.jsonPath}, content: "${region.content.substring(0, 50)}..."`);
+
 	// Get the offset within the HED content
 	const offset = getContentOffset(region, position, document);
+	console.log(`[HED] Content offset: ${offset}`);
 
 	// Check if we're inside a curly brace placeholder
 	if (isInsidePlaceholder(region.content, offset)) {
+		console.log('[HED] Inside placeholder, no completions');
 		return []; // No completions inside {column} placeholders
 	}
 
 	// Analyze the context
 	const context = analyzeCompletionContext(region.content, offset);
+	console.log(`[HED] Completion context: type=${context.type}, parent=${context.parentTag}, prefix=${context.prefix}`);
 
 	// Get appropriate completions based on context
-	return await getCompletionsForContext(context);
+	const items = await getCompletionsForContext(context);
+	console.log(`[HED] Returning ${items.length} completions`);
+	return items;
 }
 
 /**

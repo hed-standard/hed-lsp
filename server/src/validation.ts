@@ -5,10 +5,46 @@
 
 import { parseHedString } from 'hed-validator';
 import type { Schemas } from 'hed-validator';
-import { Diagnostic, DiagnosticSeverity, Range, Position } from 'vscode-languageserver';
+import { Diagnostic, DiagnosticSeverity, Range } from 'vscode-languageserver';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { HedRegion, ValidationIssue, boundsToRange } from './types.js';
 import { schemaManager } from './schemaManager.js';
+
+/**
+ * Remove {column_name} placeholders from a HED string without leaving empty tags.
+ * Handles cases like "Tag, {column}" -> "Tag" and "({column}, Tag)" -> "(Tag)"
+ */
+function removePlaceholders(hedString: string): string {
+	// Pattern matches placeholders with optional surrounding comma and whitespace
+	// This handles: ", {col}", "{col}, ", "{col}" at start/end
+	let result = hedString;
+
+	// Remove placeholder with preceding comma: ", {col}" or " , {col}"
+	result = result.replace(/\s*,\s*\{[^}]+\}/g, '');
+
+	// Remove placeholder with following comma: "{col}, " or "{col} ,"
+	result = result.replace(/\{[^}]+\}\s*,\s*/g, '');
+
+	// Remove standalone placeholders: "{col}"
+	result = result.replace(/\{[^}]+\}/g, '');
+
+	// Clean up any remaining issues
+	// Remove double commas that might result
+	result = result.replace(/,\s*,/g, ',');
+
+	// Remove leading/trailing commas from groups
+	result = result.replace(/\(\s*,/g, '(');
+	result = result.replace(/,\s*\)/g, ')');
+
+	// Remove empty groups
+	result = result.replace(/\(\s*\)/g, '');
+
+	// Clean up leading/trailing commas
+	result = result.replace(/^\s*,\s*/, '');
+	result = result.replace(/\s*,\s*$/, '');
+
+	return result.trim();
+}
 
 /**
  * Validate a HED string and return issues.
@@ -24,8 +60,7 @@ export async function validateHedString(
 
 	// Handle curly brace placeholders - remove them for validation
 	// {column_name} placeholders are assembly markers and should not be validated
-	const placeholderPattern = /\{[^}]+\}/g;
-	const cleanedHed = hedString.replace(placeholderPattern, '');
+	const cleanedHed = removePlaceholders(hedString);
 
 	// If only placeholders, skip validation
 	if (!cleanedHed.trim()) {
@@ -44,7 +79,7 @@ export async function validateHedString(
 		);
 
 		const allIssues = [...syntaxIssues, ...semanticIssues];
-		return allIssues.map(issue => convertIssue(issue));
+		return allIssues.map(issue => convertIssue(issue, hedString));
 	} catch (error) {
 		// Return a generic error if parsing fails unexpectedly
 		return [{
@@ -57,16 +92,125 @@ export async function validateHedString(
 }
 
 /**
- * Convert a hed-validator Issue to our ValidationIssue type.
+ * Map internal error codes to HED error codes when hedCode is missing.
  */
-function convertIssue(issue: any): ValidationIssue {
+const internalCodeToHedCode: Record<string, string> = {
+	'unclosedParentheses': 'PARENTHESES_MISMATCH',
+	'unopenedParentheses': 'PARENTHESES_MISMATCH',
+	'extraDelimiter': 'TAG_EMPTY',
+	'invalidTag': 'TAG_INVALID',
+	'duplicateTag': 'TAG_DUPLICATE',
+	'multipleUniqueTags': 'TAG_NOT_UNIQUE',
+	'childRequired': 'TAG_REQUIRES_CHILD',
+	'invalidValue': 'VALUE_INVALID',
+	'unitClassInvalidUnit': 'UNITS_INVALID',
+	'invalidPlaceholder': 'PLACEHOLDER_INVALID',
+	'missingRequiredColumn': 'SIDECAR_KEY_MISSING',
+};
+
+/**
+ * Convert a hed-validator Issue to our ValidationIssue type.
+ * Extracts position information from various parameter formats.
+ */
+function convertIssue(issue: any, hedString: string): ValidationIssue {
+	// Get HED code, falling back to internal code mapping or the internal code itself
+	let hedCode = issue.hedCode || issue.code;
+	if (!hedCode && issue.internalCode) {
+		hedCode = internalCodeToHedCode[issue.internalCode] || issue.internalCode.toUpperCase();
+	}
+	hedCode = hedCode || 'UNKNOWN';
+
+	const params = issue.parameters || {};
+
+	// Try to extract bounds from different parameter formats
+	let bounds: [number, number] | undefined = params.bounds;
+
+	if (!bounds) {
+		// Check for index (used by PARENTHESES_MISMATCH)
+		if (params.index !== undefined) {
+			const idx = parseInt(params.index, 10);
+			if (!isNaN(idx)) {
+				// Highlight just the character at the index
+				bounds = [idx, idx + 1];
+			}
+		}
+
+		// Check for tag - can be string or ParsedHedTag object
+		if (!bounds && params.tag) {
+			let tagName: string | undefined;
+
+			if (typeof params.tag === 'string') {
+				tagName = params.tag;
+			} else if (typeof params.tag === 'object') {
+				// ParsedHedTag object - try various properties
+				tagName = params.tag.originalTag ||
+				          params.tag.formattedTag ||
+				          params.tag.canonicalTag ||
+				          (params.tag.originalBounds ? hedString.slice(params.tag.originalBounds[0], params.tag.originalBounds[1]) : undefined);
+
+				// If the tag object has originalBounds, use them directly
+				if (params.tag.originalBounds && Array.isArray(params.tag.originalBounds)) {
+					bounds = params.tag.originalBounds as [number, number];
+				}
+			}
+
+			// If we have a tag name but no bounds yet, search for it
+			if (!bounds && tagName) {
+				const tagBounds = findTagInString(hedString, tagName);
+				if (tagBounds) {
+					bounds = tagBounds;
+				}
+			}
+		}
+	}
+
 	return {
-		hedCode: issue.hedCode || issue.code || 'UNKNOWN',
+		hedCode,
 		internalCode: issue.internalCode || '',
 		level: issue.level === 'warning' ? 'warning' : 'error',
 		message: issue.message || 'Unknown validation error',
-		bounds: issue.parameters?.bounds
+		bounds
 	};
+}
+
+/**
+ * Find the bounds of a tag within a HED string.
+ * Returns [start, end] or null if not found.
+ */
+function findTagInString(hedString: string, tagName: string): [number, number] | null {
+	// Case-insensitive search
+	const lowerHed = hedString.toLowerCase();
+	const lowerTag = tagName.toLowerCase();
+
+	let index = lowerHed.indexOf(lowerTag);
+	if (index === -1) {
+		return null;
+	}
+
+	// Make sure we're matching a whole tag (not a substring of another tag)
+	// Tags are separated by commas, parentheses, or whitespace
+	const separators = /[,()]/;
+
+	while (index !== -1) {
+		const beforeChar = index > 0 ? hedString[index - 1] : ',';
+		const afterChar = index + tagName.length < hedString.length
+			? hedString[index + tagName.length]
+			: ',';
+
+		// Check if this is a whole tag match
+		const beforeOk = separators.test(beforeChar) || beforeChar === ' ' || index === 0;
+		const afterOk = separators.test(afterChar) || afterChar === ' ' || afterChar === '/' ||
+			index + tagName.length >= hedString.length;
+
+		if (beforeOk && afterOk) {
+			return [index, index + tagName.length];
+		}
+
+		// Continue searching
+		index = lowerHed.indexOf(lowerTag, index + 1);
+	}
+
+	return null;
 }
 
 /**

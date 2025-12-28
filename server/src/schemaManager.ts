@@ -28,7 +28,7 @@ function normalizeVersion(hedVersion: string): string {
  */
 export class SchemaManager {
 	private schemaCache: Map<string, Schemas> = new Map();
-	private currentVersion: string = '8.3.0';
+	private currentVersion: string = '8.4.0';
 
 	/**
 	 * Get or load a schema for a given version.
@@ -180,9 +180,13 @@ export class SchemaManager {
 			defaultUnits
 		};
 
+		// SchemaTag has shortTagName and longTagName getters
+		const shortForm = entry.shortTagName || entry.name || '';
+		const longForm = entry.longTagName || entry.longName || entry.name || '';
+
 		return {
-			shortForm: entry.name || '',
-			longForm: entry.longName || entry.name || '',
+			shortForm,
+			longForm,
 			description,
 			parent: entry.parent?.name || null,
 			children: [], // Could be populated but not needed for basic features
