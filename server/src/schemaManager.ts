@@ -12,6 +12,17 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 /**
+ * Default schema version including all library schemas.
+ * This ensures autocomplete works for all HED tags out of the box.
+ */
+const DEFAULT_BASE_VERSION = '8.4.0';
+const LIBRARY_SCHEMAS = [
+	'sc:score_2.1.0',
+	'la:lang_1.1.0'
+];
+const DEFAULT_FULL_VERSION = [DEFAULT_BASE_VERSION, ...LIBRARY_SCHEMAS].join(',');
+
+/**
  * Normalize a HED schema version string.
  * Handles multiple schemas separated by commas.
  */
@@ -55,7 +66,7 @@ function parseHedVersion(datasetDescription: any): string | null {
  */
 export class SchemaManager {
 	private schemaCache: Map<string, Schemas> = new Map();
-	private currentVersion: string = '8.4.0';
+	private currentVersion: string = DEFAULT_FULL_VERSION;
 	private workspaceVersionCache: Map<string, string> = new Map();
 
 	/**
@@ -134,17 +145,35 @@ export class SchemaManager {
 
 	/**
 	 * Get schema for a document, auto-detecting version if possible.
+	 * Always includes library schemas for full autocomplete support.
 	 */
 	async getSchemaForDocument(documentUri: string): Promise<Schemas> {
-		const detectedVersion = await this.detectSchemaVersion(documentUri);
-		return this.getSchema(detectedVersion || this.currentVersion);
+		let version = await this.detectSchemaVersion(documentUri);
+		if (!version) {
+			version = this.currentVersion;
+		} else if (!version.includes(':')) {
+			// Add library schemas if only base version was detected
+			version = [version, ...LIBRARY_SCHEMAS].join(',');
+		}
+		return this.getSchema(version);
 	}
 
 	/**
 	 * Set the current schema version.
+	 * If only a base version is given, library schemas are added automatically.
 	 */
 	setCurrentVersion(version: string): void {
-		this.currentVersion = normalizeVersion(version) || '8.4.0';
+		const normalized = normalizeVersion(version);
+		if (!normalized) {
+			this.currentVersion = DEFAULT_FULL_VERSION;
+			return;
+		}
+		// If version doesn't include library schemas, add them
+		if (!normalized.includes(':')) {
+			this.currentVersion = [normalized, ...LIBRARY_SCHEMAS].join(',');
+		} else {
+			this.currentVersion = normalized;
+		}
 	}
 
 	/**

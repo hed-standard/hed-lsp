@@ -7,6 +7,18 @@ import { Hover, Position, MarkupContent, MarkupKind } from 'vscode-languageserve
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { schemaManager } from './schemaManager.js';
 import { getHedRegionAtPosition, getContentOffset, getTagAtOffset } from './documentParser.js';
+import { getTsvHedRegionAtPosition, isTsvDocument } from './tsvParser.js';
+import { HedRegion } from './types.js';
+
+/**
+ * Get HED region at position for any document type.
+ */
+function getRegionAtPosition(document: TextDocument, position: Position): HedRegion | null {
+	if (isTsvDocument(document)) {
+		return getTsvHedRegionAtPosition(document, position);
+	}
+	return getHedRegionAtPosition(document, position);
+}
 
 /**
  * Provide hover information for a position in a document.
@@ -15,8 +27,8 @@ export async function provideHover(
 	document: TextDocument,
 	position: Position
 ): Promise<Hover | null> {
-	// Check if we're inside a HED string
-	const region = getHedRegionAtPosition(document, position);
+	// Check if we're inside a HED string (works for both JSON and TSV)
+	const region = getRegionAtPosition(document, position);
 	if (!region) {
 		return null;
 	}

@@ -39,10 +39,11 @@ export function activate(context: ExtensionContext) {
 		}
 	};
 
-	// Client options - register for JSON files
+	// Client options - register for JSON and TSV files
 	const clientOptions: LanguageClientOptions = {
 		documentSelector: [
-			{ scheme: 'file', language: 'json' }
+			{ scheme: 'file', language: 'json' },
+			{ scheme: 'file', pattern: '**/*.tsv' }
 		],
 		synchronize: {
 			// Watch for configuration changes
@@ -50,7 +51,8 @@ export function activate(context: ExtensionContext) {
 			// Watch for HED-related file changes
 			fileEvents: [
 				workspace.createFileSystemWatcher('**/*_events.json'),
-				workspace.createFileSystemWatcher('**/dataset_description.json')
+				workspace.createFileSystemWatcher('**/dataset_description.json'),
+				workspace.createFileSystemWatcher('**/*_events.tsv')
 			]
 		},
 		// Output channel for debug messages

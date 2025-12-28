@@ -18,12 +18,25 @@ import {
 
 import { TextDocument } from 'vscode-languageserver-textdocument';
 
-import { defaultSettings, HedLspSettings } from './types.js';
+import { defaultSettings, HedLspSettings, HedRegion } from './types.js';
 import { schemaManager } from './schemaManager.js';
 import { parseJsonForHedStrings } from './documentParser.js';
+import { parseTsvForHedStrings, isTsvDocument, hasHedColumn } from './tsvParser.js';
 import { validateDocument } from './validation.js';
 import { provideCompletions, resolveCompletionItem, completionTriggerCharacters } from './completion.js';
 import { provideHover } from './hover.js';
+
+/**
+ * Get HED regions from a document (JSON or TSV).
+ */
+function getHedRegions(document: TextDocument): HedRegion[] {
+	if (isTsvDocument(document)) {
+		return parseTsvForHedStrings(document);
+	} else if (document.uri.endsWith('.json')) {
+		return parseJsonForHedStrings(document);
+	}
+	return [];
+}
 
 // Create a connection using Node's IPC transport
 const connection = createConnection(ProposedFeatures.all);
@@ -193,16 +206,17 @@ async function validateDocumentDebounced(document: TextDocument): Promise<void> 
  * Validate a document immediately.
  */
 async function validateDocumentNow(document: TextDocument): Promise<void> {
-	// Only validate JSON files
-	if (!document.uri.endsWith('.json')) {
+	// Only validate JSON and TSV files
+	const uri = document.uri.toLowerCase();
+	if (!uri.endsWith('.json') && !uri.endsWith('.tsv')) {
 		return;
 	}
 
 	try {
 		const settings = await getDocumentSettings(document.uri);
 
-		// Parse for HED regions
-		const regions = parseJsonForHedStrings(document);
+		// Parse for HED regions (handles both JSON and TSV)
+		const regions = getHedRegions(document);
 
 		if (regions.length === 0) {
 			// No HED content, clear diagnostics

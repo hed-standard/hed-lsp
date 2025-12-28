@@ -12,7 +12,18 @@ import {
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { schemaManager } from './schemaManager.js';
 import { getHedRegionAtPosition, getContentOffset, getTagAtOffset } from './documentParser.js';
-import { HedTag } from './types.js';
+import { getTsvHedRegionAtPosition, isTsvDocument } from './tsvParser.js';
+import { HedTag, HedRegion } from './types.js';
+
+/**
+ * Get HED region at position for any document type.
+ */
+function getRegionAtPosition(document: TextDocument, position: Position): HedRegion | null {
+	if (isTsvDocument(document)) {
+		return getTsvHedRegionAtPosition(document, position);
+	}
+	return getHedRegionAtPosition(document, position);
+}
 
 /**
  * Trigger characters for HED completions.
@@ -29,8 +40,8 @@ export async function provideCompletions(
 	// Debug: log that completion was triggered
 	console.log(`[HED] Completion triggered at line ${position.line}, char ${position.character}`);
 
-	// Check if we're inside a HED string
-	const region = getHedRegionAtPosition(document, position);
+	// Check if we're inside a HED string (works for both JSON and TSV)
+	const region = getRegionAtPosition(document, position);
 	if (!region) {
 		console.log('[HED] No HED region found at position');
 		return [];

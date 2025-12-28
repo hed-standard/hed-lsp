@@ -26,7 +26,8 @@
 		"mri"
 	],
 	"activationEvents": [
-		"onLanguage:json"
+		"onLanguage:json",
+		"workspaceContains:**/*.tsv"
 	],
 	"main": "./out/extension.js",
 	"contributes": {
