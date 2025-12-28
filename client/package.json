@@ -1,0 +1,81 @@
+{
+	"name": "hed-lsp-client",
+	"displayName": "HED Language Support",
+	"description": "Language support for HED (Hierarchical Event Descriptors) annotations",
+	"version": "0.1.0",
+	"publisher": "hed-standard",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/hed-standard/hed-lsp"
+	},
+	"engines": {
+		"vscode": "^1.100.0"
+	},
+	"categories": [
+		"Linters",
+		"Programming Languages",
+		"Other"
+	],
+	"keywords": [
+		"hed",
+		"hierarchical event descriptors",
+		"bids",
+		"neuroimaging",
+		"eeg",
+		"mri"
+	],
+	"activationEvents": [
+		"onLanguage:json"
+	],
+	"main": "./out/extension.js",
+	"contributes": {
+		"configuration": {
+			"type": "object",
+			"title": "HED",
+			"properties": {
+				"hed.schemaVersion": {
+					"type": "string",
+					"default": "8.4.0",
+					"description": "HED schema version to use for validation"
+				},
+				"hed.maxNumberOfProblems": {
+					"type": "number",
+					"default": 100,
+					"description": "Maximum number of problems to report per file"
+				},
+				"hed.validateOnChange": {
+					"type": "boolean",
+					"default": true,
+					"description": "Validate HED strings while typing"
+				},
+				"hed.debounceMs": {
+					"type": "number",
+					"default": 300,
+					"description": "Debounce time in milliseconds for validation on change"
+				},
+				"hed.trace.server": {
+					"scope": "window",
+					"type": "string",
+					"enum": [
+						"off",
+						"messages",
+						"verbose"
+					],
+					"default": "off",
+					"description": "Traces the communication between VS Code and the HED language server"
+				}
+			}
+		}
+	},
+	"scripts": {
+		"compile": "tsc -b",
+		"watch": "tsc -b -w"
+	},
+	"dependencies": {
+		"vscode-languageclient": "^9.0.1"
+	},
+	"devDependencies": {
+		"@types/vscode": "^1.100.0"
+	}
+}
