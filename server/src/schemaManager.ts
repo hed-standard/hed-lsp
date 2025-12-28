@@ -226,6 +226,11 @@ export class SchemaManager {
 				for (const [_key, entry] of schema.entries.tags) {
 					// Top-level tags have no parent
 					if (!entry.parent) {
+						// Filter: only show tags that belong to this schema
+						const inLibrary = entry.getAttributeValue?.('inLibrary');
+						if (!prefix && inLibrary) continue; // Skip library tags in base schema
+						if (prefix && !inLibrary) continue; // Skip base tags in library schemas
+
 						const tag = this.schemaEntryToHedTag(entry, prefix);
 						if (tag) {
 							tags.push(tag);
@@ -319,6 +324,11 @@ export class SchemaManager {
 
 			if (schema?.entries?.tags) {
 				for (const [_key, entry] of schema.entries.tags) {
+					// Filter: only show tags that belong to this schema
+					const inLibrary = entry.getAttributeValue?.('inLibrary');
+					if (!schemaPrefix && inLibrary) continue; // Skip library tags in base schema
+					if (schemaPrefix && !inLibrary) continue; // Skip base tags in library schemas
+
 					const tagName = entry.name || '';
 					if (tagName.toLowerCase().startsWith(lowerPrefix)) {
 						const tag = this.schemaEntryToHedTag(entry, schemaPrefix);
@@ -367,6 +377,19 @@ export class SchemaManager {
 					const tagName = entry.name || '';
 					const lowerName = tagName.toLowerCase();
 
+					// Filter: only show tags that belong to this schema
+					// - Base schema (no prefix): show tags WITHOUT inLibrary attribute
+					// - Library schema (with prefix): show tags WITH inLibrary attribute
+					const inLibrary = entry.getAttributeValue?.('inLibrary');
+					if (!prefix && inLibrary) {
+						// Skip library tags when iterating base schema
+						continue;
+					}
+					if (prefix && !inLibrary) {
+						// Skip base schema tags when iterating library schemas
+						continue;
+					}
+
 					if (lowerName.startsWith(lowerQuery)) {
 						const tag = this.schemaEntryToHedTag(entry, prefix);
 						if (tag) prefixMatches.push(tag);
@@ -392,6 +415,11 @@ export class SchemaManager {
 		for (const { schema, prefix } of this.getAllSchemaObjects(schemas)) {
 			if (schema?.entries?.tags) {
 				for (const [_key, entry] of schema.entries.tags) {
+					// Filter: only show tags that belong to this schema
+					const inLibrary = entry.getAttributeValue?.('inLibrary');
+					if (!prefix && inLibrary) continue; // Skip library tags in base schema
+					if (prefix && !inLibrary) continue; // Skip base tags in library schemas
+
 					const tag = this.schemaEntryToHedTag(entry, prefix);
 					if (tag) tags.push(tag);
 				}
