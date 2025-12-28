@@ -7,9 +7,7 @@ import {
 	CompletionItem,
 	CompletionItemKind,
 	InsertTextFormat,
-	Position,
-	Range,
-	TextEdit
+	Position
 } from 'vscode-languageserver';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { schemaManager } from './schemaManager.js';
@@ -157,17 +155,8 @@ export async function provideCompletions(
 	const context = analyzeCompletionContext(region.content, offset);
 	console.log(`[HED] Completion context: type=${context.type}, parent=${context.parentTag}, prefix=${context.prefix}`);
 
-	// Calculate the replace range in document coordinates
-	let replaceRange: Range | undefined;
-	if (context.replaceStart !== undefined && context.replaceEnd !== undefined) {
-		replaceRange = {
-			start: document.positionAt(region.contentOffset + context.replaceStart),
-			end: document.positionAt(region.contentOffset + context.replaceEnd)
-		};
-	}
-
 	// Get appropriate completions based on context
-	const items = await getCompletionsForContext(context, replaceRange);
+	const items = await getCompletionsForContext(context);
 	console.log(`[HED] Returning ${items.length} completions`);
 	return items;
 }
@@ -196,10 +185,6 @@ interface CompletionContext {
 	prefix?: string;
 	/** Whether we just typed a separator */
 	afterSeparator: boolean;
-	/** Start offset of the current tag being typed (for text replacement) */
-	replaceStart?: number;
-	/** End offset of the current tag being typed */
-	replaceEnd?: number;
 }
 
 /**
@@ -244,9 +229,7 @@ function analyzeCompletionContext(content: string, offset: number): CompletionCo
 				type: 'child',
 				parentTag: tagInfo.tag.slice(0, slashIndex),
 				prefix: tagInfo.tag.slice(slashIndex + 1),
-				afterSeparator: false,
-				replaceStart: tagInfo.start,
-				replaceEnd: tagInfo.end
+				afterSeparator: false
 			};
 		}
 
@@ -254,9 +237,7 @@ function analyzeCompletionContext(content: string, offset: number): CompletionCo
 		return {
 			type: 'partial',
 			prefix: tagInfo.tag,
-			afterSeparator: false,
-			replaceStart: tagInfo.start,
-			replaceEnd: tagInfo.end
+			afterSeparator: false
 		};
 	}
 
@@ -269,20 +250,15 @@ function analyzeCompletionContext(content: string, offset: number): CompletionCo
 
 /**
  * Get completions for a given context.
- * @param context The completion context
- * @param replaceRange Optional range to replace (for textEdit)
  */
-async function getCompletionsForContext(
-	context: CompletionContext,
-	replaceRange?: Range
-): Promise<CompletionItem[]> {
+async function getCompletionsForContext(context: CompletionContext): Promise<CompletionItem[]> {
 	const items: CompletionItem[] = [];
 
 	switch (context.type) {
 		case 'top-level':
 			const topLevelTags = await schemaManager.getTopLevelTags();
 			for (const tag of topLevelTags) {
-				items.push(createCompletionItem(tag, context.afterSeparator, undefined, replaceRange));
+				items.push(createCompletionItem(tag, context.afterSeparator));
 			}
 			break;
 
@@ -291,7 +267,7 @@ async function getCompletionsForContext(
 				const childTags = await schemaManager.getChildTags(context.parentTag);
 				for (const tag of childTags) {
 					if (!context.prefix || matchesPrefix(tag.shortForm, context.prefix)) {
-						items.push(createCompletionItem(tag, context.afterSeparator, context.parentTag, replaceRange));
+						items.push(createCompletionItem(tag, context.afterSeparator, context.parentTag));
 					}
 				}
 			}
@@ -305,7 +281,7 @@ async function getCompletionsForContext(
 				if (matchingTags.length > 0) {
 					// Add exact and partial matches
 					for (const tag of matchingTags) {
-						items.push(createCompletionItem(tag, false, undefined, replaceRange));
+						items.push(createCompletionItem(tag, false));
 					}
 				}
 
@@ -316,7 +292,7 @@ async function getCompletionsForContext(
 					for (const suggestion of semanticSuggestions) {
 						const tag = await schemaManager.findTag(suggestion);
 						if (tag && !items.some(item => item.label === tag.shortForm)) {
-							items.push(createSemanticSuggestion(tag, context.prefix, replaceRange));
+							items.push(createSemanticSuggestion(tag, context.prefix));
 						}
 					}
 				}
@@ -327,14 +303,14 @@ async function getCompletionsForContext(
 					for (const parent of extensibleParents) {
 						// Don't add if already in items
 						if (!items.some(item => item.label === parent.shortForm)) {
-							items.push(createExtensionSuggestion(parent, context.prefix, replaceRange));
+							items.push(createExtensionSuggestion(parent, context.prefix));
 						}
 					}
 				}
 
 				// If still no matches, add a hint about the unknown term
 				if (items.length === 0) {
-					items.push(createNoMatchHint(context.prefix, replaceRange));
+					items.push(createNoMatchHint(context.prefix));
 				}
 			}
 			break;
@@ -356,34 +332,23 @@ function matchesPrefix(tagName: string, prefix: string): boolean {
 
 /**
  * Create a completion item from a HED tag.
- * @param tag The HED tag
- * @param addLeadingSpace Whether to add a leading space
- * @param parentPath Optional parent path for child tags
- * @param replaceRange Optional range to replace the current text
  */
 function createCompletionItem(
 	tag: HedTag,
 	addLeadingSpace: boolean = false,
-	parentPath?: string,
-	replaceRange?: Range
+	parentPath?: string
 ): CompletionItem {
-	const newText = addLeadingSpace ? ` ${tag.shortForm}` : tag.shortForm;
+	const insertText = addLeadingSpace ? ` ${tag.shortForm}` : tag.shortForm;
 
 	const item: CompletionItem = {
 		label: tag.shortForm,
 		kind: CompletionItemKind.Value,
 		detail: tag.longForm,
 		documentation: formatTagDocumentation(tag),
+		insertText,
 		insertTextFormat: InsertTextFormat.PlainText,
 		sortText: getSortText(tag)
 	};
-
-	// Use textEdit for replacement if range is provided, otherwise use insertText
-	if (replaceRange) {
-		item.textEdit = TextEdit.replace(replaceRange, newText);
-	} else {
-		item.insertText = newText;
-	}
 
 	// Add a slash hint if the tag has children
 	if (tag.children.length > 0) {
@@ -442,33 +407,21 @@ function getSortText(tag: HedTag, priority: number = 2): string {
 
 /**
  * Create a completion item for a semantic suggestion.
- * @param tag The suggested HED tag
- * @param searchTerm The original search term
- * @param replaceRange Optional range to replace
  */
-function createSemanticSuggestion(
-	tag: HedTag,
-	searchTerm: string,
-	replaceRange?: Range
-): CompletionItem {
+function createSemanticSuggestion(tag: HedTag, searchTerm: string): CompletionItem {
 	const item: CompletionItem = {
 		label: tag.shortForm,
 		kind: CompletionItemKind.Reference,
 		detail: `Similar to "${searchTerm}"`,
 		documentation: formatSemanticDocumentation(tag, searchTerm),
+		insertText: tag.shortForm,
 		insertTextFormat: InsertTextFormat.PlainText,
 		sortText: getSortText(tag, 1), // High priority for semantic matches
+		filterText: searchTerm, // Allow VS Code to show this when typing the search term
 		labelDetails: {
 			description: `(for "${searchTerm}")`
 		}
 	};
-
-	// Use textEdit for replacement if range is provided
-	if (replaceRange) {
-		item.textEdit = TextEdit.replace(replaceRange, tag.shortForm);
-	} else {
-		item.insertText = tag.shortForm;
-	}
 
 	return item;
 }
@@ -501,39 +454,25 @@ function formatSemanticDocumentation(tag: HedTag, searchTerm: string): string {
 
 /**
  * Create a completion item suggesting to extend a parent tag.
- * @param parent The parent tag to extend
- * @param searchTerm The original search term
- * @param replaceRange Optional range to replace
  */
-function createExtensionSuggestion(
-	parent: HedTag,
-	searchTerm: string,
-	replaceRange?: Range
-): CompletionItem {
+function createExtensionSuggestion(parent: HedTag, searchTerm: string): CompletionItem {
 	// Format the extension: Parent/SearchTerm
 	const extensionName = searchTerm.charAt(0).toUpperCase() + searchTerm.slice(1).toLowerCase();
-	const newText = `${parent.shortForm}/${extensionName}`;
+	const insertText = `${parent.shortForm}/${extensionName}`;
 
-	const item: CompletionItem = {
+	return {
 		label: `${parent.shortForm}/${extensionName}`,
 		kind: CompletionItemKind.Snippet,
 		detail: `Extend ${parent.shortForm} with "${extensionName}"`,
 		documentation: formatExtensionDocumentation(parent, searchTerm),
+		insertText,
 		insertTextFormat: InsertTextFormat.PlainText,
 		sortText: getSortText(parent, 3),
+		filterText: searchTerm, // Allow VS Code to show this when typing the search term
 		labelDetails: {
 			description: '(extension)'
 		}
 	};
-
-	// Use textEdit for replacement if range is provided
-	if (replaceRange) {
-		item.textEdit = TextEdit.replace(replaceRange, newText);
-	} else {
-		item.insertText = newText;
-	}
-
-	return item;
 }
 
 /**
@@ -561,11 +500,8 @@ function formatExtensionDocumentation(parent: HedTag, searchTerm: string): strin
 
 /**
  * Create a hint when no matching tags are found.
- * @param searchTerm The original search term
- * @param replaceRange Optional range (not used for hint)
  */
-function createNoMatchHint(searchTerm: string, replaceRange?: Range): CompletionItem {
-	// For the no-match hint, we don't replace anything - keep the original text
+function createNoMatchHint(searchTerm: string): CompletionItem {
 	return {
 		label: `"${searchTerm}" - not found`,
 		kind: CompletionItemKind.Text,
