@@ -113,12 +113,15 @@ const internalCodeToHedCode: Record<string, string> = {
  * Extracts position information from various parameter formats.
  */
 function convertIssue(issue: any, hedString: string): ValidationIssue {
-	// Get HED code - if it's INTERNAL_ERROR, try to use the internal code instead
+	// Get HED code - if it's a generic error, try to use the internal code instead
 	let hedCode = issue.hedCode || issue.code;
 	const internalCode = issue.internalCode || issue.parameters?.internalCode;
 
-	// If hedCode is INTERNAL_ERROR or missing, try to map from internal code
-	if (!hedCode || hedCode === 'INTERNAL_ERROR') {
+	// Generic error codes that should be remapped using internal code
+	const genericCodes = ['INTERNAL_ERROR', 'GENERICERROR', 'GENERIC_ERROR', 'UNKNOWN'];
+
+	// If hedCode is generic or missing, try to map from internal code
+	if (!hedCode || genericCodes.includes(hedCode)) {
 		if (internalCode) {
 			hedCode = internalCodeToHedCode[internalCode] || internalCode.toUpperCase();
 		}
@@ -169,13 +172,18 @@ function convertIssue(issue: any, hedString: string): ValidationIssue {
 		}
 	}
 
-	// Clean up message - remove embedded error codes if we've remapped them
+	// Clean up message - remove embedded generic error codes if we've remapped them
 	let message = issue.message || 'Unknown validation error';
-	if (hedCode !== 'INTERNAL_ERROR' && message.includes('[INTERNAL_ERROR]')) {
-		// Replace the embedded INTERNAL_ERROR with our mapped code
-		message = message.replace('[INTERNAL_ERROR]', `[${hedCode}]`);
-		message = message.replace(/Unknown HED error "[^"]+"/,
-			`${hedCode.replace(/_/g, ' ').toLowerCase()}`);
+	const genericMessagePatterns = ['[INTERNAL_ERROR]', '[GENERICERROR]', '[GENERIC_ERROR]'];
+	for (const pattern of genericMessagePatterns) {
+		if (!genericCodes.includes(hedCode) && message.includes(pattern)) {
+			// Replace the embedded generic code with our mapped code
+			message = message.replace(pattern, `[${hedCode}]`);
+			message = message.replace(/Unknown HED error "[^"]+"/,
+				`${hedCode.replace(/_/g, ' ').toLowerCase()}`);
+			message = message.replace(/genericerror/gi, hedCode.replace(/_/g, ' ').toLowerCase());
+			break;
+		}
 	}
 
 	return {
