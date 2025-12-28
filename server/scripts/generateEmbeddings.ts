@@ -1,240 +1,207 @@
 #!/usr/bin/env npx ts-node
 /**
  * Generate Embeddings Script
- * Pre-computes embeddings for all HED tags and saves to JSON.
+ * Pre-computes embeddings for all HED tags using Qwen3-Embedding-0.6B.
  *
- * Usage: npx ts-node scripts/generateEmbeddings.ts
+ * Usage: npx ts-node server/scripts/generateEmbeddings.ts
  */
 
 import { buildSchemasFromVersion } from 'hed-validator';
 import * as fs from 'fs';
 import * as path from 'path';
 
-const DEFAULT_VERSION = '8.4.0';
-const LIBRARY_SCHEMAS = ['sc:score_2.1.0', 'la:lang_1.1.0'];
-const DIMENSIONS = 100;
+// Configuration
+const SCHEMA_VERSION = '8.4.0,sc:score_2.1.0,la:lang_1.1.0';
+const MODEL_ID = 'onnx-community/Qwen3-Embedding-0.6B-ONNX';
+const DTYPE = 'q8';
+const BATCH_SIZE = 32;
+const OUTPUT_PATH = path.join(__dirname, '..', 'data', 'tag-embeddings.json');
+
+interface TagInfo {
+	tag: string;
+	longForm: string;
+	prefix: string;
+	description: string;
+}
 
 interface TagEmbedding {
 	tag: string;
 	longForm: string;
+	prefix: string;
 	vector: number[];
-	words: string[];
 }
 
 interface EmbeddingsDatabase {
 	version: string;
+	modelId: string;
 	schemaVersion: string;
 	dimensions: number;
 	generatedAt: string;
 	tags: TagEmbedding[];
 }
 
-/**
- * Extract words from a camelCase or hyphenated string.
- */
-function extractWords(text: string): string[] {
-	let words = text.split(/[-_\s]+/);
-	const expanded: string[] = [];
+async function getAllTags(): Promise<TagInfo[]> {
+	console.log(`Loading schema: ${SCHEMA_VERSION}`);
+	const schemas = await buildSchemasFromVersion(SCHEMA_VERSION);
+	const tags: TagInfo[] = [];
 
-	for (const word of words) {
-		const camelWords = word.replace(/([a-z])([A-Z])/g, '$1 $2').split(' ');
-		expanded.push(...camelWords);
+	// Helper to get all schema objects
+	const schemaList: Array<{ schema: any; prefix: string }> = [];
+
+	if (schemas.baseSchema) {
+		schemaList.push({ schema: schemas.baseSchema, prefix: '' });
 	}
 
-	return expanded.filter(w => w.length > 2).map(w => w.toLowerCase());
-}
-
-/**
- * Extract character n-grams from text.
- */
-function extractNgrams(text: string, n: number): string[] {
-	const ngrams: string[] = [];
-	const cleaned = text.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-	for (let i = 0; i <= cleaned.length - n; i++) {
-		ngrams.push(cleaned.slice(i, i + n));
-	}
-
-	return ngrams;
-}
-
-/**
- * Simple string hash function.
- */
-function hashString(str: string): number {
-	let hash = 0;
-	for (let i = 0; i < str.length; i++) {
-		const char = str.charCodeAt(i);
-		hash = ((hash << 5) - hash) + char;
-		hash = hash & hash;
-	}
-	return hash;
-}
-
-/**
- * Normalize a vector to unit length.
- */
-function normalize(vector: number[]): number[] {
-	const magnitude = Math.sqrt(vector.reduce((sum, v) => sum + v * v, 0));
-	if (magnitude === 0) return vector;
-	return vector.map(v => v / magnitude);
-}
-
-/**
- * Generate embedding for a HED tag.
- */
-function generateEmbedding(tagName: string, description: string = ''): TagEmbedding {
-	const words = extractWords(tagName);
-	const descWords = description ? extractWords(description).slice(0, 10) : [];
-	const allWords = [...words, ...descWords];
-
-	const text = `${tagName} ${description}`.toLowerCase();
-	const ngrams = extractNgrams(text, 3);
-
-	const vector = new Array(DIMENSIONS).fill(0);
-
-	// Word contributions
-	for (let i = 0; i < words.length; i++) {
-		const hash = hashString(words[i]);
-		for (let j = 0; j < DIMENSIONS; j++) {
-			vector[j] += Math.sin(hash * (j + 1)) * (1.0 - i * 0.1);
+	if (schemas.schemas) {
+		for (const [prefix, schema] of schemas.schemas) {
+			if (prefix && schema !== schemas.baseSchema) {
+				schemaList.push({ schema, prefix: prefix + ':' });
+			}
 		}
 	}
 
-	// Description word contributions
-	for (const word of descWords) {
-		const hash = hashString(word);
-		for (let j = 0; j < DIMENSIONS; j++) {
-			vector[j] += Math.sin(hash * (j + 1)) * 0.3;
+	// Extract tags from each schema
+	for (const { schema, prefix } of schemaList) {
+		if (schema?.entries?.tags) {
+			for (const [_key, entry] of schema.entries.tags) {
+				// Filter: only show tags that belong to this schema
+				const inLibrary = entry.getAttributeValue?.('inLibrary');
+				if (!prefix && inLibrary) continue; // Skip library tags in base schema
+				if (prefix && !inLibrary) continue; // Skip base tags in library schemas
+
+				const description = entry.getAttributeValue?.('description') || '';
+				const tagName = entry.name || '';
+				const longForm = entry.longTagName || entry.longName || tagName;
+
+				tags.push({
+					tag: tagName,
+					longForm: prefix + longForm,
+					prefix,
+					description
+				});
+			}
 		}
 	}
 
-	// N-gram contributions
-	for (const ngram of ngrams) {
-		const hash = hashString(ngram);
-		const idx = Math.abs(hash) % DIMENSIONS;
-		vector[idx] += 0.5;
+	console.log(`Found ${tags.length} tags`);
+	return tags;
+}
+
+function createEmbeddingText(tag: TagInfo): string {
+	// Use only short form for embedding (expand camelCase/hyphens for better matching)
+	const words = tag.tag
+		.replace(/([a-z])([A-Z])/g, '$1 $2')
+		.replace(/-/g, ' ');
+	return words;
+}
+
+async function generateEmbeddings(tags: TagInfo[]): Promise<{ embeddings: TagEmbedding[]; dimensions: number }> {
+	console.log(`Loading embedding model: ${MODEL_ID}`);
+	console.log('(This may take a few minutes on first run to download the model)');
+
+	// Dynamic import for ES module
+	const { pipeline } = await import('@huggingface/transformers');
+
+	const extractor = await pipeline('feature-extraction', MODEL_ID, {
+		dtype: DTYPE
+	});
+
+	console.log('Model loaded, generating embeddings...');
+
+	const embeddings: TagEmbedding[] = [];
+	let dimensions = 0;
+
+	// Process in batches
+	for (let i = 0; i < tags.length; i += BATCH_SIZE) {
+		const batch = tags.slice(i, i + BATCH_SIZE);
+		const texts = batch.map(createEmbeddingText);
+
+		try {
+			const output = await extractor(texts, {
+				pooling: 'last_token',
+				normalize: true
+			});
+
+			const data = Array.from(output.data as Float32Array);
+			dimensions = data.length / batch.length;
+
+			for (let j = 0; j < batch.length; j++) {
+				const start = j * dimensions;
+				const vector = data.slice(start, start + dimensions);
+
+				embeddings.push({
+					tag: batch[j].tag,
+					longForm: batch[j].longForm,
+					prefix: batch[j].prefix,
+					vector: Array.from(vector)
+				});
+			}
+
+			const progress = Math.min(i + BATCH_SIZE, tags.length);
+			process.stdout.write(`\rProgress: ${progress}/${tags.length} (${Math.round(progress / tags.length * 100)}%)`);
+		} catch (error) {
+			console.error(`\nError processing batch at ${i}:`, error);
+		}
 	}
 
-	return {
-		tag: tagName,
-		longForm: '',
-		vector: normalize(vector),
-		words: allWords
+	console.log(`\nGenerated ${embeddings.length} embeddings with ${dimensions} dimensions`);
+	return { embeddings, dimensions };
+}
+
+async function saveEmbeddings(embeddings: TagEmbedding[], dimensions: number): Promise<void> {
+	const outputDir = path.dirname(OUTPUT_PATH);
+	if (!fs.existsSync(outputDir)) {
+		fs.mkdirSync(outputDir, { recursive: true });
+	}
+
+	const db: EmbeddingsDatabase = {
+		version: '2.0',
+		modelId: MODEL_ID,
+		schemaVersion: SCHEMA_VERSION,
+		dimensions,
+		generatedAt: new Date().toISOString(),
+		tags: embeddings
 	};
+
+	// Save full version (pretty printed)
+	fs.writeFileSync(OUTPUT_PATH, JSON.stringify(db, null, 2));
+	console.log(`Saved embeddings to ${OUTPUT_PATH}`);
+
+	// Calculate file size
+	const stats = fs.statSync(OUTPUT_PATH);
+	console.log(`File size: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
+
+	// Save compact version (minified, rounded vectors)
+	const compactPath = OUTPUT_PATH.replace('.json', '.compact.json');
+	const compactDb: EmbeddingsDatabase = {
+		...db,
+		tags: embeddings.map(e => ({
+			...e,
+			// Round vectors to 6 decimal places to reduce size
+			vector: e.vector.map(v => Math.round(v * 1000000) / 1000000)
+		}))
+	};
+	fs.writeFileSync(compactPath, JSON.stringify(compactDb));
+	const compactStats = fs.statSync(compactPath);
+	console.log(`Compact file size: ${(compactStats.size / 1024 / 1024).toFixed(2)} MB`);
 }
 
-async function main() {
-	console.log('Generating HED tag embeddings...');
-
-	const fullVersion = [DEFAULT_VERSION, ...LIBRARY_SCHEMAS].join(',');
-	console.log(`Loading schema: ${fullVersion}`);
+async function main(): Promise<void> {
+	console.log('=== HED Tag Embeddings Generator (Qwen3-Embedding) ===\n');
 
 	try {
-		const schemas = await buildSchemasFromVersion(fullVersion);
-		const embeddings: TagEmbedding[] = [];
+		// Get all tags from schema
+		const tags = await getAllTags();
 
-		// Process base schema
-		if (schemas.baseSchema?.entries?.tags) {
-			console.log('Processing base schema tags...');
-			for (const [_key, entry] of schemas.baseSchema.entries.tags) {
-				const name = entry.shortTagName || entry.name || '';
-				const longForm = entry.longTagName || (entry as any).longName || entry.name || '';
-				const description = entry.valueAttributeNames?.get?.('description') || '';
+		// Generate embeddings
+		const { embeddings, dimensions } = await generateEmbeddings(tags);
 
-				if (name) {
-					const embedding = generateEmbedding(name, description);
-					embedding.longForm = longForm;
-					embeddings.push(embedding);
-				}
-			}
-		}
+		// Save to file
+		await saveEmbeddings(embeddings, dimensions);
 
-		// Process library schemas
-		if (schemas.schemas) {
-			for (const [prefix, schema] of schemas.schemas) {
-				if (prefix && schema !== schemas.baseSchema && schema?.entries?.tags) {
-					console.log(`Processing library schema: ${prefix}`);
-					for (const [_key, entry] of schema.entries.tags) {
-						// Check if tag belongs to this library
-						const inLibrary = entry.valueAttributeNames?.get?.('inLibrary');
-						if (!inLibrary) continue;
-
-						const prefixClean = prefix.toLowerCase();
-						let belongsToLib = false;
-
-						if (typeof inLibrary === 'string') {
-							belongsToLib = inLibrary.toLowerCase() === prefixClean;
-						} else if (Array.isArray(inLibrary)) {
-							belongsToLib = inLibrary.some((lib: any) =>
-								typeof lib === 'string' && lib.toLowerCase() === prefixClean
-							);
-						}
-
-						if (!belongsToLib) continue;
-
-						const name = entry.shortTagName || entry.name || '';
-						const longForm = entry.longTagName || (entry as any).longName || entry.name || '';
-						const description = entry.valueAttributeNames?.get?.('description') || '';
-
-						if (name) {
-							const fullName = `${prefix}:${name}`;
-							const embedding = generateEmbedding(fullName, description);
-							embedding.tag = fullName;
-							embedding.longForm = `${prefix}:${longForm}`;
-							embeddings.push(embedding);
-						}
-					}
-				}
-			}
-		}
-
-		console.log(`Generated ${embeddings.length} embeddings`);
-
-		// Create output directory
-		const outputDir = path.join(__dirname, '..', 'data');
-		if (!fs.existsSync(outputDir)) {
-			fs.mkdirSync(outputDir, { recursive: true });
-		}
-
-		// Save embeddings
-		const database: EmbeddingsDatabase = {
-			version: '1.0.0',
-			schemaVersion: fullVersion,
-			dimensions: DIMENSIONS,
-			generatedAt: new Date().toISOString(),
-			tags: embeddings
-		};
-
-		const outputPath = path.join(outputDir, 'embeddings.json');
-		fs.writeFileSync(outputPath, JSON.stringify(database, null, 2));
-		console.log(`Saved embeddings to ${outputPath}`);
-
-		// Also save a compact version (smaller file size)
-		const compactDatabase = {
-			...database,
-			tags: embeddings.map(e => ({
-				tag: e.tag,
-				longForm: e.longForm,
-				// Round vectors to 4 decimal places to reduce size
-				vector: e.vector.map(v => Math.round(v * 10000) / 10000),
-				words: e.words
-			}))
-		};
-
-		const compactPath = path.join(outputDir, 'embeddings.compact.json');
-		fs.writeFileSync(compactPath, JSON.stringify(compactDatabase));
-		console.log(`Saved compact embeddings to ${compactPath}`);
-
-		// Print some stats
-		const fullSize = fs.statSync(outputPath).size;
-		const compactSize = fs.statSync(compactPath).size;
-		console.log(`\nFile sizes:`);
-		console.log(`  Full: ${(fullSize / 1024).toFixed(1)} KB`);
-		console.log(`  Compact: ${(compactSize / 1024).toFixed(1)} KB`);
-
+		console.log('\nDone!');
 	} catch (error) {
-		console.error('Error generating embeddings:', error);
+		console.error('Error:', error);
 		process.exit(1);
 	}
 }

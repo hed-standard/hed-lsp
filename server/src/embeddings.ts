@@ -1,14 +1,17 @@
 /**
  * HED Tag Embeddings Module
- * Provides semantic similarity search using pre-computed embeddings.
+ * Provides semantic similarity search using Qwen3-Embedding-0.6B.
  *
- * Embeddings are generated from tag names and descriptions using
- * character n-grams and word decomposition for a simple but effective
- * similarity measure that works offline.
+ * Uses @huggingface/transformers to run the model locally.
+ * Model is downloaded on first use and cached.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
+
+// Dynamic import for transformers.js (ES module)
+let pipeline: any = null;
+let extractor: any = null;
 
 /**
  * Embedding entry for a HED tag.
@@ -18,17 +21,18 @@ export interface TagEmbedding {
 	tag: string;
 	/** Tag long form path */
 	longForm: string;
+	/** Library prefix (e.g., "sc:" for SCORE) */
+	prefix: string;
 	/** The embedding vector */
 	vector: number[];
-	/** Words extracted from the tag name */
-	words: string[];
 }
 
 /**
- * Embeddings database.
+ * Embeddings database stored on disk.
  */
 interface EmbeddingsDatabase {
 	version: string;
+	modelId: string;
 	schemaVersion: string;
 	dimensions: number;
 	tags: TagEmbedding[];
@@ -40,153 +44,233 @@ interface EmbeddingsDatabase {
 export interface SemanticMatch {
 	tag: string;
 	longForm: string;
+	prefix: string;
 	similarity: number;
-	matchedWords: string[];
 }
 
 /**
- * Embeddings Manager for semantic search.
+ * Configuration for the embedding service.
+ */
+export interface EmbeddingConfig {
+	/** Model ID on Hugging Face */
+	modelId: string;
+	/** Data type for model (fp32, fp16, q8) */
+	dtype: 'fp32' | 'fp16' | 'q8';
+	/** Whether embeddings are enabled */
+	enabled: boolean;
+}
+
+const DEFAULT_CONFIG: EmbeddingConfig = {
+	modelId: 'onnx-community/Qwen3-Embedding-0.6B-ONNX',
+	dtype: 'q8', // Quantized for speed and smaller size
+	enabled: true
+};
+
+/**
+ * Embeddings Manager for semantic search using Qwen3-Embedding.
  */
 class EmbeddingsManager {
 	private embeddings: Map<string, TagEmbedding> = new Map();
-	private loaded = false;
-	private dimensions = 100; // Dimension of embedding vectors
+	private config: EmbeddingConfig = DEFAULT_CONFIG;
+	private modelLoaded = false;
+	private embeddingsLoaded = false;
+	private dimensions = 1024; // Qwen3-Embedding-0.6B output dimension
+	private loading: Promise<boolean> | null = null;
+
+	/**
+	 * Initialize the embedding model.
+	 * Downloads on first use, then cached by transformers.js
+	 */
+	async initializeModel(): Promise<boolean> {
+		if (!this.config.enabled) {
+			console.log('[HED Embeddings] Embeddings disabled in config');
+			return false;
+		}
+
+		if (this.modelLoaded) return true;
+
+		// Prevent multiple simultaneous loads
+		if (this.loading) return this.loading;
+
+		this.loading = this._loadModel();
+		const result = await this.loading;
+		this.loading = null;
+		return result;
+	}
+
+	private async _loadModel(): Promise<boolean> {
+		try {
+			console.log('[HED Embeddings] Loading Qwen3-Embedding model...');
+
+			// Dynamic import of ES module
+			const transformers = await import('@huggingface/transformers');
+			pipeline = transformers.pipeline;
+
+			// Create the feature extraction pipeline
+			extractor = await pipeline(
+				'feature-extraction',
+				this.config.modelId,
+				{ dtype: this.config.dtype }
+			);
+
+			this.modelLoaded = true;
+			console.log('[HED Embeddings] Model loaded successfully');
+			return true;
+		} catch (error) {
+			console.error('[HED Embeddings] Failed to load model:', error);
+			this.config.enabled = false;
+			return false;
+		}
+	}
 
 	/**
 	 * Load pre-computed embeddings from file.
 	 */
 	async loadEmbeddings(): Promise<boolean> {
-		if (this.loaded) return true;
+		if (this.embeddingsLoaded) return true;
 
 		try {
-			const embeddingsPath = path.join(__dirname, '..', 'data', 'embeddings.json');
+			// Try compact version first (smaller file), then full version
+			let embeddingsPath = path.join(__dirname, '..', 'data', 'tag-embeddings.compact.json');
+			if (!fs.existsSync(embeddingsPath)) {
+				embeddingsPath = path.join(__dirname, '..', 'data', 'tag-embeddings.json');
+			}
 			if (fs.existsSync(embeddingsPath)) {
 				const data = fs.readFileSync(embeddingsPath, 'utf-8');
 				const db: EmbeddingsDatabase = JSON.parse(data);
 
 				for (const entry of db.tags) {
-					this.embeddings.set(entry.tag.toLowerCase(), entry);
+					const key = `${entry.prefix}${entry.tag}`.toLowerCase();
+					this.embeddings.set(key, entry);
 				}
 
 				this.dimensions = db.dimensions;
-				this.loaded = true;
-				console.log(`[HED Embeddings] Loaded ${this.embeddings.size} tag embeddings`);
+				this.embeddingsLoaded = true;
+				console.log(`[HED Embeddings] Loaded ${this.embeddings.size} pre-computed embeddings`);
 				return true;
 			}
 		} catch (error) {
-			console.error('[HED Embeddings] Failed to load embeddings:', error);
+			console.error('[HED Embeddings] Failed to load pre-computed embeddings:', error);
 		}
 
-		// If no pre-computed embeddings, we'll compute on-the-fly
-		console.log('[HED Embeddings] No pre-computed embeddings found, using on-the-fly computation');
+		console.log('[HED Embeddings] No pre-computed embeddings found');
 		return false;
 	}
 
 	/**
-	 * Generate embedding for a query string.
-	 * Uses character n-grams and word decomposition.
+	 * Save embeddings to file for faster future loads.
 	 */
-	generateQueryEmbedding(query: string): number[] {
-		const words = this.extractWords(query);
-		const ngrams = this.extractNgrams(query.toLowerCase(), 3);
+	async saveEmbeddings(schemaVersion: string): Promise<void> {
+		const embeddingsPath = path.join(__dirname, '..', 'data', 'tag-embeddings.json');
+		const dataDir = path.dirname(embeddingsPath);
 
-		// Create a simple hash-based embedding
-		const vector = new Array(this.dimensions).fill(0);
-
-		// Add word contributions
-		for (const word of words) {
-			const hash = this.hashString(word);
-			for (let i = 0; i < this.dimensions; i++) {
-				vector[i] += Math.sin(hash * (i + 1)) * 0.5;
-			}
+		if (!fs.existsSync(dataDir)) {
+			fs.mkdirSync(dataDir, { recursive: true });
 		}
 
-		// Add n-gram contributions
-		for (const ngram of ngrams) {
-			const hash = this.hashString(ngram);
-			const idx = Math.abs(hash) % this.dimensions;
-			vector[idx] += 1;
-		}
+		const db: EmbeddingsDatabase = {
+			version: '1.0',
+			modelId: this.config.modelId,
+			schemaVersion,
+			dimensions: this.dimensions,
+			tags: Array.from(this.embeddings.values())
+		};
 
-		// Normalize
-		return this.normalize(vector);
+		fs.writeFileSync(embeddingsPath, JSON.stringify(db));
+		console.log(`[HED Embeddings] Saved ${this.embeddings.size} embeddings to disk`);
 	}
 
 	/**
-	 * Generate embedding for a HED tag (name + description).
+	 * Generate embedding for a single text.
 	 */
-	generateTagEmbedding(tagName: string, description: string = ''): TagEmbedding {
-		const words = this.extractWords(tagName);
-		const descWords = description ? this.extractWords(description).slice(0, 10) : [];
-		const allWords = [...words, ...descWords];
+	async embed(text: string): Promise<number[] | null> {
+		if (!this.modelLoaded) {
+			const loaded = await this.initializeModel();
+			if (!loaded) return null;
+		}
 
-		const text = `${tagName} ${description}`.toLowerCase();
-		const ngrams = this.extractNgrams(text, 3);
+		try {
+			const output = await extractor(text, {
+				pooling: 'last_token',
+				normalize: true
+			});
 
-		const vector = new Array(this.dimensions).fill(0);
+			// Convert to regular array
+			const embedding = Array.from(output.data as Float32Array);
+			return embedding.slice(0, this.dimensions);
+		} catch (error) {
+			console.error('[HED Embeddings] Embedding failed:', error);
+			return null;
+		}
+	}
 
-		// Word contributions (higher weight for tag name words)
-		for (let i = 0; i < words.length; i++) {
-			const hash = this.hashString(words[i]);
-			for (let j = 0; j < this.dimensions; j++) {
-				vector[j] += Math.sin(hash * (j + 1)) * (1.0 - i * 0.1);
+	/**
+	 * Generate embeddings for multiple texts (batch).
+	 */
+	async embedBatch(texts: string[]): Promise<number[][] | null> {
+		if (!this.modelLoaded) {
+			const loaded = await this.initializeModel();
+			if (!loaded) return null;
+		}
+
+		try {
+			const output = await extractor(texts, {
+				pooling: 'last_token',
+				normalize: true
+			});
+
+			// Convert to array of arrays
+			const data = Array.from(output.data as Float32Array);
+			const embeddings: number[][] = [];
+
+			for (let i = 0; i < texts.length; i++) {
+				const start = i * this.dimensions;
+				embeddings.push(data.slice(start, start + this.dimensions));
 			}
-		}
 
-		// Description word contributions (lower weight)
-		for (const word of descWords) {
-			const hash = this.hashString(word);
-			for (let j = 0; j < this.dimensions; j++) {
-				vector[j] += Math.sin(hash * (j + 1)) * 0.3;
-			}
+			return embeddings;
+		} catch (error) {
+			console.error('[HED Embeddings] Batch embedding failed:', error);
+			return null;
 		}
+	}
 
-		// N-gram contributions
-		for (const ngram of ngrams) {
-			const hash = this.hashString(ngram);
-			const idx = Math.abs(hash) % this.dimensions;
-			vector[idx] += 0.5;
-		}
-
-		return {
-			tag: tagName,
-			longForm: '',
-			vector: this.normalize(vector),
-			words: allWords
-		};
+	/**
+	 * Add a tag embedding to the database.
+	 */
+	addTagEmbedding(tag: string, longForm: string, prefix: string, vector: number[]): void {
+		const key = `${prefix}${tag}`.toLowerCase();
+		this.embeddings.set(key, { tag, longForm, prefix, vector });
 	}
 
 	/**
 	 * Find semantically similar tags to a query.
 	 */
 	async findSimilar(query: string, topK: number = 10): Promise<SemanticMatch[]> {
+		// Try to load pre-computed embeddings first
 		await this.loadEmbeddings();
 
-		const queryWords = this.extractWords(query);
-		const queryWordsLower = queryWords.map(w => w.toLowerCase());
-		const queryEmbedding = this.generateQueryEmbedding(query);
+		if (this.embeddings.size === 0) {
+			console.log('[HED Embeddings] No embeddings available for search');
+			return [];
+		}
 
+		// Generate query embedding
+		const queryEmbedding = await this.embed(query);
+		if (!queryEmbedding) {
+			return [];
+		}
+
+		// Compute similarities
 		const results: SemanticMatch[] = [];
 
 		for (const [_key, entry] of this.embeddings) {
-			// Compute cosine similarity
 			const similarity = this.cosineSimilarity(queryEmbedding, entry.vector);
-
-			// Find matched words
-			const matchedWords = entry.words.filter(w =>
-				queryWordsLower.some(qw =>
-					w.toLowerCase().includes(qw) || qw.includes(w.toLowerCase())
-				)
-			);
-
-			// Boost score for word matches
-			const wordBoost = matchedWords.length * 0.2;
-
 			results.push({
 				tag: entry.tag,
 				longForm: entry.longForm,
-				similarity: similarity + wordBoost,
-				matchedWords
+				prefix: entry.prefix,
+				similarity
 			});
 		}
 
@@ -196,51 +280,17 @@ class EmbeddingsManager {
 	}
 
 	/**
-	 * Find similar tags using on-the-fly embedding generation.
-	 * Used when pre-computed embeddings aren't available.
+	 * Check if embeddings are available.
 	 */
-	findSimilarOnTheFly(
-		query: string,
-		tags: Array<{ shortForm: string; longForm: string; description: string }>,
-		topK: number = 10
-	): SemanticMatch[] {
-		const queryWords = this.extractWords(query);
-		const queryWordsLower = queryWords.map(w => w.toLowerCase());
-		const queryEmbedding = this.generateQueryEmbedding(query);
-
-		const results: SemanticMatch[] = [];
-
-		for (const tag of tags) {
-			const tagEmbedding = this.generateTagEmbedding(tag.shortForm, tag.description);
-			const similarity = this.cosineSimilarity(queryEmbedding, tagEmbedding.vector);
-
-			// Find matched words
-			const matchedWords = tagEmbedding.words.filter(w =>
-				queryWordsLower.some(qw =>
-					w.toLowerCase().includes(qw) || qw.includes(w.toLowerCase())
-				)
-			);
-
-			// Boost for word matches
-			const wordBoost = matchedWords.length * 0.2;
-
-			results.push({
-				tag: tag.shortForm,
-				longForm: tag.longForm,
-				similarity: similarity + wordBoost,
-				matchedWords
-			});
-		}
-
-		results.sort((a, b) => b.similarity - a.similarity);
-		return results.slice(0, topK);
+	isAvailable(): boolean {
+		return this.config.enabled && (this.modelLoaded || this.embeddingsLoaded);
 	}
 
 	/**
-	 * Check if embeddings are loaded.
+	 * Check if model is loaded.
 	 */
-	isLoaded(): boolean {
-		return this.loaded && this.embeddings.size > 0;
+	isModelLoaded(): boolean {
+		return this.modelLoaded;
 	}
 
 	/**
@@ -250,63 +300,11 @@ class EmbeddingsManager {
 		return this.embeddings.size;
 	}
 
-	// --- Helper methods ---
-
 	/**
-	 * Extract words from a camelCase or hyphenated string.
+	 * Enable or disable embeddings.
 	 */
-	private extractWords(text: string): string[] {
-		// Split on hyphens, underscores, spaces
-		let words = text.split(/[-_\s]+/);
-
-		// Also split camelCase
-		const expanded: string[] = [];
-		for (const word of words) {
-			// Split camelCase: "SensoryEvent" -> ["Sensory", "Event"]
-			const camelWords = word.replace(/([a-z])([A-Z])/g, '$1 $2').split(' ');
-			expanded.push(...camelWords);
-		}
-
-		// Filter out short words and normalize
-		return expanded
-			.filter(w => w.length > 2)
-			.map(w => w.toLowerCase());
-	}
-
-	/**
-	 * Extract character n-grams from text.
-	 */
-	private extractNgrams(text: string, n: number): string[] {
-		const ngrams: string[] = [];
-		const cleaned = text.replace(/[^a-z0-9]/g, '');
-
-		for (let i = 0; i <= cleaned.length - n; i++) {
-			ngrams.push(cleaned.slice(i, i + n));
-		}
-
-		return ngrams;
-	}
-
-	/**
-	 * Simple string hash function.
-	 */
-	private hashString(str: string): number {
-		let hash = 0;
-		for (let i = 0; i < str.length; i++) {
-			const char = str.charCodeAt(i);
-			hash = ((hash << 5) - hash) + char;
-			hash = hash & hash; // Convert to 32bit integer
-		}
-		return hash;
-	}
-
-	/**
-	 * Normalize a vector to unit length.
-	 */
-	private normalize(vector: number[]): number[] {
-		const magnitude = Math.sqrt(vector.reduce((sum, v) => sum + v * v, 0));
-		if (magnitude === 0) return vector;
-		return vector.map(v => v / magnitude);
+	setEnabled(enabled: boolean): void {
+		this.config.enabled = enabled;
 	}
 
 	/**
@@ -320,7 +318,7 @@ class EmbeddingsManager {
 			dotProduct += a[i] * b[i];
 		}
 
-		// Vectors are already normalized, so this is the cosine similarity
+		// Vectors are already normalized
 		return dotProduct;
 	}
 }
