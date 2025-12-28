@@ -67,6 +67,34 @@
 					"description": "Traces the communication between VS Code and the HED language server"
 				}
 			}
+		},
+		"semanticTokenScopes": [
+			{
+				"language": "json",
+				"scopes": {
+					"type": ["entity.name.tag.hed"],
+					"class": ["entity.name.tag.library.hed"],
+					"function": ["keyword.control.definition.hed"],
+					"keyword": ["keyword.other.reserved.hed"],
+					"variable": ["variable.other.placeholder.hed"],
+					"number": ["constant.numeric.value.hed"],
+					"string": ["entity.name.tag.path.hed"],
+					"namespace": ["storage.type.library.hed"]
+				}
+			}
+		],
+		"configurationDefaults": {
+			"editor.semanticTokenColorCustomizations": {
+				"rules": {
+					"type:hed": "#4EC9B0",
+					"class:hed": "#9CDCFE",
+					"function:hed": "#DCDCAA",
+					"keyword:hed": "#C586C0",
+					"variable:hed": "#CE9178",
+					"number:hed": "#B5CEA8",
+					"namespace:hed": "#569CD6"
+				}
+			}
 		}
 	},
 	"scripts": {

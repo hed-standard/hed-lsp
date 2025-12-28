@@ -1,0 +1,80 @@
+{
+	"$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+	"name": "HED",
+	"scopeName": "source.hed",
+	"patterns": [
+		{ "include": "#hed-string" }
+	],
+	"repository": {
+		"hed-string": {
+			"patterns": [
+				{ "include": "#placeholder" },
+				{ "include": "#definition-tag" },
+				{ "include": "#reserved-tag" },
+				{ "include": "#library-prefix" },
+				{ "include": "#tag-value" },
+				{ "include": "#tag-name" },
+				{ "include": "#group" },
+				{ "include": "#separator" }
+			]
+		},
+		"placeholder": {
+			"name": "variable.other.placeholder.hed",
+			"match": "\\{[^}]+\\}",
+			"comment": "Column placeholder like {column_name}"
+		},
+		"definition-tag": {
+			"match": "\\b(Definition|Def|Def-expand)(/[A-Za-z0-9_-]+)?\\b",
+			"captures": {
+				"1": { "name": "keyword.control.definition.hed" },
+				"2": { "name": "entity.name.tag.definition-name.hed" }
+			},
+			"comment": "Definition mechanism tags"
+		},
+		"reserved-tag": {
+			"name": "keyword.other.reserved.hed",
+			"match": "\\b(Onset|Offset|Inset|Duration|Delay)\\b",
+			"comment": "Reserved temporal tags"
+		},
+		"library-prefix": {
+			"match": "\\b([a-z]{2}):([A-Za-z][A-Za-z0-9_-]*)\\b",
+			"captures": {
+				"1": { "name": "storage.type.library.hed" },
+				"2": { "name": "entity.name.tag.library.hed" }
+			},
+			"comment": "Library schema prefix like sc:Sleep-stage"
+		},
+		"tag-value": {
+			"match": "\\b([A-Za-z][A-Za-z0-9_-]*)/(#|[0-9.]+(?:\\s*[a-zA-Z]+)?)\\b",
+			"captures": {
+				"1": { "name": "entity.name.tag.hed" },
+				"2": { "name": "constant.numeric.value.hed" }
+			},
+			"comment": "Value-taking tag like Duration/5 s or Label/#"
+		},
+		"tag-name": {
+			"name": "entity.name.tag.hed",
+			"match": "\\b[A-Z][A-Za-z0-9_-]*\\b",
+			"comment": "Standard HED tag name"
+		},
+		"group": {
+			"begin": "\\(",
+			"end": "\\)",
+			"beginCaptures": {
+				"0": { "name": "punctuation.definition.group.begin.hed" }
+			},
+			"endCaptures": {
+				"0": { "name": "punctuation.definition.group.end.hed" }
+			},
+			"patterns": [
+				{ "include": "#hed-string" }
+			],
+			"comment": "Parenthesized group"
+		},
+		"separator": {
+			"name": "punctuation.separator.hed",
+			"match": ",",
+			"comment": "Tag separator"
+		}
+	}
+}

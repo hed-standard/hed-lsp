@@ -13,7 +13,8 @@ import {
 	DidChangeConfigurationNotification,
 	CompletionItem,
 	TextDocumentPositionParams,
-	Hover
+	Hover,
+	SemanticTokensRequest
 } from 'vscode-languageserver/node';
 
 import { TextDocument } from 'vscode-languageserver-textdocument';
@@ -25,6 +26,7 @@ import { parseTsvForHedStrings, isTsvDocument, hasHedColumn } from './tsvParser.
 import { validateDocument } from './validation.js';
 import { provideCompletions, resolveCompletionItem, completionTriggerCharacters } from './completion.js';
 import { provideHover } from './hover.js';
+import { provideSemanticTokens, semanticTokensLegend } from './semanticTokens.js';
 
 /**
  * Get HED regions from a document (JSON or TSV).
@@ -75,7 +77,11 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
 				resolveProvider: true,
 				triggerCharacters: completionTriggerCharacters
 			},
-			hoverProvider: true
+			hoverProvider: true,
+			semanticTokensProvider: {
+				legend: semanticTokensLegend,
+				full: true
+			}
 		}
 	};
 
@@ -293,6 +299,24 @@ connection.onHover(
 		}
 	}
 );
+
+/**
+ * Provide semantic tokens for syntax highlighting.
+ */
+connection.onRequest(SemanticTokensRequest.type, (params) => {
+	const document = documents.get(params.textDocument.uri);
+	if (!document) {
+		return { data: [] };
+	}
+
+	try {
+		const builder = provideSemanticTokens(document);
+		return builder.build();
+	} catch (error) {
+		connection.console.error(`Semantic tokens error: ${error}`);
+		return { data: [] };
+	}
+});
 
 // Make the document manager listen on the connection
 documents.listen(connection);

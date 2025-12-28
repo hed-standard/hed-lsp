@@ -267,6 +267,7 @@ function findTagInString(hedString: string, tagName: string): [number, number] |
 /**
  * Validate all HED regions in a document and return diagnostics.
  * Auto-detects schema version from dataset_description.json if not specified.
+ * Always includes library schemas for complete validation.
  */
 export async function validateDocument(
 	document: TextDocument,
@@ -275,15 +276,15 @@ export async function validateDocument(
 ): Promise<Diagnostic[]> {
 	const diagnostics: Diagnostic[] = [];
 
-	// Load schema - try auto-detection if no version specified
+	// Load schema - always use getSchemaForDocument to ensure library schemas are included
 	let schemas: Schemas;
 	try {
+		// If version specified in settings, set it first (schemaManager will add library schemas)
 		if (schemaVersion) {
-			schemas = await schemaManager.getSchema(schemaVersion);
-		} else {
-			// Try to auto-detect from dataset_description.json
-			schemas = await schemaManager.getSchemaForDocument(document.uri);
+			schemaManager.setCurrentVersion(schemaVersion);
 		}
+		// Always use getSchemaForDocument to include library schemas
+		schemas = await schemaManager.getSchemaForDocument(document.uri);
 	} catch (error) {
 		// If schema fails to load, report it
 		diagnostics.push({
