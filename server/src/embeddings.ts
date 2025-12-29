@@ -69,99 +69,390 @@ const DEFAULT_CONFIG: EmbeddingConfig = {
 /**
  * Keyword index for direct semantic mappings.
  * Maps search terms to HED tags that should be suggested.
- * This bypasses the embedding model for known relationships.
+ * Focused on neuroscience/neuroimaging terminology commonly used in BIDS datasets.
  */
 const KEYWORD_INDEX: Record<string, string[]> = {
-	// Animals → Animal, Animal-agent
-	'dog': ['Animal', 'Animal-agent'],
-	'cat': ['Animal', 'Animal-agent'],
-	'horse': ['Animal', 'Animal-agent'],
-	'bird': ['Animal', 'Animal-agent'],
-	'mouse': ['Animal', 'Animal-agent', 'Computer-mouse'],
+	// =====================
+	// LAB ANIMALS (neuroscience research)
+	// =====================
+	// Primates
 	'monkey': ['Animal', 'Animal-agent'],
-	'fish': ['Animal', 'Animal-agent'],
-	'snake': ['Animal', 'Animal-agent'],
-	'rat': ['Animal', 'Animal-agent'],
-	'pig': ['Animal', 'Animal-agent'],
-	'cow': ['Animal', 'Animal-agent'],
-	'sheep': ['Animal', 'Animal-agent'],
-	'goat': ['Animal', 'Animal-agent'],
-	'deer': ['Animal', 'Animal-agent'],
-	'rabbit': ['Animal', 'Animal-agent'],
-	'squirrel': ['Animal', 'Animal-agent'],
 	'marmoset': ['Animal', 'Animal-agent'],
+	'macaque': ['Animal', 'Animal-agent'],
+	'rhesus': ['Animal', 'Animal-agent'],
+	'chimp': ['Animal', 'Animal-agent'],
+	'chimpanzee': ['Animal', 'Animal-agent'],
 	'primate': ['Animal', 'Animal-agent'],
-	'mammal': ['Animal', 'Animal-agent'],
+	'ape': ['Animal', 'Animal-agent'],
+	// Rodents
+	'mouse': ['Animal', 'Animal-agent', 'Computer-mouse'],
+	'mice': ['Animal', 'Animal-agent'],
+	'rat': ['Animal', 'Animal-agent'],
+	'rodent': ['Animal', 'Animal-agent'],
+	'hamster': ['Animal', 'Animal-agent'],
+	'gerbil': ['Animal', 'Animal-agent'],
+	'guinea': ['Animal', 'Animal-agent'],  // guinea pig
+	// Other lab animals
+	'ferret': ['Animal', 'Animal-agent'],
+	'rabbit': ['Animal', 'Animal-agent'],
+	'cat': ['Animal', 'Animal-agent'],
+	'dog': ['Animal', 'Animal-agent'],
+	// Model organisms
+	'zebrafish': ['Animal', 'Animal-agent'],
+	'drosophila': ['Animal', 'Animal-agent'],
+	'fly': ['Animal', 'Animal-agent'],
+	'worm': ['Animal', 'Animal-agent'],
+	'elegans': ['Animal', 'Animal-agent'],  // C. elegans
+	// General animal terms
+	'animal': ['Animal', 'Animal-agent'],
 	'creature': ['Animal', 'Animal-agent', 'Organism'],
 	'beast': ['Animal', 'Animal-agent'],
+	'mammal': ['Animal', 'Animal-agent'],
+	'bird': ['Animal', 'Animal-agent'],
+	'fish': ['Animal', 'Animal-agent'],
 	'pet': ['Animal', 'Animal-agent'],
 
-	// People → Human, Human-agent
+	// =====================
+	// HUMAN PARTICIPANTS
+	// =====================
+	'subject': ['Human-agent', 'Experiment-participant'],
+	'participant': ['Human-agent', 'Experiment-participant'],
+	'volunteer': ['Human-agent', 'Experiment-participant'],
+	'patient': ['Human-agent', 'Experiment-participant'],
 	'person': ['Human', 'Human-agent'],
 	'people': ['Human', 'Human-agent'],
+	'human': ['Human', 'Human-agent'],
 	'man': ['Human', 'Human-agent'],
 	'woman': ['Human', 'Human-agent'],
 	'child': ['Human', 'Human-agent'],
 	'adult': ['Human', 'Human-agent'],
-	'human': ['Human', 'Human-agent'],
+	'infant': ['Human', 'Human-agent'],
+	'baby': ['Human', 'Human-agent'],
+	'toddler': ['Human', 'Human-agent'],
+	'adolescent': ['Human', 'Human-agent'],
+	'teenager': ['Human', 'Human-agent'],
+	'elderly': ['Human', 'Human-agent'],
 
-	// Buildings → Building
+	// =====================
+	// EXPERIMENTAL PARADIGM TERMS
+	// =====================
+	// Stimuli
+	'stimulus': ['Experimental-stimulus', 'Sensory-event'],
+	'stimuli': ['Experimental-stimulus', 'Sensory-event'],
+	'stim': ['Experimental-stimulus', 'Sensory-event'],
+	'target': ['Target', 'Experimental-stimulus'],
+	'distractor': ['Distractor', 'Experimental-stimulus'],
+	'probe': ['Experimental-stimulus', 'Cue'],
+	'prime': ['Experimental-stimulus', 'Cue'],
+	'mask': ['Experimental-stimulus'],
+	'flanker': ['Distractor', 'Experimental-stimulus'],
+	// Trial structure
+	'trial': ['Experimental-trial'],
+	'block': ['Time-block'],
+	'run': ['Time-block'],
+	'session': ['Time-block'],
+	'epoch': ['Time-block'],
+	// Timing
+	'onset': ['Onset'],
+	'offset': ['Offset'],
+	'duration': ['Duration'],
+	'delay': ['Delay'],
+	'iti': ['Experimental-intertrial'],
+	'isi': ['Experimental-intertrial'],
+	'soa': ['Delay'],  // stimulus onset asynchrony
+	// Cues and instructions
+	'cue': ['Cue', 'Experimental-stimulus'],
+	'go': ['Go-signal', 'Cue'],
+	'nogo': ['Cue', 'Experimental-stimulus'],
+	'stop': ['Cue', 'Halt'],
+	'instruction': ['Instructional'],
+	'prompt': ['Cue', 'Instructional'],
+	// Responses
+	'response': ['Participant-response'],
+	'answer': ['Participant-response'],
+	'reaction': ['Participant-response'],
+	'rt': ['Participant-response'],  // reaction time
+	// Feedback
+	'feedback': ['Feedback'],
+	'correct': ['Feedback'],
+	'incorrect': ['Feedback'],
+	'error': ['Feedback'],
+	'accuracy': ['Feedback'],
+
+	// =====================
+	// REWARD & MOTIVATION (common in animal/human neuroscience)
+	// =====================
+	'reward': ['Reward'],
+	'punishment': ['Feedback'],
+	'reinforcement': ['Reward', 'Feedback'],
+	'incentive': ['Reward'],
+	'juice': ['Reward', 'Drink'],  // common reward in primate studies
+	'sugar': ['Reward', 'Sweet'],
+	'sucrose': ['Reward', 'Sweet'],
+	'money': ['Reward'],
+	'monetary': ['Reward'],
+	'win': ['Reward'],
+	'loss': ['Feedback'],
+	'gain': ['Reward'],
+
+	// =====================
+	// COGNITIVE STATES & PROCESSES
+	// =====================
+	// Attention
+	'attention': ['Attentive', 'Focused-attention'],
+	'attentive': ['Attentive'],
+	'focus': ['Focused-attention', 'Attentive'],
+	'focused': ['Focused-attention'],
+	'concentrate': ['Focused-attention', 'Attentive'],
+	'distracted': ['Distracted'],
+	'vigilance': ['Attentive', 'Alert'],
+	'orienting': ['Orienting-attention'],
+	'covert': ['Covert-attention'],
+	'overt': ['Overt-attention'],
+	// Alertness/Arousal
+	'alert': ['Alert'],
+	'awake': ['Awake'],
+	'asleep': ['Asleep'],
+	'sleep': ['Asleep'],
+	'drowsy': ['Drowsy'],
+	'aroused': ['Aroused'],
+	'arousal': ['Aroused'],
+	// Rest/Baseline
+	'rest': ['Rest', 'Resting'],
+	'resting': ['Resting', 'Rest'],
+	'baseline': ['Rest'],
+	'fixation': ['Fixate'],
+	'fixate': ['Fixate'],
+	// Memory-related (map to cognitive states)
+	'remember': ['Attentive'],
+	'recall': ['Attentive'],
+	'encode': ['Attentive'],
+	'retrieve': ['Attentive'],
+
+	// =====================
+	// EMOTIONAL STATES
+	// =====================
+	'happy': ['Happy'],
+	'sad': ['Sad'],
+	'angry': ['Angry'],
+	'fear': ['Fearful'],
+	'fearful': ['Fearful'],
+	'afraid': ['Fearful'],
+	'scared': ['Fearful'],
+	'disgusted': ['Disgusted'],
+	'disgust': ['Disgusted'],
+	'surprised': ['Excited'],
+	'neutral': ['Emotionally-neutral'],
+	'emotional': ['Agent-emotional-state'],
+	'emotion': ['Agent-emotional-state'],
+	'mood': ['Agent-emotional-state'],
+	'anxious': ['Stressed', 'Fearful'],
+	'stressed': ['Stressed'],
+	'relaxed': ['Content', 'Resting'],
+	'excited': ['Excited'],
+	'frustrated': ['Frustrated'],
+	'bored': ['Passive'],
+
+	// =====================
+	// SENSORY MODALITIES
+	// =====================
+	// Visual
+	'visual': ['See', 'Visual-presentation'],
+	'see': ['See'],
+	'look': ['See', 'Fixate'],
+	'watch': ['See'],
+	'view': ['See', 'Visual-presentation'],
+	'image': ['Image', 'Visual-presentation'],
+	'picture': ['Image', 'Photograph'],
+	'photo': ['Photograph', 'Image'],
+	'photograph': ['Photograph'],
+	'video': ['Audiovisual-clip'],
+	'movie': ['Audiovisual-clip'],
+	'face': ['Face', 'Move-face'],
+	'scene': ['Image', 'Visual-presentation'],
+	'flash': ['Visual-presentation', 'Sensory-event'],
+	'flicker': ['Visual-presentation'],
+	// Auditory
+	'auditory': ['Hear', 'Auditory-presentation'],
+	'hear': ['Hear'],
+	'listen': ['Hear'],
+	'sound': ['Sound'],
+	'audio': ['Sound', 'Auditory-presentation'],
+	'tone': ['Tone', 'Sound'],
+	'beep': ['Beep', 'Sound'],
+	'noise': ['Sound', 'Signal-noise'],
+	'music': ['Musical-sound'],
+	'speech': ['Vocalized-sound', 'Communicate-vocally'],
+	'voice': ['Vocalized-sound'],
+	'click': ['Sound', 'Beep', 'Press', 'Push-button'],  // both sound and action
+	// Tactile/Somatosensory
+	'touch': ['Touch', 'Sense-by-touch'],
+	'tactile': ['Tactile-presentation', 'Sense-by-touch'],
+	'vibration': ['Tactile-vibration'],
+	'pressure': ['Tactile-pressure'],
+	'pain': ['Pain'],
+	'painful': ['Pain'],
+	'thermal': ['Tactile-temperature'],
+	'temperature': ['Tactile-temperature'],
+	'hot': ['Tactile-temperature'],
+	'cold': ['Tactile-temperature'],
+	// Other senses
+	'smell': ['Smell', 'Olfactory-presentation'],
+	'odor': ['Smell', 'Olfactory-presentation'],
+	'taste': ['Taste', 'Gustatory-presentation'],
+	'sweet': ['Sweet', 'Taste'],
+	'bitter': ['Bitter', 'Taste'],
+	'salty': ['Salty', 'Taste'],
+	'sour': ['Sour', 'Taste'],
+
+	// =====================
+	// MOTOR ACTIONS & RESPONSES
+	// =====================
+	// Eye movements
+	'saccade': ['Saccade', 'Move-eyes'],
+	'blink': ['Blink'],
+	// 'fixation' defined above in cognitive states
+	'gaze': ['Fixate', 'Move-eyes'],
+	'eye': ['Move-eyes', 'Eye'],
+	'pupil': ['Eye'],
+	// Hand/Button responses
+	'button': ['Push-button', 'Press'],
+	'press': ['Press', 'Push-button'],
+	'keypress': ['Press', 'Push-button'],
+	// 'click' defined above in auditory (combines sound and press)
+	'tap': ['Press', 'Touch'],
+	'grip': ['Grasp'],
+	'grasp': ['Grasp'],
+	'reach': ['Move-body-part', 'Move-upper-extremity'],
+	'point': ['Move-upper-extremity'],
+	// Body movements
+	'walk': ['Walk'],
+	'move': ['Move', 'Move-body'],
+	'movement': ['Move', 'Move-body'],
+	'motion': ['Move', 'Move-body'],
+	'gesture': ['Communicate-gesturally'],
+	'nod': ['Nod-head'],
+	'head': ['Head', 'Move-head'],
+	// Speech production
+	'speak': ['Communicate-vocally', 'Vocalize'],
+	'say': ['Communicate-vocally'],
+	'vocalize': ['Vocalize'],
+	'articulate': ['Communicate-vocally'],
+
+	// =====================
+	// EQUIPMENT & DEVICES
+	// =====================
+	'screen': ['Computer-screen', 'Display-device'],
+	'monitor': ['Computer-screen', 'Display-device'],
+	'display': ['Display-device', 'Computer-screen'],
+	'headphones': ['Headphones'],
+	'earphones': ['Headphones'],
+	'speaker': ['Loudspeaker'],
+	'keyboard': ['Keyboard'],
+	'joystick': ['Joystick'],
+	'trackball': ['Trackball'],
+	'touchscreen': ['Touchscreen'],
+
+	// =====================
+	// BRAIN & NEUROANATOMY
+	// =====================
+	'brain': ['Brain'],
+	'cortex': ['Brain', 'Brain-region'],
+	'frontal': ['Frontal-lobe', 'Brain-region'],
+	'parietal': ['Parietal-lobe', 'Brain-region'],
+	'temporal': ['Temporal-lobe', 'Brain-region'],
+	'occipital': ['Occipital-lobe', 'Brain-region'],
+	'cerebellum': ['Cerebellum', 'Brain-region'],
+
+	// =====================
+	// BODY PARTS (for annotations)
+	// =====================
+	'hand': ['Hand'],
+	'finger': ['Finger'],
+	'arm': ['Arm'],
+	'leg': ['Leg'],
+	'foot': ['Foot'],
+	'body': ['Body'],
+
+	// =====================
+	// CELLULAR & NETWORK NEUROSCIENCE
+	// =====================
+	'neuron': ['Brain', 'Brain-region'],
+	'cell': ['Brain', 'Brain-region'],
+	'spike': ['Data-feature', 'Measurement-event'],
+	'firing': ['Data-feature', 'Measurement-event'],
+	'unit': ['Data-feature'],  // single unit
+	'single-cell': ['Data-feature', 'Measurement-event'],
+	'multi-unit': ['Data-feature', 'Measurement-event'],
+	'network': ['Brain', 'Brain-region'],
+	'neural': ['Brain', 'Brain-region'],
+	'neuronal': ['Brain', 'Brain-region'],
+	'circuit': ['Brain', 'Brain-region'],
+	'ensemble': ['Brain', 'Brain-region'],
+	'lfp': ['Data-feature', 'Measurement-event'],  // local field potential
+	'oscillation': ['Data-feature'],
+	'gamma': ['Data-feature'],
+	'theta': ['Data-feature'],
+	'alpha': ['Data-feature'],
+	'beta': ['Data-feature'],
+	'delta': ['Data-feature'],
+
+	// =====================
+	// RECORDING MODALITIES & NEUROIMAGING
+	// =====================
+	'eeg': ['Measurement-event', 'Data-feature'],
+	'meg': ['Measurement-event', 'Data-feature'],
+	'fmri': ['Measurement-event', 'Data-feature'],
+	'mri': ['Measurement-event'],
+	'pet-scan': ['Measurement-event'],  // 'pet' is used for animal pet
+	'nirs': ['Measurement-event', 'Data-feature'],
+	'fnirs': ['Measurement-event', 'Data-feature'],
+	'electrophysiology': ['Measurement-event', 'Data-feature'],
+	'imaging': ['Measurement-event'],
+	'recording': ['Measurement-event', 'Data-feature'],
+	'scan': ['Measurement-event'],
+	'acquisition': ['Measurement-event'],
+	'trigger': ['Cue', 'Experimental-stimulus'],
+	'pulse': ['Sensory-event', 'Measurement-event'],
+	'tr': ['Time-block'],  // repetition time
+
+	// =====================
+	// NATURALISTIC & ECOLOGICAL PARADIGMS
+	// =====================
+	'naturalistic': ['Sensory-event', 'Experimental-stimulus'],
+	'ecological': ['Sensory-event'],
+	'real-world': ['Sensory-event'],
+	'free-viewing': ['See', 'Sensory-event'],
+	'narrative': ['Audiovisual-clip', 'Sensory-event'],
+	'story': ['Audiovisual-clip', 'Hear'],
+	'social': ['Human-agent', 'Sensory-event'],
+	'interaction': ['Communicate', 'Agent-action'],
+	'conversation': ['Communicate-vocally', 'Hear'],
+	'dialogue': ['Communicate-vocally', 'Hear'],
+
+	// =====================
+	// GENERAL OBJECTS & PLACES
+	// =====================
+	// Buildings
 	'house': ['Building'],
 	'home': ['Building'],
+	'building': ['Building'],
+	'room': ['Room'],
 	'office': ['Building'],
-	'school': ['Building'],
-	'hospital': ['Building'],
-	'church': ['Building'],
-	'store': ['Building'],
-	'shop': ['Building'],
-	'factory': ['Building'],
-	'warehouse': ['Building'],
-	'residence': ['Building'],
-	'apartment': ['Building'],
-
-	// Vehicles → Vehicle
+	'lab': ['Building', 'Room'],
+	'laboratory': ['Building', 'Room'],
+	// Vehicles
 	'car': ['Vehicle'],
-	'truck': ['Vehicle'],
-	'bus': ['Vehicle'],
-	'train': ['Vehicle'],
-	'plane': ['Vehicle'],
-	'boat': ['Vehicle'],
-	'ship': ['Vehicle'],
-	'motorcycle': ['Vehicle'],
-	'bicycle': ['Vehicle'],
-	'bike': ['Vehicle'],
-
-	// Food/Drink
-	'food': ['Food'],
-	'meal': ['Food'],
-	'eat': ['Food'],
-	'eating': ['Food'],
-	'drink': ['Drink'],
-	'beverage': ['Drink'],
-	'juice': ['Drink', 'Food'],
-	'water': ['Drink'],
-	'coffee': ['Drink'],
-	'tea': ['Drink'],
-
-	// Plants
-	'tree': ['Plant'],
-	'flower': ['Plant'],
-	'grass': ['Plant'],
-	'plant': ['Plant'],
-	'vegetation': ['Plant'],
-
+	'vehicle': ['Vehicle'],
 	// Furniture
 	'chair': ['Furniture'],
 	'table': ['Furniture'],
 	'desk': ['Furniture'],
-	'bed': ['Furniture'],
-	'sofa': ['Furniture'],
-	'couch': ['Furniture'],
-
-	// Sounds
-	'music': ['Musical-sound', 'Sound'],
-	'noise': ['Sound', 'Environmental-sound'],
-	'audio': ['Sound'],
+	// Food (also as stimuli)
+	'food': ['Food'],
+	'fruit': ['Fruit'],
+	'apple': ['Apple', 'Fruit'],
+	'banana': ['Banana', 'Fruit'],
 };
 
 /**
