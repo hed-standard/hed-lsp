@@ -2,21 +2,28 @@
 	"version": "0.2",
 	"language": "en",
 	"words": [
+		"antisaccade",
 		"asynchrony",
 		"bids",
 		"biomejs",
+		"colour",
 		"cspell",
 		"distractor",
 		"dtype",
 		"elegans",
 		"epileptiform",
 		"fnirs",
+		"gabor",
+		"genericerror",
 		"gesturally",
 		"hedtools",
 		"huggingface",
+		"ictal",
 		"inset",
+		"interictal",
 		"intertrial",
 		"mylib",
+		"nback",
 		"neuroanatomy",
 		"neuroimaging",
 		"nirs",
@@ -26,9 +33,11 @@
 		"optogenetics",
 		"polysomnography",
 		"prepublish",
+		"prosaccade",
 		"qwen",
 		"saccade",
 		"stim",
+		"stroop",
 		"vitest",
 		"vsix",
 		"vsce",
@@ -44,5 +53,9 @@
 	],
 	"ignoreRegExpList": [
 		"HED[A-Za-z0-9]*"
+	],
+	"ignoreWords": [
+		"matc",
+		"Reac"
 	]
 }

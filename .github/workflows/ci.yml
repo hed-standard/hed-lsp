@@ -36,7 +36,9 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [18, 20, 22]
+        # Node 18 dropped due to vitest 4.x ESM compatibility issues
+        # Node 18 EOL: April 2025
+        node-version: [20, 22]
 
     steps:
       - uses: actions/checkout@v4
