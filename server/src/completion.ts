@@ -11,8 +11,8 @@ import {
 } from 'vscode-languageserver';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { schemaManager } from './schemaManager.js';
-import { getHedRegionAtPosition, getContentOffset, getTagAtOffset } from './documentParser.js';
-import { getTsvHedRegionAtPosition, isTsvDocument } from './tsvParser.js';
+import { parseJsonForHedStrings, getHedRegionAtPosition, getContentOffset, getTagAtOffset } from './documentParser.js';
+import { parseTsvForHedStrings, getTsvHedRegionAtPosition, isTsvDocument } from './tsvParser.js';
 import { HedTag, HedRegion } from './types.js';
 import { embeddingsManager, SemanticMatch } from './embeddings.js';
 
@@ -124,6 +124,118 @@ const SEMANTIC_MAPPINGS: Record<string, string[]> = {
 };
 
 /**
+ * Pattern to match Definition/Name tags in HED strings.
+ * Captures the definition name and optional placeholder marker.
+ * Group 1: definition name, Group 2: /# if present
+ */
+const DEFINITION_PATTERN = /\bDefinition\/([A-Za-z0-9_-]+)(\/\s*#)?/g;
+
+/**
+ * Information about a HED definition found in the document.
+ */
+export interface DefinitionInfo {
+	/** The definition name (e.g., "MyDef") */
+	name: string;
+	/** Whether this definition has a placeholder (Definition/Name/#) */
+	hasPlaceholder: boolean;
+}
+
+/**
+ * Extract all definition names from a document.
+ * Scans all HED regions for Definition/Name patterns.
+ * Tracks whether each definition has a placeholder.
+ */
+export function extractDefinitions(document: TextDocument): DefinitionInfo[] {
+	const definitions = new Map<string, DefinitionInfo>();
+
+	// Get all HED regions from the document
+	const regions = isTsvDocument(document)
+		? parseTsvForHedStrings(document)
+		: parseJsonForHedStrings(document);
+
+	// Extract definition names from each region
+	for (const region of regions) {
+		let match: RegExpExecArray | null;
+		DEFINITION_PATTERN.lastIndex = 0; // Reset regex state
+
+		while ((match = DEFINITION_PATTERN.exec(region.content)) !== null) {
+			const name = match[1];
+			const hasPlaceholder = !!match[2]; // /# was captured
+
+			// If we've seen this definition before, update if it has a placeholder
+			const existing = definitions.get(name);
+			if (!existing || hasPlaceholder) {
+				definitions.set(name, { name, hasPlaceholder });
+			}
+		}
+	}
+
+	return Array.from(definitions.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Create a completion item for a definition reference.
+ */
+function createDefinitionCompletionItem(
+	def: DefinitionInfo,
+	isDefExpand: boolean,
+	afterSeparator: boolean
+): CompletionItem {
+	const prefix = isDefExpand ? 'Def-expand' : 'Def';
+
+	if (def.hasPlaceholder) {
+		// Definition with placeholder: insert with snippet for value
+		const snippetText = afterSeparator ? ` ${def.name}/\${1:value}` : `${def.name}/\${1:value}`;
+		return {
+			label: `${def.name}/…`,
+			kind: CompletionItemKind.Reference,
+			detail: `${prefix}/${def.name}/value (requires value)`,
+			documentation: formatDefinitionDocumentation(def, prefix),
+			insertText: snippetText,
+			insertTextFormat: InsertTextFormat.Snippet,
+			sortText: `1-${def.name.toLowerCase()}`
+		};
+	} else {
+		// Simple definition: insert name directly
+		const insertText = afterSeparator ? ` ${def.name}` : def.name;
+		return {
+			label: def.name,
+			kind: CompletionItemKind.Reference,
+			detail: `${prefix}/${def.name}`,
+			documentation: formatDefinitionDocumentation(def, prefix),
+			insertText,
+			insertTextFormat: InsertTextFormat.PlainText,
+			sortText: `1-${def.name.toLowerCase()}`
+		};
+	}
+}
+
+/**
+ * Format documentation for a definition completion.
+ */
+function formatDefinitionDocumentation(def: DefinitionInfo, prefix: string): string {
+	const lines: string[] = [];
+
+	lines.push(`**Reference to \`Definition/${def.name}${def.hasPlaceholder ? '/#' : ''}\`**`);
+	lines.push('');
+
+	if (def.hasPlaceholder) {
+		lines.push(`This definition requires a value: \`${prefix}/${def.name}/value\``);
+		lines.push('');
+		lines.push('The value replaces the `#` placeholder in the definition content.');
+	} else {
+		lines.push(`Use \`${prefix}/${def.name}\` to reference this definition.`);
+	}
+
+	if (prefix === 'Def') {
+		lines.push('');
+		lines.push('**Tip:** Use with `Onset`/`Offset` tags for temporal scope.');
+	}
+
+	return lines.join('\n');
+}
+
+/**
  * Provide completion items for a position in a document.
  */
 export async function provideCompletions(
@@ -157,7 +269,7 @@ export async function provideCompletions(
 	console.log(`[HED] Completion context: type=${context.type}, parent=${context.parentTag}, prefix=${context.prefix}`);
 
 	// Get appropriate completions based on context
-	const items = await getCompletionsForContext(context);
+	const items = await getCompletionsForContext(context, document);
 	console.log(`[HED] Returning ${items.length} completions`);
 	return items;
 }
@@ -252,7 +364,7 @@ function analyzeCompletionContext(content: string, offset: number): CompletionCo
 /**
  * Get completions for a given context.
  */
-async function getCompletionsForContext(context: CompletionContext): Promise<CompletionItem[]> {
+async function getCompletionsForContext(context: CompletionContext, document: TextDocument): Promise<CompletionItem[]> {
 	const items: CompletionItem[] = [];
 
 	switch (context.type) {
@@ -265,6 +377,22 @@ async function getCompletionsForContext(context: CompletionContext): Promise<Com
 
 		case 'child':
 			if (context.parentTag) {
+				// Check if completing after Def/ or Def-expand/
+				const parentLower = context.parentTag.toLowerCase();
+				if (parentLower === 'def' || parentLower === 'def-expand') {
+					const isDefExpand = parentLower === 'def-expand';
+					const definitions = extractDefinitions(document);
+					console.log(`[HED] Found ${definitions.length} definitions in document`);
+
+					for (const def of definitions) {
+						if (!context.prefix || matchesPrefix(def.name, context.prefix)) {
+							items.push(createDefinitionCompletionItem(def, isDefExpand, context.afterSeparator));
+						}
+					}
+					break;
+				}
+
+				// Normal child tag completion
 				const childTags = await schemaManager.getChildTags(context.parentTag);
 				for (const tag of childTags) {
 					if (!context.prefix || matchesPrefix(tag.shortForm, context.prefix)) {
