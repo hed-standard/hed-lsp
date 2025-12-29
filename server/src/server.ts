@@ -21,6 +21,7 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { completionTriggerCharacters, provideCompletions, resolveCompletionItem } from './completion.js';
 import { provideDefinition } from './definitionProvider.js';
 import { parseJsonForHedStrings } from './documentParser.js';
+import { embeddingsManager } from './embeddings.js';
 import { provideHover } from './hover.js';
 import { schemaManager } from './schemaManager.js';
 import { provideSemanticTokens, semanticTokensLegend } from './semanticTokens.js';
@@ -96,9 +97,41 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
 /**
  * After initialization, register for configuration changes.
  */
-connection.onInitialized(() => {
+connection.onInitialized(async () => {
 	if (hasConfigurationCapability) {
 		connection.client.register(DidChangeConfigurationNotification.type, undefined);
+
+		// Get initial configuration for semantic search
+		try {
+			const config = await connection.workspace.getConfiguration('hed');
+			if (config?.enableSemanticSearch !== undefined) {
+				embeddingsManager.setEnabled(config.enableSemanticSearch);
+				connection.console.log(
+					`[HED] Initial semantic search setting: ${config.enableSemanticSearch ? 'enabled' : 'disabled'}`,
+				);
+			}
+		} catch (_error) {
+			connection.console.log('[HED] Could not get initial configuration');
+		}
+	}
+
+	// Set up progress callback for model download notifications
+	embeddingsManager.setProgressCallback((progress) => {
+		connection.sendNotification('hed/modelProgress', progress);
+		connection.console.log(`[HED] Model progress: ${progress.status} - ${progress.message}`);
+	});
+
+	// If semantic search is enabled at startup, start downloading immediately
+	if (hasConfigurationCapability) {
+		try {
+			const config = await connection.workspace.getConfiguration('hed');
+			if (config?.enableSemanticSearch === true) {
+				connection.console.log('[HED] Semantic search enabled at startup, initiating model download...');
+				embeddingsManager.initializeModel();
+			}
+		} catch (_error) {
+			// Config already fetched above, ignore
+		}
 	}
 
 	if (hasWorkspaceFolderCapability) {
@@ -145,6 +178,25 @@ connection.onDidChangeConfiguration((change) => {
 	const newVersion = change.settings?.hed?.schemaVersion;
 	if (newVersion) {
 		schemaManager.setCurrentVersion(newVersion);
+	}
+
+	// Update semantic search setting
+	const enableSemanticSearch = change.settings?.hed?.enableSemanticSearch;
+	if (enableSemanticSearch !== undefined) {
+		embeddingsManager.setEnabled(enableSemanticSearch);
+		connection.console.log(`[HED] Semantic search ${enableSemanticSearch ? 'enabled' : 'disabled'}`);
+
+		// Start model download immediately when enabled
+		if (enableSemanticSearch) {
+			connection.console.log('[HED] Starting model download...');
+			embeddingsManager.initializeModel().then((success) => {
+				if (success) {
+					connection.console.log('[HED] Model download complete');
+				} else {
+					connection.console.log('[HED] Model download failed');
+				}
+			});
+		}
 	}
 
 	// Revalidate all open documents

@@ -89,6 +89,8 @@ export interface HedLspSettings {
 	validateOnChange: boolean;
 	/** Debounce time in milliseconds for validation on change */
 	debounceMs: number;
+	/** Whether to enable AI-powered semantic search for HED tags */
+	enableSemanticSearch: boolean;
 }
 
 /**
@@ -99,6 +101,7 @@ export const defaultSettings: HedLspSettings = {
 	maxNumberOfProblems: 100,
 	validateOnChange: true,
 	debounceMs: 300,
+	enableSemanticSearch: false,
 };
 
 /**

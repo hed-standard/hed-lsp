@@ -4,7 +4,7 @@
 	"description": "Language Server Protocol implementation for HED (Hierarchical Event Descriptors)",
 	"author": "HED Working Group",
 	"license": "MIT",
-	"version": "0.3.2",
+	"version": "0.3.3",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/hed-standard/hed-lsp"
@@ -13,18 +13,24 @@
 	"icon": "images/hed-icon.png",
 	"categories": [
 		"Linters",
-		"Programming Languages"
+		"Programming Languages",
+		"Other"
 	],
 	"keywords": [
 		"hed",
+		"hierarchical event descriptors",
 		"bids",
-		"neuroimaging"
+		"neuroimaging",
+		"eeg",
+		"mri"
 	],
 	"engines": {
-		"vscode": "^1.75.0"
+		"vscode": "^1.100.0"
 	},
 	"activationEvents": [
-		"onLanguage:json"
+		"onLanguage:json",
+		"onLanguage:plaintext",
+		"workspaceContains:**/*.tsv"
 	],
 	"main": "./client/out/extension.js",
 	"contributes": {
@@ -62,6 +68,55 @@
 					],
 					"default": "off",
 					"description": "Traces the communication between VS Code and the HED language server"
+				},
+				"hed.enableSemanticSearch": {
+					"type": "boolean",
+					"default": false,
+					"description": "Enable AI-powered semantic search for HED tags. Requires downloading a ~600MB model on first use."
+				}
+			}
+		},
+		"semanticTokenScopes": [
+			{
+				"language": "json",
+				"scopes": {
+					"type": [
+						"entity.name.tag.hed"
+					],
+					"class": [
+						"entity.name.tag.library.hed"
+					],
+					"function": [
+						"keyword.control.definition.hed"
+					],
+					"keyword": [
+						"keyword.other.reserved.hed"
+					],
+					"variable": [
+						"variable.other.placeholder.hed"
+					],
+					"number": [
+						"constant.numeric.value.hed"
+					],
+					"string": [
+						"entity.name.tag.path.hed"
+					],
+					"namespace": [
+						"storage.type.library.hed"
+					]
+				}
+			}
+		],
+		"configurationDefaults": {
+			"editor.semanticTokenColorCustomizations": {
+				"rules": {
+					"type:hed": "#4EC9B0",
+					"class:hed": "#9CDCFE",
+					"function:hed": "#DCDCAA",
+					"keyword:hed": "#C586C0",
+					"variable:hed": "#CE9178",
+					"number:hed": "#B5CEA8",
+					"namespace:hed": "#569CD6"
 				}
 			}
 		}
@@ -71,9 +126,12 @@
 		"server"
 	],
 	"scripts": {
-		"vscode:prepublish": "npm run compile",
+		"vscode:prepublish": "npm run esbuild-base -- --production",
 		"compile": "tsc -b",
 		"watch": "tsc -b -w",
+		"esbuild-base": "node esbuild.config.mjs",
+		"esbuild": "npm run esbuild-base",
+		"esbuild-watch": "npm run esbuild-base -- --watch",
 		"lint": "biome lint .",
 		"format": "biome format --write .",
 		"format:check": "biome format .",
@@ -84,6 +142,7 @@
 		"@biomejs/biome": "^2.3.10",
 		"@types/node": "^22",
 		"cspell": "^9.4.0",
+		"esbuild": "^0.27.2",
 		"typescript": "^5.7.2"
 	}
 }

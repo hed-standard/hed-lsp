@@ -2,7 +2,7 @@
 	"name": "hed-lsp-client",
 	"displayName": "HED Annotation Tools",
 	"description": "Language support for HED (Hierarchical Event Descriptors) annotations",
-	"version": "0.3.2",
+	"version": "0.3.3",
 	"publisher": "neuromechanist",
 	"author": {
 		"name": "Seyed Yahya Shirazi",
@@ -32,6 +32,7 @@
 	],
 	"activationEvents": [
 		"onLanguage:json",
+		"onLanguage:plaintext",
 		"workspaceContains:**/*.tsv"
 	],
 	"main": "./out/extension.js",
@@ -110,6 +111,6 @@
 		"vscode-languageclient": "^9.0.1"
 	},
 	"devDependencies": {
-		"@types/vscode": "^1.100.0"
+		"@types/vscode": "^1.85.0"
 	}
 }

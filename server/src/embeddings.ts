@@ -70,16 +70,16 @@ export interface SemanticMatch {
 export interface EmbeddingConfig {
 	/** Model ID on Hugging Face */
 	modelId: string;
-	/** Data type for model (fp32, fp16, q8) */
-	dtype: 'fp32' | 'fp16' | 'q8';
+	/** Data type for model (fp32, fp16, q8, uint8) */
+	dtype: 'fp32' | 'fp16' | 'q8' | 'uint8';
 	/** Whether embeddings are enabled */
 	enabled: boolean;
 }
 
 const DEFAULT_CONFIG: EmbeddingConfig = {
 	modelId: 'neuromechanist/Qwen3-Embedding-0.6B-ONNX-Q8',
-	dtype: 'q8', // Quantized for speed and smaller size
-	enabled: true,
+	dtype: 'uint8', // Matches model_uint8.onnx file name
+	enabled: false, // Disabled by default - requires ~600MB model download
 };
 
 /**
@@ -696,6 +696,15 @@ const KEYWORD_INDEX: Record<string, string[]> = {
 };
 
 /**
+ * Progress callback for model download.
+ */
+export type ProgressCallback = (progress: {
+	status: 'downloading' | 'loading' | 'ready' | 'error';
+	message: string;
+	progress?: number; // 0-100
+}) => void;
+
+/**
  * Embeddings Manager for semantic search using Qwen3-Embedding.
  * Implements dual-embedding architecture: keywords as anchors + direct tag matching.
  */
@@ -707,6 +716,14 @@ class EmbeddingsManager {
 	private embeddingsLoaded = false;
 	private dimensions = 1024; // Qwen3-Embedding-0.6B output dimension
 	private loading: Promise<boolean> | null = null;
+	private progressCallback: ProgressCallback | null = null;
+
+	/**
+	 * Set a callback to receive progress updates during model download.
+	 */
+	setProgressCallback(callback: ProgressCallback | null): void {
+		this.progressCallback = callback;
+	}
 
 	/**
 	 * Initialize the embedding model.
@@ -732,19 +749,63 @@ class EmbeddingsManager {
 	private async _loadModel(): Promise<boolean> {
 		try {
 			console.log('[HED Embeddings] Loading Qwen3-Embedding model...');
+			this.progressCallback?.({
+				status: 'loading',
+				message: 'Initializing semantic search model...',
+			});
 
 			// Dynamic import of ES module
 			const transformers = await import('@huggingface/transformers');
 			pipeline = transformers.pipeline;
 
-			// Create the feature extraction pipeline
-			extractor = await pipeline('feature-extraction', this.config.modelId, { dtype: this.config.dtype });
+			// Configure cache directory to avoid duplicates
+			// Use ~/.cache/huggingface/hub as the single cache location
+			const cacheDir = this.getCacheDir();
+			if (transformers.env) {
+				transformers.env.cacheDir = cacheDir;
+				console.log(`[HED Embeddings] Cache directory: ${cacheDir}`);
+			}
+
+			// Track download progress
+			let lastProgress = 0;
+			const progressHandler = (data: { status: string; progress?: number; file?: string }) => {
+				if (data.status === 'progress' && data.progress !== undefined) {
+					const progress = Math.round(data.progress);
+					if (progress !== lastProgress && progress % 5 === 0) {
+						lastProgress = progress;
+						this.progressCallback?.({
+							status: 'downloading',
+							message: `Downloading model: ${progress}%`,
+							progress,
+						});
+					}
+				} else if (data.status === 'done') {
+					this.progressCallback?.({
+						status: 'loading',
+						message: 'Loading model into memory...',
+					});
+				}
+			};
+
+			// Create the feature extraction pipeline with progress callback
+			extractor = await pipeline('feature-extraction', this.config.modelId, {
+				dtype: this.config.dtype,
+				progress_callback: progressHandler,
+			});
 
 			this.modelLoaded = true;
 			console.log('[HED Embeddings] Model loaded successfully');
+			this.progressCallback?.({
+				status: 'ready',
+				message: 'Semantic search ready',
+			});
 			return true;
 		} catch (error) {
 			console.error('[HED Embeddings] Failed to load model:', error);
+			this.progressCallback?.({
+				status: 'error',
+				message: `Failed to load model: ${error}`,
+			});
 			this.config.enabled = false;
 			return false;
 		}
@@ -1089,6 +1150,47 @@ class EmbeddingsManager {
 	 */
 	setEnabled(enabled: boolean): void {
 		this.config.enabled = enabled;
+	}
+
+	/**
+	 * Get the cache directory path for the model.
+	 */
+	getCacheDir(): string {
+		const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+		return path.join(homeDir, '.cache', 'huggingface', 'hub');
+	}
+
+	/**
+	 * Delete the cached model to free up disk space.
+	 * Returns true if deletion was successful.
+	 */
+	async deleteCache(): Promise<boolean> {
+		try {
+			const cacheDir = this.getCacheDir();
+			const modelDir = path.join(cacheDir, `models--${this.config.modelId.replace('/', '--')}`);
+
+			if (fs.existsSync(modelDir)) {
+				fs.rmSync(modelDir, { recursive: true, force: true });
+				console.log(`[HED Embeddings] Deleted cache: ${modelDir}`);
+				this.modelLoaded = false;
+				extractor = null;
+				return true;
+			}
+			console.log('[HED Embeddings] No cache to delete');
+			return true;
+		} catch (error) {
+			console.error('[HED Embeddings] Failed to delete cache:', error);
+			return false;
+		}
+	}
+
+	/**
+	 * Check if the model is cached locally.
+	 */
+	isModelCached(): boolean {
+		const cacheDir = this.getCacheDir();
+		const modelDir = path.join(cacheDir, `models--${this.config.modelId.replace('/', '--')}`);
+		return fs.existsSync(modelDir);
 	}
 
 	/**

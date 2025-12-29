@@ -8,15 +8,26 @@
 .gitignore
 CLAUDE.md
 
-# Source files (only need compiled output)
+# Source files (only need bundled output)
 client/src/**
 server/src/**
 server/scripts/**
 **/*.ts
-!**/*.d.ts
 tsconfig.json
 **/tsconfig.json
 **/*.tsbuildinfo
+
+# TypeScript declaration and map files (not needed when bundled)
+**/*.d.ts
+**/*.d.ts.map
+**/*.js.map
+
+# Individual module files in out directories (bundled into single files)
+server/out/*.js
+!server/out/server.js
+server/out/__tests__/**
+client/out/*.js
+!client/out/extension.js
 
 # Test files
 test-files/**
@@ -28,12 +39,20 @@ coverage/**
 # Build tools and config
 biome.json
 cspell.json
+esbuild.config.mjs
 .vscodeignore
 
-# Node modules (bundled separately)
+# Node modules - root and client excluded, server needs runtime deps
 node_modules/**
 client/node_modules/**
+# Include required runtime deps in server (can't be bundled)
 server/node_modules/**
+!server/node_modules/@huggingface/**
+!server/node_modules/onnxruntime-node/**
+!server/node_modules/onnxruntime-common/**
+!server/node_modules/sharp/**
+# Exclude transformers cache if present
+server/node_modules/@huggingface/transformers/.cache/**
 
 # Package files
 *.vsix
