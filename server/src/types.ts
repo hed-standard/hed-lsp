@@ -2,7 +2,7 @@
  * HED-LSP Type Definitions
  */
 
-import { Range, Position } from 'vscode-languageserver';
+import type { Position, Range } from 'vscode-languageserver';
 
 /**
  * Represents a HED string region within a document.
@@ -98,7 +98,7 @@ export const defaultSettings: HedLspSettings = {
 	schemaVersion: '8.4.0',
 	maxNumberOfProblems: 100,
 	validateOnChange: true,
-	debounceMs: 300
+	debounceMs: 300,
 };
 
 /**
@@ -110,12 +110,12 @@ export const defaultSettings: HedLspSettings = {
 export function boundsToRange(
 	region: HedRegion,
 	bounds: [number, number],
-	positionAt: (offset: number) => Position
+	positionAt: (offset: number) => Position,
 ): Range {
 	const startOffset = region.contentOffset + bounds[0];
 	const endOffset = region.contentOffset + bounds[1];
 	return {
 		start: positionAt(startOffset),
-		end: positionAt(endOffset)
+		end: positionAt(endOffset),
 	};
 }

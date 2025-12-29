@@ -4,29 +4,29 @@
  */
 
 import {
+	type CompletionItem,
 	createConnection,
-	TextDocuments,
-	ProposedFeatures,
-	InitializeParams,
-	InitializeResult,
-	TextDocumentSyncKind,
 	DidChangeConfigurationNotification,
-	CompletionItem,
-	TextDocumentPositionParams,
-	Hover,
-	SemanticTokensRequest
+	type Hover,
+	type InitializeParams,
+	type InitializeResult,
+	ProposedFeatures,
+	SemanticTokensRequest,
+	type TextDocumentPositionParams,
+	TextDocumentSyncKind,
+	TextDocuments,
 } from 'vscode-languageserver/node';
 
 import { TextDocument } from 'vscode-languageserver-textdocument';
-
-import { defaultSettings, HedLspSettings, HedRegion } from './types.js';
-import { schemaManager } from './schemaManager.js';
+import { completionTriggerCharacters, provideCompletions, resolveCompletionItem } from './completion.js';
+import { provideDefinition } from './definitionProvider.js';
 import { parseJsonForHedStrings } from './documentParser.js';
-import { parseTsvForHedStrings, isTsvDocument, hasHedColumn } from './tsvParser.js';
-import { validateDocument } from './validation.js';
-import { provideCompletions, resolveCompletionItem, completionTriggerCharacters } from './completion.js';
 import { provideHover } from './hover.js';
+import { schemaManager } from './schemaManager.js';
 import { provideSemanticTokens, semanticTokensLegend } from './semanticTokens.js';
+import { isTsvDocument, parseTsvForHedStrings } from './tsvParser.js';
+import { defaultSettings, type HedLspSettings, type HedRegion } from './types.js';
+import { validateDocument } from './validation.js';
 
 /**
  * Get HED regions from a document (JSON or TSV).
@@ -63,33 +63,30 @@ const validationDebounceTimers = new Map<string, NodeJS.Timeout>();
 connection.onInitialize((params: InitializeParams): InitializeResult => {
 	const capabilities = params.capabilities;
 
-	hasConfigurationCapability = !!(
-		capabilities.workspace && !!capabilities.workspace.configuration
-	);
-	hasWorkspaceFolderCapability = !!(
-		capabilities.workspace && !!capabilities.workspace.workspaceFolders
-	);
+	hasConfigurationCapability = !!(capabilities.workspace && !!capabilities.workspace.configuration);
+	hasWorkspaceFolderCapability = !!(capabilities.workspace && !!capabilities.workspace.workspaceFolders);
 
 	const result: InitializeResult = {
 		capabilities: {
 			textDocumentSync: TextDocumentSyncKind.Incremental,
 			completionProvider: {
 				resolveProvider: true,
-				triggerCharacters: completionTriggerCharacters
+				triggerCharacters: completionTriggerCharacters,
 			},
 			hoverProvider: true,
+			definitionProvider: true,
 			semanticTokensProvider: {
 				legend: semanticTokensLegend,
-				full: true
-			}
-		}
+				full: true,
+			},
+		},
 	};
 
 	if (hasWorkspaceFolderCapability) {
 		result.capabilities.workspace = {
 			workspaceFolders: {
-				supported: true
-			}
+				supported: true,
+			},
 		};
 	}
 
@@ -105,13 +102,13 @@ connection.onInitialized(() => {
 	}
 
 	if (hasWorkspaceFolderCapability) {
-		connection.workspace.onDidChangeWorkspaceFolders(_event => {
+		connection.workspace.onDidChangeWorkspaceFolders((_event) => {
 			connection.console.log('Workspace folder change event received.');
 		});
 	}
 
 	connection.console.log('HED Language Server initialized successfully');
-	connection.console.log('Completion trigger characters: ' + completionTriggerCharacters.join(', '));
+	connection.console.log(`Completion trigger characters: ${completionTriggerCharacters.join(', ')}`);
 	connection.console.log('Hover and completion providers are ready');
 });
 
@@ -127,7 +124,7 @@ function getDocumentSettings(resource: string): Thenable<HedLspSettings> {
 	if (!result) {
 		result = connection.workspace.getConfiguration({
 			scopeUri: resource,
-			section: 'hed'
+			section: 'hed',
 		});
 		documentSettings.set(resource, result);
 	}
@@ -137,7 +134,7 @@ function getDocumentSettings(resource: string): Thenable<HedLspSettings> {
 /**
  * Handle configuration changes.
  */
-connection.onDidChangeConfiguration(change => {
+connection.onDidChangeConfiguration((change) => {
 	if (hasConfigurationCapability) {
 		documentSettings.clear();
 	} else {
@@ -157,7 +154,7 @@ connection.onDidChangeConfiguration(change => {
 /**
  * Clean up settings when document is closed.
  */
-documents.onDidClose(e => {
+documents.onDidClose((e) => {
 	documentSettings.delete(e.document.uri);
 	const timer = validationDebounceTimers.get(e.document.uri);
 	if (timer) {
@@ -169,14 +166,14 @@ documents.onDidClose(e => {
 /**
  * Validate on content change with debounce.
  */
-documents.onDidChangeContent(change => {
+documents.onDidChangeContent((change) => {
 	validateDocumentDebounced(change.document);
 });
 
 /**
  * Validate on save immediately.
  */
-documents.onDidSave(change => {
+documents.onDidSave((change) => {
 	validateDocumentNow(change.document);
 });
 
@@ -246,59 +243,72 @@ async function validateDocumentNow(document: TextDocument): Promise<void> {
 /**
  * Provide completions.
  */
-connection.onCompletion(
-	async (params: TextDocumentPositionParams): Promise<CompletionItem[]> => {
-		connection.console.log(`[HED] onCompletion called at line ${params.position.line}, char ${params.position.character}`);
+connection.onCompletion(async (params: TextDocumentPositionParams): Promise<CompletionItem[]> => {
+	connection.console.log(
+		`[HED] onCompletion called at line ${params.position.line}, char ${params.position.character}`,
+	);
 
-		const document = documents.get(params.textDocument.uri);
-		if (!document) {
-			connection.console.log('[HED] No document found for completion');
-			return [];
-		}
-
-		try {
-			const items = await provideCompletions(document, params.position);
-			connection.console.log(`[HED] Returning ${items.length} completion items`);
-			return items;
-		} catch (error) {
-			connection.console.error(`Completion error: ${error}`);
-			return [];
-		}
+	const document = documents.get(params.textDocument.uri);
+	if (!document) {
+		connection.console.log('[HED] No document found for completion');
+		return [];
 	}
-);
+
+	try {
+		const items = await provideCompletions(document, params.position);
+		connection.console.log(`[HED] Returning ${items.length} completion items`);
+		return items;
+	} catch (error) {
+		connection.console.error(`Completion error: ${error}`);
+		return [];
+	}
+});
 
 /**
  * Resolve completion item details.
  */
-connection.onCompletionResolve(
-	async (item: CompletionItem): Promise<CompletionItem> => {
-		try {
-			return await resolveCompletionItem(item);
-		} catch (error) {
-			connection.console.error(`Completion resolve error: ${error}`);
-			return item;
-		}
+connection.onCompletionResolve(async (item: CompletionItem): Promise<CompletionItem> => {
+	try {
+		return await resolveCompletionItem(item);
+	} catch (error) {
+		connection.console.error(`Completion resolve error: ${error}`);
+		return item;
 	}
-);
+});
 
 /**
  * Provide hover information.
  */
-connection.onHover(
-	async (params: TextDocumentPositionParams): Promise<Hover | null> => {
-		const document = documents.get(params.textDocument.uri);
-		if (!document) {
-			return null;
-		}
-
-		try {
-			return await provideHover(document, params.position);
-		} catch (error) {
-			connection.console.error(`Hover error: ${error}`);
-			return null;
-		}
+connection.onHover(async (params: TextDocumentPositionParams): Promise<Hover | null> => {
+	const document = documents.get(params.textDocument.uri);
+	if (!document) {
+		return null;
 	}
-);
+
+	try {
+		return await provideHover(document, params.position);
+	} catch (error) {
+		connection.console.error(`Hover error: ${error}`);
+		return null;
+	}
+});
+
+/**
+ * Provide Go to Definition for Def references.
+ */
+connection.onDefinition((params: TextDocumentPositionParams) => {
+	const document = documents.get(params.textDocument.uri);
+	if (!document) {
+		return null;
+	}
+
+	try {
+		return provideDefinition(document, params.position);
+	} catch (error) {
+		connection.console.error(`Definition error: ${error}`);
+		return null;
+	}
+});
 
 /**
  * Provide semantic tokens for syntax highlighting.

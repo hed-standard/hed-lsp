@@ -3,12 +3,12 @@
  * Wraps hed-validator for HED string validation.
  */
 
-import { parseHedString } from 'hed-validator';
 import type { Schemas } from 'hed-validator';
-import { Diagnostic, DiagnosticSeverity, Range } from 'vscode-languageserver';
-import { TextDocument } from 'vscode-languageserver-textdocument';
-import { HedRegion, ValidationIssue, boundsToRange } from './types.js';
+import { parseHedString } from 'hed-validator';
+import { type Diagnostic, DiagnosticSeverity, type Range } from 'vscode-languageserver';
+import type { TextDocument } from 'vscode-languageserver-textdocument';
 import { schemaManager } from './schemaManager.js';
+import { boundsToRange, type HedRegion, type ValidationIssue } from './types.js';
 
 /**
  * Remove {column_name} placeholders from a HED string without leaving empty tags.
@@ -49,10 +49,7 @@ function removePlaceholders(hedString: string): string {
 /**
  * Validate a HED string and return issues.
  */
-export async function validateHedString(
-	hedString: string,
-	schemas: Schemas
-): Promise<ValidationIssue[]> {
+export async function validateHedString(hedString: string, schemas: Schemas): Promise<ValidationIssue[]> {
 	// Skip validation for empty strings
 	if (!hedString.trim()) {
 		return [];
@@ -73,21 +70,23 @@ export async function validateHedString(
 		const [_parsed, syntaxIssues, semanticIssues] = parseHedString(
 			cleanedHed,
 			schemas,
-			true,  // definitionsAllowed
-			true,  // placeholdersAllowed
-			true   // fullValidation
+			true, // definitionsAllowed
+			true, // placeholdersAllowed
+			true, // fullValidation
 		);
 
 		const allIssues = [...syntaxIssues, ...semanticIssues];
-		return allIssues.map(issue => convertIssue(issue, hedString));
+		return allIssues.map((issue) => convertIssue(issue, hedString));
 	} catch (error) {
 		// Return a generic error if parsing fails unexpectedly
-		return [{
-			hedCode: 'INTERNAL_ERROR',
-			internalCode: 'internalError',
-			level: 'error',
-			message: `Validation error: ${error instanceof Error ? error.message : String(error)}`
-		}];
+		return [
+			{
+				hedCode: 'INTERNAL_ERROR',
+				internalCode: 'internalError',
+				level: 'error',
+				message: `Validation error: ${error instanceof Error ? error.message : String(error)}`,
+			},
+		];
 	}
 }
 
@@ -95,28 +94,24 @@ export async function validateHedString(
  * Map internal error codes to HED error codes when hedCode is missing.
  */
 const internalCodeToHedCode: Record<string, string> = {
-	'unclosedParentheses': 'PARENTHESES_MISMATCH',
-	'unopenedParentheses': 'PARENTHESES_MISMATCH',
-	'extraDelimiter': 'TAG_EMPTY',
-	'invalidTag': 'TAG_INVALID',
-	'duplicateTag': 'TAG_DUPLICATE',
-	'multipleUniqueTags': 'TAG_NOT_UNIQUE',
-	'childRequired': 'TAG_REQUIRES_CHILD',
-	'invalidValue': 'VALUE_INVALID',
-	'unitClassInvalidUnit': 'UNITS_INVALID',
-	'invalidPlaceholder': 'PLACEHOLDER_INVALID',
-	'missingRequiredColumn': 'SIDECAR_KEY_MISSING',
+	unclosedParentheses: 'PARENTHESES_MISMATCH',
+	unopenedParentheses: 'PARENTHESES_MISMATCH',
+	extraDelimiter: 'TAG_EMPTY',
+	invalidTag: 'TAG_INVALID',
+	duplicateTag: 'TAG_DUPLICATE',
+	multipleUniqueTags: 'TAG_NOT_UNIQUE',
+	childRequired: 'TAG_REQUIRES_CHILD',
+	invalidValue: 'VALUE_INVALID',
+	unitClassInvalidUnit: 'UNITS_INVALID',
+	invalidPlaceholder: 'PLACEHOLDER_INVALID',
+	missingRequiredColumn: 'SIDECAR_KEY_MISSING',
 };
 
 /**
  * HED codes that are warnings rather than errors.
  * Based on HED specification Appendix B.
  */
-const WARNING_CODES = new Set([
-	'SIDECAR_KEY_MISSING',
-	'TAG_EXTENDED',
-	'ELEMENT_DEPRECATED',
-]);
+const WARNING_CODES = new Set(['SIDECAR_KEY_MISSING', 'TAG_EXTENDED', 'ELEMENT_DEPRECATED']);
 
 /**
  * Convert a hed-validator Issue to our ValidationIssue type.
@@ -176,7 +171,7 @@ function convertIssue(issue: any, hedString: string): ValidationIssue {
 		// Check for index (used by PARENTHESES_MISMATCH)
 		if (params.index !== undefined) {
 			const idx = parseInt(params.index, 10);
-			if (!isNaN(idx)) {
+			if (!Number.isNaN(idx)) {
 				// Highlight just the character at the index
 				bounds = [idx, idx + 1];
 			}
@@ -190,10 +185,13 @@ function convertIssue(issue: any, hedString: string): ValidationIssue {
 				tagName = params.tag;
 			} else if (typeof params.tag === 'object') {
 				// ParsedHedTag object - try various properties
-				tagName = params.tag.originalTag ||
-				          params.tag.formattedTag ||
-				          params.tag.canonicalTag ||
-				          (params.tag.originalBounds ? hedString.slice(params.tag.originalBounds[0], params.tag.originalBounds[1]) : undefined);
+				tagName =
+					params.tag.originalTag ||
+					params.tag.formattedTag ||
+					params.tag.canonicalTag ||
+					(params.tag.originalBounds
+						? hedString.slice(params.tag.originalBounds[0], params.tag.originalBounds[1])
+						: undefined);
 
 				// If the tag object has originalBounds, use them directly
 				if (params.tag.originalBounds && Array.isArray(params.tag.originalBounds)) {
@@ -218,8 +216,7 @@ function convertIssue(issue: any, hedString: string): ValidationIssue {
 		if (!genericCodes.includes(hedCode) && message.includes(pattern)) {
 			// Replace the embedded generic code with our mapped code
 			message = message.replace(pattern, `[${hedCode}]`);
-			message = message.replace(/Unknown HED error "[^"]+"/,
-				`${hedCode.replace(/_/g, ' ').toLowerCase()}`);
+			message = message.replace(/Unknown HED error "[^"]+"/, `${hedCode.replace(/_/g, ' ').toLowerCase()}`);
 			message = message.replace(/genericerror/gi, hedCode.replace(/_/g, ' ').toLowerCase());
 			break;
 		}
@@ -236,7 +233,7 @@ function convertIssue(issue: any, hedString: string): ValidationIssue {
 		internalCode: issue.internalCode || '',
 		level,
 		message,
-		bounds
+		bounds,
 	};
 }
 
@@ -260,13 +257,14 @@ function findTagInString(hedString: string, tagName: string): [number, number] |
 
 	while (index !== -1) {
 		const beforeChar = index > 0 ? hedString[index - 1] : ',';
-		const afterChar = index + tagName.length < hedString.length
-			? hedString[index + tagName.length]
-			: ',';
+		const afterChar = index + tagName.length < hedString.length ? hedString[index + tagName.length] : ',';
 
 		// Check if this is a whole tag match
 		const beforeOk = separators.test(beforeChar) || beforeChar === ' ' || index === 0;
-		const afterOk = separators.test(afterChar) || afterChar === ' ' || afterChar === '/' ||
+		const afterOk =
+			separators.test(afterChar) ||
+			afterChar === ' ' ||
+			afterChar === '/' ||
 			index + tagName.length >= hedString.length;
 
 		if (beforeOk && afterOk) {
@@ -288,7 +286,7 @@ function findTagInString(hedString: string, tagName: string): [number, number] |
 export async function validateDocument(
 	document: TextDocument,
 	regions: HedRegion[],
-	schemaVersion?: string
+	schemaVersion?: string,
 ): Promise<Diagnostic[]> {
 	const diagnostics: Diagnostic[] = [];
 
@@ -307,7 +305,7 @@ export async function validateDocument(
 			severity: DiagnosticSeverity.Error,
 			range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
 			message: `Failed to load HED schema: ${error instanceof Error ? error.message : String(error)}`,
-			source: 'hed'
+			source: 'hed',
 		});
 		return diagnostics;
 	}
@@ -328,20 +326,12 @@ export async function validateDocument(
 /**
  * Convert a validation issue to an LSP diagnostic.
  */
-function issueToDiagnostic(
-	issue: ValidationIssue,
-	region: HedRegion,
-	document: TextDocument
-): Diagnostic {
+function issueToDiagnostic(issue: ValidationIssue, region: HedRegion, document: TextDocument): Diagnostic {
 	let range: Range;
 
 	if (issue.bounds) {
 		// Use the bounds to create a precise range
-		range = boundsToRange(
-			region,
-			issue.bounds,
-			(offset) => document.positionAt(offset)
-		);
+		range = boundsToRange(region, issue.bounds, (offset) => document.positionAt(offset));
 	} else {
 		// Fall back to highlighting the entire HED string
 		range = region.range;
@@ -352,17 +342,14 @@ function issueToDiagnostic(
 		range,
 		message: issue.message,
 		code: issue.hedCode,
-		source: 'hed'
+		source: 'hed',
 	};
 }
 
 /**
  * Quick validation check - returns true if the HED string has issues.
  */
-export async function hasValidationErrors(
-	hedString: string,
-	schemas: Schemas
-): Promise<boolean> {
+export async function hasValidationErrors(hedString: string, schemas: Schemas): Promise<boolean> {
 	const issues = await validateHedString(hedString, schemas);
-	return issues.some(issue => issue.level === 'error');
+	return issues.some((issue) => issue.level === 'error');
 }

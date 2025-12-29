@@ -3,8 +3,8 @@
  * Extracts HED strings from TSV files (typically *_events.tsv in BIDS).
  */
 
-import { TextDocument, Range } from 'vscode-languageserver-textdocument';
-import { HedRegion } from './types.js';
+import type { Range, TextDocument } from 'vscode-languageserver-textdocument';
+import type { HedRegion } from './types.js';
 
 /**
  * Parse a TSV document and extract HED column cells as regions.
@@ -42,7 +42,7 @@ export function parseTsvForHedStrings(document: TextDocument): HedRegion[] {
 		// Parse the line to find the HED cell
 		const cell = getCellAtIndex(line, hedColumnIndex);
 
-		if (cell && cell.content.trim()) {
+		if (cell?.content.trim()) {
 			const cellStart = currentOffset + cell.startOffset;
 			const cellEnd = cellStart + cell.content.length;
 
@@ -50,10 +50,10 @@ export function parseTsvForHedStrings(document: TextDocument): HedRegion[] {
 				content: cell.content,
 				range: {
 					start: document.positionAt(cellStart),
-					end: document.positionAt(cellEnd)
+					end: document.positionAt(cellEnd),
 				},
 				jsonPath: `row${lineIndex + 1}.HED`,
-				contentOffset: cellStart
+				contentOffset: cellStart,
 			});
 		}
 
@@ -123,7 +123,7 @@ function parseTsvLine(line: string): TsvCell[] {
 			cells.push({
 				content: unquoteTsvCell(content),
 				startOffset: currentStart,
-				endOffset: i
+				endOffset: i,
 			});
 			currentStart = i + 1;
 		}
@@ -183,7 +183,7 @@ export function hasHedColumn(document: TextDocument): boolean {
  */
 export function getTsvHedRegionAtPosition(
 	document: TextDocument,
-	position: { line: number; character: number }
+	position: { line: number; character: number },
 ): HedRegion | null {
 	const regions = parseTsvForHedStrings(document);
 

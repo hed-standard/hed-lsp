@@ -3,39 +3,34 @@
  * Provides syntax highlighting for HED strings via LSP semantic tokens.
  */
 
-import {
-	SemanticTokensBuilder,
-	SemanticTokensLegend,
-	SemanticTokenTypes,
-	SemanticTokenModifiers
-} from 'vscode-languageserver';
-import { TextDocument } from 'vscode-languageserver-textdocument';
-import { HedRegion } from './types.js';
+import { SemanticTokensBuilder, type SemanticTokensLegend } from 'vscode-languageserver';
+import type { TextDocument } from 'vscode-languageserver-textdocument';
 import { parseJsonForHedStrings } from './documentParser.js';
-import { parseTsvForHedStrings, isTsvDocument } from './tsvParser.js';
+import { isTsvDocument, parseTsvForHedStrings } from './tsvParser.js';
+import type { HedRegion } from './types.js';
 
 /**
  * Token types for HED semantic highlighting.
  */
 export const tokenTypes = [
-	'type',           // Standard HED tag
-	'class',          // Library schema tag
-	'function',       // Definition tags (Definition, Def, Def-expand)
-	'keyword',        // Reserved tags (Onset, Offset, Inset, Duration, Delay)
-	'variable',       // Placeholders {column}
-	'number',         // Numeric values
-	'string',         // Tag paths/extensions
-	'operator',       // Separators (comma)
-	'namespace'       // Library prefix (sc:, la:)
+	'type', // Standard HED tag
+	'class', // Library schema tag
+	'function', // Definition tags (Definition, Def, Def-expand)
+	'keyword', // Reserved tags (Onset, Offset, Inset, Duration, Delay)
+	'variable', // Placeholders {column}
+	'number', // Numeric values
+	'string', // Tag paths/extensions
+	'operator', // Separators (comma)
+	'namespace', // Library prefix (sc:, la:)
 ];
 
 /**
  * Token modifiers for HED semantic highlighting.
  */
 export const tokenModifiers = [
-	'declaration',    // Definition declaration
-	'definition',     // Def reference
-	'readonly'        // Reserved tags
+	'declaration', // Definition declaration
+	'definition', // Def reference
+	'readonly', // Reserved tags
 ];
 
 /**
@@ -43,22 +38,18 @@ export const tokenModifiers = [
  */
 export const semanticTokensLegend: SemanticTokensLegend = {
 	tokenTypes,
-	tokenModifiers
+	tokenModifiers,
 };
 
 /**
  * Reserved HED tags that have special meaning.
  */
-const RESERVED_TAGS = new Set([
-	'onset', 'offset', 'inset', 'duration', 'delay'
-]);
+const RESERVED_TAGS = new Set(['onset', 'offset', 'inset', 'duration', 'delay']);
 
 /**
  * Definition-related tags.
  */
-const DEFINITION_TAGS = new Set([
-	'definition', 'def', 'def-expand'
-]);
+const DEFINITION_TAGS = new Set(['definition', 'def', 'def-expand']);
 
 /**
  * Get HED regions from a document.
@@ -86,11 +77,7 @@ interface TokenInfo {
 /**
  * Parse a HED string and extract tokens.
  */
-function tokenizeHedString(
-	content: string,
-	region: HedRegion,
-	document: TextDocument
-): TokenInfo[] {
+function tokenizeHedString(content: string, region: HedRegion, document: TextDocument): TokenInfo[] {
 	const tokens: TokenInfo[] = [];
 	let i = 0;
 
@@ -111,7 +98,7 @@ function tokenizeHedString(
 				startChar: pos.character,
 				length: 1,
 				tokenType: tokenTypes.indexOf('operator'),
-				tokenModifiers: 0
+				tokenModifiers: 0,
 			});
 			i++;
 			continue;
@@ -138,7 +125,7 @@ function tokenizeHedString(
 				startChar: pos.character,
 				length: i - start,
 				tokenType: tokenTypes.indexOf('variable'),
-				tokenModifiers: 0
+				tokenModifiers: 0,
 			});
 			continue;
 		}
@@ -174,7 +161,7 @@ function tokenizeHedString(
 						startChar: prefixPos.character,
 						length: prefixEnd,
 						tokenType: tokenTypes.indexOf('namespace'),
-						tokenModifiers: 0
+						tokenModifiers: 0,
 					});
 				}
 			}
@@ -207,14 +194,14 @@ function tokenizeHedString(
 
 			// Add main tag token
 			const tagStart = start + (hasLibraryPrefix ? prefixEnd : 0);
-			const mainTagEnd = tagStart + mainTag.length;
+			const _mainTagEnd = tagStart + mainTag.length;
 			const tagPos = document.positionAt(region.contentOffset + tagStart);
 			tokens.push({
 				line: tagPos.line,
 				startChar: tagPos.character,
 				length: mainTag.length,
 				tokenType,
-				tokenModifiers: modifier
+				tokenModifiers: modifier,
 			});
 
 			// Handle path/value after the main tag
@@ -232,7 +219,7 @@ function tokenizeHedString(
 						startChar: valuePos.character,
 						length: valuePart.length,
 						tokenType: tokenTypes.indexOf('number'),
-						tokenModifiers: 0
+						tokenModifiers: 0,
 					});
 				} else {
 					// It's a path/extension
@@ -242,7 +229,7 @@ function tokenizeHedString(
 						startChar: pathPos.character,
 						length: rest.length,
 						tokenType: tokenTypes.indexOf('string'),
-						tokenModifiers: 0
+						tokenModifiers: 0,
 					});
 				}
 			}
@@ -280,13 +267,7 @@ export function provideSemanticTokens(document: TextDocument): SemanticTokensBui
 
 	// Build tokens
 	for (const token of allTokens) {
-		builder.push(
-			token.line,
-			token.startChar,
-			token.length,
-			token.tokenType,
-			token.tokenModifiers
-		);
+		builder.push(token.line, token.startChar, token.length, token.tokenType, token.tokenModifiers);
 	}
 
 	return builder;
