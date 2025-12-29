@@ -130,7 +130,7 @@ connection.onInitialized(async () => {
 				embeddingsManager.initializeModel();
 			}
 		} catch (_error) {
-			// Config already fetched above, ignore
+			// Config already retrieved above, ignore
 		}
 	}
 
