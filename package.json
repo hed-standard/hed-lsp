@@ -4,12 +4,13 @@
 	"description": "Language Server Protocol implementation for HED (Hierarchical Event Descriptors)",
 	"author": "HED Working Group",
 	"license": "MIT",
-	"version": "0.3.1",
+	"version": "0.3.2",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/hed-standard/hed-lsp"
 	},
 	"publisher": "neuromechanist",
+	"icon": "images/hed-icon.png",
 	"categories": [
 		"Linters",
 		"Programming Languages"
