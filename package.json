@@ -1,6 +1,6 @@
 {
 	"name": "hed-lsp",
-	"displayName": "HED Language Support",
+	"displayName": "HED Annotation Tools",
 	"description": "Language Server Protocol implementation for HED (Hierarchical Event Descriptors)",
 	"author": "HED Working Group",
 	"license": "MIT",
@@ -9,7 +9,7 @@
 		"type": "git",
 		"url": "https://github.com/hed-standard/hed-lsp"
 	},
-	"publisher": "hed-standard",
+	"publisher": "neuromechanist",
 	"categories": [
 		"Linters",
 		"Programming Languages"

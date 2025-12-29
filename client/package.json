@@ -1,6 +1,6 @@
 {
 	"name": "hed-lsp-client",
-	"displayName": "HED Language Support",
+	"displayName": "HED Annotation Tools",
 	"description": "Language support for HED (Hierarchical Event Descriptors) annotations",
 	"version": "0.3.1",
 	"publisher": "neuromechanist",
