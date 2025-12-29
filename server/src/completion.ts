@@ -11,8 +11,8 @@ import {
 } from 'vscode-languageserver';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { schemaManager } from './schemaManager.js';
-import { parseJsonForHedStrings, getHedRegionAtPosition, getContentOffset, getTagAtOffset } from './documentParser.js';
-import { parseTsvForHedStrings, getTsvHedRegionAtPosition, isTsvDocument } from './tsvParser.js';
+import { getHedRegionAtPosition, getContentOffset, getTagAtOffset } from './documentParser.js';
+import { getTsvHedRegionAtPosition, isTsvDocument } from './tsvParser.js';
 import { HedTag, HedRegion } from './types.js';
 import { embeddingsManager, SemanticMatch } from './embeddings.js';
 
@@ -124,59 +124,6 @@ const SEMANTIC_MAPPINGS: Record<string, string[]> = {
 };
 
 /**
- * Pattern to match Definition/Name tags in HED strings.
- * Captures the definition name after Definition/.
- */
-const DEFINITION_PATTERN = /\bDefinition\/([A-Za-z0-9_-]+)/g;
-
-/**
- * Extract all definition names from a document.
- * Scans all HED regions for Definition/Name patterns.
- */
-function extractDefinitionNames(document: TextDocument): string[] {
-	const names = new Set<string>();
-
-	// Get all HED regions from the document
-	const regions = isTsvDocument(document)
-		? parseTsvForHedStrings(document)
-		: parseJsonForHedStrings(document);
-
-	// Extract definition names from each region
-	for (const region of regions) {
-		let match: RegExpExecArray | null;
-		DEFINITION_PATTERN.lastIndex = 0; // Reset regex state
-
-		while ((match = DEFINITION_PATTERN.exec(region.content)) !== null) {
-			names.add(match[1]);
-		}
-	}
-
-	return Array.from(names).sort();
-}
-
-/**
- * Create a completion item for a definition name.
- */
-function createDefinitionCompletionItem(
-	name: string,
-	isDefExpand: boolean,
-	afterSeparator: boolean
-): CompletionItem {
-	const insertText = afterSeparator ? ` ${name}` : name;
-	const prefix = isDefExpand ? 'Def-expand' : 'Def';
-
-	return {
-		label: name,
-		kind: CompletionItemKind.Reference,
-		detail: `${prefix}/${name}`,
-		documentation: `Reference to definition \`Definition/${name}\``,
-		insertText,
-		insertTextFormat: InsertTextFormat.PlainText,
-		sortText: `1-${name.toLowerCase()}` // High priority
-	};
-}
-
-/**
  * Provide completion items for a position in a document.
  */
 export async function provideCompletions(
@@ -210,7 +157,7 @@ export async function provideCompletions(
 	console.log(`[HED] Completion context: type=${context.type}, parent=${context.parentTag}, prefix=${context.prefix}`);
 
 	// Get appropriate completions based on context
-	const items = await getCompletionsForContext(context, document);
+	const items = await getCompletionsForContext(context);
 	console.log(`[HED] Returning ${items.length} completions`);
 	return items;
 }
@@ -305,7 +252,7 @@ function analyzeCompletionContext(content: string, offset: number): CompletionCo
 /**
  * Get completions for a given context.
  */
-async function getCompletionsForContext(context: CompletionContext, document: TextDocument): Promise<CompletionItem[]> {
+async function getCompletionsForContext(context: CompletionContext): Promise<CompletionItem[]> {
 	const items: CompletionItem[] = [];
 
 	switch (context.type) {
@@ -318,22 +265,6 @@ async function getCompletionsForContext(context: CompletionContext, document: Te
 
 		case 'child':
 			if (context.parentTag) {
-				// Check if completing after Def/ or Def-expand/
-				const parentLower = context.parentTag.toLowerCase();
-				if (parentLower === 'def' || parentLower === 'def-expand') {
-					const isDefExpand = parentLower === 'def-expand';
-					const definitionNames = extractDefinitionNames(document);
-					console.log(`[HED] Found ${definitionNames.length} definitions in document`);
-
-					for (const name of definitionNames) {
-						if (!context.prefix || matchesPrefix(name, context.prefix)) {
-							items.push(createDefinitionCompletionItem(name, isDefExpand, context.afterSeparator));
-						}
-					}
-					break;
-				}
-
-				// Normal child tag completion
 				const childTags = await schemaManager.getChildTags(context.parentTag);
 				for (const tag of childTags) {
 					if (!context.prefix || matchesPrefix(tag.shortForm, context.prefix)) {
