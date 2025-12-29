@@ -5,6 +5,17 @@ All notable changes to the HED Language Support extension will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2025-12-29
+
+### Changed
+- Semantic search is now opt-in with a popup prompt (avoids unexpected 600MB download)
+- Status bar shows model download progress when semantic search is enabled
+- Cross-platform support for Windows, macOS, and Linux
+
+### Fixed
+- Extension now works correctly on fresh installs (was only working in debug mode)
+- Bundled dependencies properly with esbuild
+
 ## [0.3.1] - 2025-12-29
 
 ### Changed
@@ -52,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for `{column}` placeholders in BIDS sidecars
 - Configurable schema version per workspace
 
+[0.3.3]: https://github.com/hed-standard/hed-lsp/releases/tag/v0.3.3
 [0.3.1]: https://github.com/hed-standard/hed-lsp/releases/tag/v0.3.1
 [0.3.0]: https://github.com/hed-standard/hed-lsp/releases/tag/v0.3.0
 [0.2.0]: https://github.com/hed-standard/hed-lsp/releases/tag/v0.2.0
