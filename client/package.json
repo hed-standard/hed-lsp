@@ -2,7 +2,7 @@
 	"name": "hed-lsp-client",
 	"displayName": "HED Language Support",
 	"description": "Language support for HED (Hierarchical Event Descriptors) annotations",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"publisher": "neuromechanist",
 	"author": {
 		"name": "Seyed Yahya Shirazi",
