@@ -28,7 +28,21 @@ export interface TagEmbedding {
 }
 
 /**
+ * Embedding entry for a curated keyword.
+ * Keywords act as "anchors" that vote for HED tags.
+ */
+export interface KeywordEmbedding {
+	/** The keyword (e.g., "marmoset", "mouse") */
+	keyword: string;
+	/** HED tags this keyword points to */
+	targets: string[];
+	/** The embedding vector */
+	vector: number[];
+}
+
+/**
  * Embeddings database stored on disk.
+ * Version 3.0+ includes both tag and keyword embeddings.
  */
 interface EmbeddingsDatabase {
 	version: string;
@@ -36,6 +50,8 @@ interface EmbeddingsDatabase {
 	schemaVersion: string;
 	dimensions: number;
 	tags: TagEmbedding[];
+	/** Keyword embeddings for dual-embedding search (v3.0+) */
+	keywords?: KeywordEmbedding[];
 }
 
 /**
@@ -97,6 +113,11 @@ const KEYWORD_INDEX: Record<string, string[]> = {
 	'rabbit': ['Animal', 'Animal-agent'],
 	'cat': ['Animal', 'Animal-agent'],
 	'dog': ['Animal', 'Animal-agent'],
+	'horse': ['Animal', 'Animal-agent'],
+	'pig': ['Animal', 'Animal-agent'],
+	'sheep': ['Animal', 'Animal-agent'],
+	'cow': ['Animal', 'Animal-agent'],
+	'goat': ['Animal', 'Animal-agent'],
 	// Model organisms
 	'zebrafish': ['Animal', 'Animal-agent'],
 	'drosophila': ['Animal', 'Animal-agent'],
@@ -457,9 +478,11 @@ const KEYWORD_INDEX: Record<string, string[]> = {
 
 /**
  * Embeddings Manager for semantic search using Qwen3-Embedding.
+ * Implements dual-embedding architecture: keywords as anchors + direct tag matching.
  */
 class EmbeddingsManager {
-	private embeddings: Map<string, TagEmbedding> = new Map();
+	private tagEmbeddings: Map<string, TagEmbedding> = new Map();
+	private keywordEmbeddings: KeywordEmbedding[] = [];
 	private config: EmbeddingConfig = DEFAULT_CONFIG;
 	private modelLoaded = false;
 	private embeddingsLoaded = false;
@@ -514,6 +537,7 @@ class EmbeddingsManager {
 
 	/**
 	 * Load pre-computed embeddings from file.
+	 * Loads both tag embeddings and keyword embeddings for dual-embedding search.
 	 */
 	async loadEmbeddings(): Promise<boolean> {
 		if (this.embeddingsLoaded) return true;
@@ -528,14 +552,21 @@ class EmbeddingsManager {
 				const data = fs.readFileSync(embeddingsPath, 'utf-8');
 				const db: EmbeddingsDatabase = JSON.parse(data);
 
+				// Load tag embeddings
 				for (const entry of db.tags) {
 					const key = `${entry.prefix}${entry.tag}`.toLowerCase();
-					this.embeddings.set(key, entry);
+					this.tagEmbeddings.set(key, entry);
+				}
+
+				// Load keyword embeddings (v3.0+)
+				if (db.keywords && db.keywords.length > 0) {
+					this.keywordEmbeddings = db.keywords;
+					console.log(`[HED Embeddings] Loaded ${this.keywordEmbeddings.length} keyword embeddings`);
 				}
 
 				this.dimensions = db.dimensions;
 				this.embeddingsLoaded = true;
-				console.log(`[HED Embeddings] Loaded ${this.embeddings.size} pre-computed embeddings`);
+				console.log(`[HED Embeddings] Loaded ${this.tagEmbeddings.size} tag embeddings`);
 				return true;
 			}
 		} catch (error) {
@@ -558,15 +589,16 @@ class EmbeddingsManager {
 		}
 
 		const db: EmbeddingsDatabase = {
-			version: '1.0',
+			version: '3.0',
 			modelId: this.config.modelId,
 			schemaVersion,
 			dimensions: this.dimensions,
-			tags: Array.from(this.embeddings.values())
+			tags: Array.from(this.tagEmbeddings.values()),
+			keywords: this.keywordEmbeddings
 		};
 
 		fs.writeFileSync(embeddingsPath, JSON.stringify(db));
-		console.log(`[HED Embeddings] Saved ${this.embeddings.size} embeddings to disk`);
+		console.log(`[HED Embeddings] Saved ${this.tagEmbeddings.size} tag embeddings and ${this.keywordEmbeddings.length} keyword embeddings to disk`);
 	}
 
 	/**
@@ -629,12 +661,12 @@ class EmbeddingsManager {
 	 */
 	addTagEmbedding(tag: string, longForm: string, prefix: string, vector: number[]): void {
 		const key = `${prefix}${tag}`.toLowerCase();
-		this.embeddings.set(key, { tag, longForm, prefix, vector });
+		this.tagEmbeddings.set(key, { tag, longForm, prefix, vector });
 	}
 
 	/**
-	 * Find tags matching a keyword from the index.
-	 * Returns tags with boosted similarity (0.95) for keyword matches.
+	 * Find tags matching a keyword from the deterministic index.
+	 * Returns tags with boosted similarity (0.95) for exact keyword matches.
 	 */
 	findByKeyword(query: string): SemanticMatch[] {
 		const normalizedQuery = query.toLowerCase().trim();
@@ -648,13 +680,13 @@ class EmbeddingsManager {
 		for (const tagName of matchingTags) {
 			// Find the tag in our embeddings to get full info
 			const key = tagName.toLowerCase();
-			const entry = this.embeddings.get(key);
+			const entry = this.tagEmbeddings.get(key);
 			if (entry) {
 				results.push({
 					tag: entry.tag,
 					longForm: entry.longForm,
 					prefix: entry.prefix,
-					similarity: 0.95 // High similarity for keyword matches
+					similarity: 0.95 // High similarity for exact keyword matches
 				});
 			}
 		}
@@ -663,51 +695,145 @@ class EmbeddingsManager {
 	}
 
 	/**
-	 * Find semantically similar tags to a query.
-	 * First checks keyword index, then falls back to embedding search.
+	 * Find semantically similar tags using dual-embedding architecture.
+	 *
+	 * Algorithm:
+	 * 1. Search keyword embeddings - find similar keywords, collect votes for target tags
+	 * 2. Search tag embeddings - find similar tags directly
+	 * 3. Combine evidence: tags from BOTH sources get boosted confidence
+	 *
+	 * Example: Query "bird"
+	 * - Keyword search finds "bird" close to "dog", "cat" → votes for Animal
+	 * - Tag search finds "bird" close to "Animal" directly
+	 * - Animal gets evidence from both sources → high confidence
 	 */
 	async findSimilar(query: string, topK: number = 10): Promise<SemanticMatch[]> {
 		// Try to load pre-computed embeddings first
 		await this.loadEmbeddings();
 
-		if (this.embeddings.size === 0) {
+		if (this.tagEmbeddings.size === 0) {
 			console.log('[HED Embeddings] No embeddings available for search');
 			return [];
 		}
 
-		// First, check keyword index for direct matches
-		const keywordMatches = this.findByKeyword(query);
-		const keywordTagNames = new Set(keywordMatches.map(m => m.tag));
+		// First, check deterministic keyword index for exact matches
+		const exactKeywordMatches = this.findByKeyword(query);
+		if (exactKeywordMatches.length > 0) {
+			// Exact keyword match - return these with highest confidence
+			return exactKeywordMatches.slice(0, topK);
+		}
 
 		// Generate query embedding for semantic search (lowercase)
 		const queryEmbedding = await this.embed(query.toLowerCase());
 		if (!queryEmbedding) {
-			// Return keyword matches if embedding fails
-			return keywordMatches.slice(0, topK);
+			return [];
 		}
 
-		// Compute similarities for embedding-based search
-		const embeddingResults: SemanticMatch[] = [];
+		// ============ DUAL-EMBEDDING SEARCH ============
 
-		for (const [_key, entry] of this.embeddings) {
-			// Skip tags already matched by keyword
-			if (keywordTagNames.has(entry.tag)) continue;
+		// 1. Search KEYWORD embeddings - collect votes for tags
+		const tagVotes: Map<string, { votes: number; maxSimilarity: number }> = new Map();
+		const KEYWORD_THRESHOLD = 0.6; // Minimum similarity to consider a keyword match
+		const TOP_KEYWORDS = 10; // Number of similar keywords to consider
 
+		if (this.keywordEmbeddings.length > 0) {
+			// Find most similar keywords to query
+			const keywordSimilarities: { keyword: KeywordEmbedding; similarity: number }[] = [];
+
+			for (const kw of this.keywordEmbeddings) {
+				const similarity = this.cosineSimilarity(queryEmbedding, kw.vector);
+				if (similarity >= KEYWORD_THRESHOLD) {
+					keywordSimilarities.push({ keyword: kw, similarity });
+				}
+			}
+
+			// Sort by similarity and take top keywords
+			keywordSimilarities.sort((a, b) => b.similarity - a.similarity);
+			const topKeywords = keywordSimilarities.slice(0, TOP_KEYWORDS);
+
+			// Each similar keyword votes for its target tags
+			for (const { keyword, similarity } of topKeywords) {
+				for (const targetTag of keyword.targets) {
+					const existing = tagVotes.get(targetTag);
+					if (existing) {
+						existing.votes++;
+						existing.maxSimilarity = Math.max(existing.maxSimilarity, similarity);
+					} else {
+						tagVotes.set(targetTag, { votes: 1, maxSimilarity: similarity });
+					}
+				}
+			}
+		}
+
+		// 2. Search TAG embeddings - find directly similar tags
+		const TAG_THRESHOLD = 0.5; // Minimum similarity for direct tag match
+		const directMatches: Map<string, { entry: TagEmbedding; similarity: number }> = new Map();
+
+		for (const [_key, entry] of this.tagEmbeddings) {
 			const similarity = this.cosineSimilarity(queryEmbedding, entry.vector);
-			embeddingResults.push({
-				tag: entry.tag,
-				longForm: entry.longForm,
-				prefix: entry.prefix,
-				similarity
-			});
+			if (similarity >= TAG_THRESHOLD) {
+				directMatches.set(entry.tag, { entry, similarity });
+			}
 		}
 
-		// Sort embedding results by similarity
-		embeddingResults.sort((a, b) => b.similarity - a.similarity);
+		// 3. Combine evidence - union of keyword votes and direct matches
+		const combinedScores: Map<string, {
+			entry: TagEmbedding;
+			keywordVotes: number;
+			keywordSimilarity: number;
+			directSimilarity: number;
+			combinedScore: number;
+		}> = new Map();
 
-		// Combine: keyword matches first, then top embedding results
-		const combined = [...keywordMatches, ...embeddingResults];
-		return combined.slice(0, topK);
+		// Add tags from keyword votes
+		for (const [tagName, { votes, maxSimilarity }] of tagVotes) {
+			const entry = this.tagEmbeddings.get(tagName.toLowerCase());
+			if (entry) {
+				const directMatch = directMatches.get(tagName);
+				const directSim = directMatch?.similarity ?? 0;
+
+				// Combined score: boost when evidence from both sources
+				// Base: keyword similarity weighted by vote count
+				// Boost: multiply by 1.5 if also matched directly
+				const keywordScore = maxSimilarity * (1 + Math.log(votes + 1) * 0.2);
+				const boostMultiplier = directSim > 0 ? 1.5 : 1.0;
+				const combinedScore = keywordScore * boostMultiplier + directSim * 0.3;
+
+				combinedScores.set(tagName, {
+					entry,
+					keywordVotes: votes,
+					keywordSimilarity: maxSimilarity,
+					directSimilarity: directSim,
+					combinedScore
+				});
+			}
+		}
+
+		// Add direct matches that weren't voted for
+		for (const [tagName, { entry, similarity }] of directMatches) {
+			if (!combinedScores.has(tagName)) {
+				combinedScores.set(tagName, {
+					entry,
+					keywordVotes: 0,
+					keywordSimilarity: 0,
+					directSimilarity: similarity,
+					combinedScore: similarity
+				});
+			}
+		}
+
+		// Sort by combined score and create results
+		const sortedResults = Array.from(combinedScores.entries())
+			.sort((a, b) => b[1].combinedScore - a[1].combinedScore)
+			.slice(0, topK);
+
+		return sortedResults.map(([_tagName, data]) => ({
+			tag: data.entry.tag,
+			longForm: data.entry.longForm,
+			prefix: data.entry.prefix,
+			// Use combined score as similarity (capped at 0.95 since exact keyword would be 0.95)
+			similarity: Math.min(data.combinedScore, 0.94)
+		}));
 	}
 
 	/**
@@ -725,10 +851,17 @@ class EmbeddingsManager {
 	}
 
 	/**
-	 * Get the number of loaded embeddings.
+	 * Get the number of loaded tag embeddings.
 	 */
 	size(): number {
-		return this.embeddings.size;
+		return this.tagEmbeddings.size;
+	}
+
+	/**
+	 * Get the number of loaded keyword embeddings.
+	 */
+	keywordCount(): number {
+		return this.keywordEmbeddings.length;
 	}
 
 	/**
