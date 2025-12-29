@@ -43,8 +43,16 @@ package-lock.json
 docs/**
 CONTRIBUTING.md
 
+# Scripts (development only)
+scripts/**
+
 # Data files - keep only compact embeddings
 server/data/tag-embeddings.json
+
+# Environment files
+.env
+.env.*
+!.env.example
 
 # OS files
 .DS_Store
