@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/hed-standard/hed-lsp/actions/workflows/ci.yml/badge.svg)](https://github.com/hed-standard/hed-lsp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/hed-standard.hed-lsp)](https://marketplace.visualstudio.com/items?itemName=hed-standard.hed-lsp)
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/neuromechanist.hed-lsp-client)](https://marketplace.visualstudio.com/items?itemName=neuromechanist.hed-lsp-client)
 
 Language Server Protocol implementation for [HED (Hierarchical Event Descriptors)](https://www.hedtags.org/), providing intelligent editing support for annotating neuroimaging data in BIDS datasets.
 
