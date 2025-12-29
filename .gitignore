@@ -57,3 +57,4 @@ pnpm-lock.yaml
 # Documentation build
 site/
 docs/_build/
+server/data/tag-embeddings.json

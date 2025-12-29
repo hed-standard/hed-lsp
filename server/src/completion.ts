@@ -14,6 +14,7 @@ import { schemaManager } from './schemaManager.js';
 import { getHedRegionAtPosition, getContentOffset, getTagAtOffset } from './documentParser.js';
 import { getTsvHedRegionAtPosition, isTsvDocument } from './tsvParser.js';
 import { HedTag, HedRegion } from './types.js';
+import { embeddingsManager, SemanticMatch } from './embeddings.js';
 
 /**
  * Get HED region at position for any document type.
@@ -285,15 +286,14 @@ async function getCompletionsForContext(context: CompletionContext): Promise<Com
 					}
 				}
 
-				// Check for semantic mappings if few matches
-				const lowerPrefix = context.prefix.toLowerCase();
-				if (matchingTags.length < 3 && SEMANTIC_MAPPINGS[lowerPrefix]) {
-					const semanticSuggestions = SEMANTIC_MAPPINGS[lowerPrefix];
-					for (const suggestion of semanticSuggestions) {
-						const tag = await schemaManager.findTag(suggestion);
-						if (tag && !items.some(item => item.label === tag.shortForm)) {
-							items.push(createSemanticSuggestion(tag, context.prefix));
-						}
+				// Always run semantic search (fast with pre-loaded embeddings)
+				// Direct matches are ranked higher via sortText priority
+				const semanticMatches = await getSemanticSuggestions(context.prefix);
+				for (const match of semanticMatches) {
+					// Skip if already in items (direct match takes precedence)
+					const fullTag = match.prefix + match.tag;
+					if (!items.some(item => item.label === fullTag)) {
+						items.push(createSemanticSuggestionFromMatch(match, context.prefix));
 					}
 				}
 
@@ -448,6 +448,82 @@ function formatSemanticDocumentation(tag: HedTag, searchTerm: string): string {
 		lines.push('');
 		lines.push(`**Tip:** You can extend this tag: \`${tag.shortForm}/${searchTerm}\``);
 	}
+
+	return lines.join('\n');
+}
+
+/**
+ * Minimum similarity threshold for embedding-based suggestions.
+ */
+const SIMILARITY_THRESHOLD = 0.3;
+
+/**
+ * Get semantic suggestions using embedding-based search.
+ * Falls back to static mappings if embeddings aren't available.
+ */
+async function getSemanticSuggestions(query: string): Promise<SemanticMatch[]> {
+	// Try embedding-based search first
+	try {
+		const matches = await embeddingsManager.findSimilar(query, 5);
+		// Filter by similarity threshold
+		return matches.filter(m => m.similarity >= SIMILARITY_THRESHOLD);
+	} catch (error) {
+		console.log('[HED] Embedding search failed, falling back to static mappings');
+	}
+
+	// Fallback to static mappings
+	const lowerQuery = query.toLowerCase();
+	if (SEMANTIC_MAPPINGS[lowerQuery]) {
+		const results: SemanticMatch[] = [];
+		for (const tagName of SEMANTIC_MAPPINGS[lowerQuery]) {
+			results.push({
+				tag: tagName,
+				longForm: tagName,
+				prefix: '',
+				similarity: 0.8 // High similarity for static mappings
+			});
+		}
+		return results;
+	}
+
+	return [];
+}
+
+/**
+ * Create a completion item from an embedding search match.
+ */
+function createSemanticSuggestionFromMatch(match: SemanticMatch, searchTerm: string): CompletionItem {
+	const fullTag = match.prefix + match.tag;
+	const similarityPercent = Math.round(match.similarity * 100);
+
+	return {
+		label: fullTag,
+		kind: CompletionItemKind.Reference,
+		detail: `${similarityPercent}% similar to "${searchTerm}"`,
+		documentation: formatSemanticMatchDocumentation(match, searchTerm),
+		insertText: fullTag,
+		insertTextFormat: InsertTextFormat.PlainText,
+		// Priority 4 = after direct matches (2) and extension suggestions (3)
+		sortText: `4-${String(100 - similarityPercent).padStart(3, '0')}-${fullTag.toLowerCase()}`,
+		filterText: searchTerm,
+		labelDetails: {
+			description: `(semantic match)`
+		}
+	};
+}
+
+/**
+ * Format documentation for an embedding-based semantic match.
+ */
+function formatSemanticMatchDocumentation(match: SemanticMatch, searchTerm: string): string {
+	const lines: string[] = [];
+	const similarityPercent = Math.round(match.similarity * 100);
+
+	lines.push(`**Semantic Match: \`${match.prefix}${match.tag}\`**`);
+	lines.push('');
+	lines.push(`The term "${searchTerm}" is similar to this HED tag (${similarityPercent}% match).`);
+	lines.push('');
+	lines.push(`**Path:** ${match.longForm}`);
 
 	return lines.join('\n');
 }

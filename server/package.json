@@ -9,6 +9,7 @@
 		"watch": "tsc -b -w"
 	},
 	"dependencies": {
+		"@huggingface/transformers": "^3.8.1",
 		"hed-validator": "^4.1.4",
 		"vscode-languageserver": "^9.0.1",
 		"vscode-languageserver-textdocument": "^1.0.11"
