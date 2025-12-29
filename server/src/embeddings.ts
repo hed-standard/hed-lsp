@@ -474,6 +474,225 @@ const KEYWORD_INDEX: Record<string, string[]> = {
 	'fruit': ['Fruit'],
 	'apple': ['Apple', 'Fruit'],
 	'banana': ['Banana', 'Fruit'],
+
+	// =====================
+	// SPATIAL RELATIONS (only non-HED terms)
+	// =====================
+	'left-of': ['Left-of'],
+	'right-of': ['Right-of'],
+	'near': ['Near-to'],
+	'far': ['Far-from'],
+	'adjacent': ['Adjacent-to'],
+	'inside': ['Inside'],
+	'outside': ['Outside'],
+	'in-front': ['In-front-of'],
+	'beside': ['Beside'],
+	'center': ['Center-of'],
+	'top': ['Top-of'],
+	'bottom': ['Bottom-of'],
+	'under': ['Under'],
+
+	// =====================
+	// TEMPORAL RELATIONS (only non-HED terms)
+	// =====================
+	'simultaneous': ['Synchronous-with'],
+	'synchronous': ['Synchronous-with'],
+	'asynchronous': ['Asynchronous-with'],
+	'concurrent': ['Synchronous-with'],
+	'sequential': ['After'],
+	'following': ['After'],
+	'preceding': ['Before'],
+
+	// =====================
+	// EXTENDED BODY PARTS (only non-HED terms)
+	// =====================
+	'lips': ['Lip'],
+	'jaw': ['Jaw'],
+	'scalp': ['Hair'],
+	'chest': ['Torso'],
+	'back': ['Torso'],
+	'stomach': ['Abdomen'],
+
+	// =====================
+	// DATA ARTIFACTS & SIGNAL QUALITY (only non-HED terms)
+	// =====================
+	'artifact': ['Artifact'],
+	'artefact': ['Artifact'],
+	'noise-artifact': ['Artifact'],
+	'muscle-artifact': ['Artifact'],
+	'electrode-artifact': ['Artifact'],
+	'noisy': ['Artifact'],
+	'clean': ['Normal'],
+	'corrupted': ['Artifact'],
+
+	// =====================
+	// SCORE LIBRARY - EEG/CLINICAL (sc: prefix)
+	// =====================
+	// Sleep stages
+	'rem': ['sc:Sleep-stage-R'],
+	'rem-sleep': ['sc:Sleep-stage-R'],
+	'nrem': ['sc:Sleep-stage-N1', 'sc:Sleep-stage-N2', 'sc:Sleep-stage-N3'],
+	'stage-1': ['sc:Sleep-stage-N1'],
+	'stage-2': ['sc:Sleep-stage-N2'],
+	'stage-3': ['sc:Sleep-stage-N3'],
+	'n1': ['sc:Sleep-stage-N1'],
+	'n2': ['sc:Sleep-stage-N2'],
+	'n3': ['sc:Sleep-stage-N3'],
+	'slow-wave-sleep': ['sc:Sleep-stage-N3'],
+	'deep-sleep': ['sc:Sleep-stage-N3'],
+	// Sleep features
+	'spindle': ['sc:Sleep-spindle'],
+	'sleep-spindle': ['sc:Sleep-spindle'],
+	'k-complex': ['sc:K-complex'],
+	// EEG rhythms
+	'alpha-rhythm': ['sc:Alpha-activity'],
+	'beta-rhythm': ['sc:Beta-activity'],
+	'theta-rhythm': ['sc:Theta-activity'],
+	'delta-rhythm': ['sc:Delta-activity'],
+	'alpha-activity': ['sc:Alpha-activity'],
+	'beta-activity': ['sc:Beta-activity'],
+	'theta-activity': ['sc:Theta-activity'],
+	'delta-activity': ['sc:Delta-activity'],
+	// Clinical events
+	'seizure': ['sc:Seizure'],
+	'epileptic': ['sc:Epileptiform-activity'],
+	'epileptiform': ['sc:Epileptiform-activity'],
+	'spike-wave': ['sc:Spike-and-wave'],
+	'sharp-wave': ['sc:Sharp-wave'],
+	'interictal': ['sc:Interictal-finding'],
+	'ictal': ['sc:Ictal-finding'],
+
+	// =====================
+	// ENVIRONMENTAL CONTEXT (only non-HED terms)
+	// =====================
+	'outdoor': ['Outdoors'],
+	'indoor': ['Indoors'],
+	'virtual-reality': ['Virtual-world'],
+	'vr': ['Virtual-world'],
+	'ar': ['Augmented-reality'],
+	'underwater': ['Underwater'],
+	'daytime': ['Daytime'],
+	'nighttime': ['Nighttime'],
+	'day': ['Daytime'],
+	'night': ['Nighttime'],
+
+	// =====================
+	// INFORMATIONAL PROPERTIES (only non-HED terms)
+	// =====================
+	'difficult': ['Difficult'],
+	'easy': ['Easy'],
+	'hard': ['Difficult'],
+	'predictable': ['Expected'],
+	'unpredictable': ['Unexpected'],
+	'meaningless': ['Nonsensical'],
+	'nonsense': ['Nonsensical'],
+
+	// =====================
+	// COGNITIVE ACTIONS (only non-HED terms)
+	// =====================
+	'decide': ['Decide'],
+	'decision': ['Decide'],
+	'choose': ['Decide'],
+	'choice': ['Decide'],
+	'imagining': ['Imagine'],
+	'mental-imagery': ['Imagine'],
+	'prediction': ['Predict'],
+	'expect': ['Expect'],
+	'expecting': ['Expect'],
+	'anticipate': ['Expect'],
+	'counting': ['Count'],
+	'calculate': ['Count'],
+	'estimate': ['Estimate'],
+	'judgment': ['Judge'],
+	'attend': ['Attend-to'],
+	'attending': ['Attend-to'],
+	'notice': ['Attend-to'],
+	'detecting': ['Detect'],
+	'recognition': ['Recognize'],
+	'categorize': ['Discriminate'],
+	'compare': ['Compare'],
+	'comparing': ['Compare'],
+	'evaluate': ['Evaluate'],
+
+	// =====================
+	// LANGUAGE & LINGUISTIC TERMS (only non-HED terms)
+	// =====================
+	'words': ['Word'],
+	'sentences': ['Sentence'],
+	'text': ['Character'],
+	'letters': ['Character'],
+	'morpheme': ['Morpheme'],
+	'reading': ['Read'],
+	'writing': ['Write'],
+	'spelling': ['Spell'],
+	'naming': ['Communicate-vocally'],
+	'comprehension': ['Hear', 'Read'],
+	'language': ['Communicate'],
+	'verbal': ['Communicate-vocally'],
+	'nonverbal': ['Communicate-gesturally'],
+
+	// =====================
+	// COLORS (only non-HED terms - most colors are HED tags)
+	// =====================
+	'grey': ['Gray'],
+	'colour': ['CSS-color'],
+	'colored': ['CSS-color'],
+	'coloured': ['CSS-color'],
+
+	// =====================
+	// VISUAL PROPERTIES (only non-HED terms)
+	// =====================
+	'bright': ['High-contrast'],
+	'dim': ['Low-contrast'],
+	'contrast': ['High-contrast'],
+	'luminous': ['High-contrast'],
+	'dark': ['Low-contrast'],
+	'opaque': ['Opaque'],
+	'transparent': ['Transparent'],
+	'blurry': ['Blurry'],
+	'clear': ['Clear'],
+	'monochrome': ['Grayscale'],
+
+	// =====================
+	// SHAPES & GEOMETRY (only non-HED terms)
+	// =====================
+	'circle': ['Ellipse'],
+	'circular': ['Ellipse'],
+	'line': ['Line'],
+	'checkerboard': ['Checkerboard'],
+	'grating': ['Grating'],
+	'gabor': ['Gabor-patch'],
+	'dot': ['Ellipse'],
+
+	// =====================
+	// ADDITIONAL TASK TYPES (only non-HED terms)
+	// =====================
+	'stroop': ['Experimental-stimulus'],
+	'n-back': ['Experimental-stimulus'],
+	'nback': ['Experimental-stimulus'],
+	'working-memory': ['Attentive'],
+	'memory-task': ['Experimental-stimulus'],
+	'detection': ['Experimental-stimulus', 'Target'],
+	'discrimination': ['Experimental-stimulus'],
+	'localization': ['Experimental-stimulus'],
+	'search': ['Experimental-stimulus', 'See'],
+	'visual-search': ['Experimental-stimulus', 'See'],
+	'antisaccade': ['Saccade', 'Experimental-stimulus'],
+	'prosaccade': ['Saccade', 'Experimental-stimulus'],
+	'pursuit': ['Move-eyes'],
+	'smooth-pursuit': ['Move-eyes'],
+
+	// =====================
+	// COMMUNICATION & SOCIAL (only non-HED terms)
+	// =====================
+	'communication': ['Communicate'],
+	'talk': ['Communicate-vocally'],
+	'talking': ['Communicate-vocally'],
+	'chat': ['Communicate-vocally'],
+	'sign': ['Communicate-gesturally'],
+	'signing': ['Communicate-gesturally'],
+	'facial-expression': ['Move-face'],
+	'expression': ['Move-face'],
 };
 
 /**
