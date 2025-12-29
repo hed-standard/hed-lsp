@@ -3,11 +3,11 @@
  * Provides Go to Definition for Def/Name references.
  */
 
-import { Location, Position, Range } from 'vscode-languageserver';
-import { TextDocument } from 'vscode-languageserver-textdocument';
-import { parseJsonForHedStrings, getHedRegionAtPosition, getContentOffset, getTagAtOffset } from './documentParser.js';
-import { parseTsvForHedStrings, getTsvHedRegionAtPosition, isTsvDocument } from './tsvParser.js';
-import { HedRegion } from './types.js';
+import { type Location, type Position, Range } from 'vscode-languageserver';
+import type { TextDocument } from 'vscode-languageserver-textdocument';
+import { getContentOffset, getHedRegionAtPosition, getTagAtOffset, parseJsonForHedStrings } from './documentParser.js';
+import { getTsvHedRegionAtPosition, isTsvDocument, parseTsvForHedStrings } from './tsvParser.js';
+import type { HedRegion } from './types.js';
 
 /**
  * Pattern to match Def/Name or Def-expand/Name references.
@@ -38,9 +38,7 @@ interface DefinitionLocation {
  * Find the location of a definition in the document.
  */
 function findDefinitionLocation(document: TextDocument, defName: string): DefinitionLocation | null {
-	const regions = isTsvDocument(document)
-		? parseTsvForHedStrings(document)
-		: parseJsonForHedStrings(document);
+	const regions = isTsvDocument(document) ? parseTsvForHedStrings(document) : parseJsonForHedStrings(document);
 
 	const searchName = defName.toLowerCase();
 
@@ -67,7 +65,7 @@ function findDefinitionLocation(document: TextDocument, defName: string): Defini
 					name,
 					region,
 					startOffset,
-					endOffset: i
+					endOffset: i,
 				};
 			}
 		}
@@ -79,10 +77,7 @@ function findDefinitionLocation(document: TextDocument, defName: string): Defini
 /**
  * Provide Go to Definition for Def/Name references.
  */
-export function provideDefinition(
-	document: TextDocument,
-	position: Position
-): Location | null {
+export function provideDefinition(document: TextDocument, position: Position): Location | null {
 	// Check if we're inside a HED string
 	const region = getRegionAtPosition(document, position);
 	if (!region) {
@@ -120,6 +115,6 @@ export function provideDefinition(
 
 	return {
 		uri: document.uri,
-		range: Range.create(startPos, endPos)
+		range: Range.create(startPos, endPos),
 	};
 }

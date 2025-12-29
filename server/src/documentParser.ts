@@ -3,8 +3,8 @@
  * Extracts HED string regions from JSON documents with position tracking.
  */
 
-import { TextDocument, Position, Range } from 'vscode-languageserver-textdocument';
-import { HedRegion } from './types.js';
+import type { Position, Range, TextDocument } from 'vscode-languageserver-textdocument';
+import type { HedRegion } from './types.js';
 
 /**
  * Parse a JSON document and extract all HED string regions.
@@ -76,11 +76,7 @@ function findHedPaths(obj: any, currentPath: string[], insideHed: boolean = fals
 /**
  * Locate a HED string region in the document text by its JSON path.
  */
-function locateHedRegion(
-	text: string,
-	path: string[],
-	document: TextDocument
-): HedRegion | null {
+function locateHedRegion(text: string, path: string[], document: TextDocument): HedRegion | null {
 	// Strategy: Navigate through the JSON structure to find the offset
 	let searchStart = 0;
 
@@ -145,7 +141,7 @@ function locateHedRegion(
 		content: unescapedContent,
 		range: { start: rangeStart, end: rangeEnd },
 		jsonPath: path.join('.'),
-		contentOffset: valueStart
+		contentOffset: valueStart,
 	};
 }
 
@@ -171,10 +167,7 @@ function unescapeJsonString(str: string): string {
 /**
  * Get the HED region at a specific position in the document.
  */
-export function getHedRegionAtPosition(
-	document: TextDocument,
-	position: Position
-): HedRegion | null {
+export function getHedRegionAtPosition(document: TextDocument, position: Position): HedRegion | null {
 	const regions = parseJsonForHedStrings(document);
 
 	for (const region of regions) {
@@ -217,10 +210,7 @@ export function getContentOffset(region: HedRegion, position: Position, document
  * Get the tag at a specific offset within a HED string.
  * Returns the tag text and its bounds within the HED string.
  */
-export function getTagAtOffset(
-	hedContent: string,
-	offset: number
-): { tag: string; start: number; end: number } | null {
+export function getTagAtOffset(hedContent: string, offset: number): { tag: string; start: number; end: number } | null {
 	// Find the tag boundaries
 	// Tags are separated by commas, parentheses, or spaces
 
@@ -253,6 +243,6 @@ export function getTagAtOffset(
 	return {
 		tag: hedContent.slice(start, end),
 		start,
-		end
+		end,
 	};
 }

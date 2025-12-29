@@ -1,0 +1,26 @@
+{
+	"version": "0.2",
+	"language": "en",
+	"words": [
+		"bids",
+		"biomejs",
+		"cspell",
+		"hedtools",
+		"inset",
+		"neuroimaging",
+		"prepublish",
+		"vsix",
+		"vsce",
+		"vscode"
+	],
+	"ignorePaths": [
+		"node_modules",
+		"out",
+		"*.vsix",
+		"package-lock.json",
+		"server/data/*.json"
+	],
+	"ignoreRegExpList": [
+		"HED[A-Za-z0-9]*"
+	]
+}

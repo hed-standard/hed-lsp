@@ -3,12 +3,12 @@
  * Provides hover information for HED tags.
  */
 
-import { Hover, Position, MarkupContent, MarkupKind } from 'vscode-languageserver';
-import { TextDocument } from 'vscode-languageserver-textdocument';
+import { type Hover, type MarkupContent, MarkupKind, type Position } from 'vscode-languageserver';
+import type { TextDocument } from 'vscode-languageserver-textdocument';
+import { getContentOffset, getHedRegionAtPosition, getTagAtOffset, parseJsonForHedStrings } from './documentParser.js';
 import { schemaManager } from './schemaManager.js';
-import { parseJsonForHedStrings, getHedRegionAtPosition, getContentOffset, getTagAtOffset } from './documentParser.js';
-import { parseTsvForHedStrings, getTsvHedRegionAtPosition, isTsvDocument } from './tsvParser.js';
-import { HedRegion } from './types.js';
+import { getTsvHedRegionAtPosition, isTsvDocument, parseTsvForHedStrings } from './tsvParser.js';
+import type { HedRegion } from './types.js';
 
 /**
  * Pattern to match Def/Name or Def-expand/Name references.
@@ -18,7 +18,7 @@ const DEF_REFERENCE_PATTERN = /^(Def|Def-expand)\/([A-Za-z0-9_-]+)(\/.*)?$/i;
 /**
  * Pattern to find Definition/Name in HED content.
  */
-const DEFINITION_PATTERN = /\(Definition\/([A-Za-z0-9_-]+)(\/\s*#)?,\s*(\([^)]*(?:\([^)]*\)[^)]*)*\))/g;
+const _DEFINITION_PATTERN = /\(Definition\/([A-Za-z0-9_-]+)(\/\s*#)?,\s*(\([^)]*(?:\([^)]*\)[^)]*)*\))/g;
 
 /**
  * Get HED region at position for any document type.
@@ -48,9 +48,7 @@ interface DefinitionLocation {
 function findDefinitionsInDocument(document: TextDocument): Map<string, DefinitionLocation> {
 	const definitions = new Map<string, DefinitionLocation>();
 
-	const regions = isTsvDocument(document)
-		? parseTsvForHedStrings(document)
-		: parseJsonForHedStrings(document);
+	const regions = isTsvDocument(document) ? parseTsvForHedStrings(document) : parseJsonForHedStrings(document);
 
 	for (const region of regions) {
 		// Use a simpler approach: find Definition/Name patterns
@@ -79,7 +77,7 @@ function findDefinitionsInDocument(document: TextDocument): Map<string, Definiti
 				content: fullContent,
 				region,
 				startOffset,
-				endOffset: i
+				endOffset: i,
 			});
 		}
 	}
@@ -90,10 +88,7 @@ function findDefinitionsInDocument(document: TextDocument): Map<string, Definiti
 /**
  * Provide hover information for a position in a document.
  */
-export async function provideHover(
-	document: TextDocument,
-	position: Position
-): Promise<Hover | null> {
+export async function provideHover(document: TextDocument, position: Position): Promise<Hover | null> {
 	// Check if we're inside a HED string (works for both JSON and TSV)
 	const region = getRegionAtPosition(document, position);
 	if (!region) {
@@ -192,8 +187,8 @@ function createPlaceholderHover(content: string, offset: number): Hover {
 			'',
 			'This placeholder will be replaced with values from the column during HED assembly.',
 			'',
-			'Placeholders are used in BIDS sidecar files to reference values from TSV event files.'
-		].join('\n')
+			'Placeholders are used in BIDS sidecar files to reference values from TSV event files.',
+		].join('\n'),
 	};
 
 	return { contents: markdown };
@@ -206,7 +201,7 @@ function createDefinitionReferenceHover(
 	defType: string,
 	defName: string,
 	defValue: string | undefined,
-	definition: DefinitionLocation
+	definition: DefinitionLocation,
 ): Hover {
 	const lines: string[] = [];
 
@@ -219,7 +214,7 @@ function createDefinitionReferenceHover(
 		lines.push(`**Value:** \`${defValue.slice(1)}\` (replaces \`#\` in definition)`);
 		lines.push('');
 	} else if (definition.hasPlaceholder && !defValue) {
-		lines.push('**Warning:** This definition requires a value (e.g., `Def/' + defName + '/value`)');
+		lines.push(`**Warning:** This definition requires a value (e.g., \`Def/${defName}/value\`)`);
 		lines.push('');
 	}
 
@@ -232,7 +227,7 @@ function createDefinitionReferenceHover(
 
 	const markdown: MarkupContent = {
 		kind: MarkupKind.Markdown,
-		value: lines.join('\n')
+		value: lines.join('\n'),
 	};
 
 	return { contents: markdown };
@@ -253,8 +248,8 @@ function createUndefinedReferenceHover(defType: string, defName: string): Hover 
 			'',
 			'To fix this:',
 			`1. Add a definition: \`(Definition/${defName}, (your-tags-here))\``,
-			'2. Or check for typos in the definition name'
-		].join('\n')
+			'2. Or check for typos in the definition name',
+		].join('\n'),
 	};
 
 	return { contents: markdown };
@@ -287,7 +282,7 @@ function createDefinitionDeclarationHover(definition: DefinitionLocation): Hover
 
 	const markdown: MarkupContent = {
 		kind: MarkupKind.Markdown,
-		value: lines.join('\n')
+		value: lines.join('\n'),
 	};
 
 	return { contents: markdown };
@@ -307,8 +302,8 @@ function createUnknownTagHover(tagPath: string): Hover {
 			'Possible reasons:',
 			'- Typo in the tag name',
 			'- Tag from a library schema not currently loaded',
-			'- Custom extension (if parent allows extensions)'
-		].join('\n')
+			'- Custom extension (if parent allows extensions)',
+		].join('\n'),
 	};
 
 	return { contents: markdown };
@@ -370,8 +365,9 @@ function createTagHover(tag: any): Hover {
 		const childPreview = tag.children.slice(0, 5);
 		const moreCount = tag.children.length - 5;
 		lines.push('### Children');
-		lines.push(childPreview.map((c: string) => `\`${c}\``).join(', ') +
-			(moreCount > 0 ? ` ... and ${moreCount} more` : ''));
+		lines.push(
+			childPreview.map((c: string) => `\`${c}\``).join(', ') + (moreCount > 0 ? ` ... and ${moreCount} more` : ''),
+		);
 		lines.push('');
 	}
 
@@ -390,7 +386,7 @@ function createTagHover(tag: any): Hover {
 
 	const markdown: MarkupContent = {
 		kind: MarkupKind.Markdown,
-		value: lines.join('\n')
+		value: lines.join('\n'),
 	};
 
 	return { contents: markdown };

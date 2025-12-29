@@ -5,21 +5,18 @@
  * and library schemas (SCORE, LANG, etc.).
  */
 
-import { buildSchemasFromVersion } from 'hed-validator';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import type { Schemas } from 'hed-validator';
-import { HedTag, HedTagAttributes } from './types.js';
-import * as fs from 'fs';
-import * as path from 'path';
+import { buildSchemasFromVersion } from 'hed-validator';
+import type { HedTag, HedTagAttributes } from './types.js';
 
 /**
  * Default schema version including all library schemas.
  * This ensures autocomplete works for all HED tags out of the box.
  */
 const DEFAULT_BASE_VERSION = '8.4.0';
-const LIBRARY_SCHEMAS = [
-	'sc:score_2.1.0',
-	'la:lang_1.1.0'
-];
+const LIBRARY_SCHEMAS = ['sc:score_2.1.0', 'la:lang_1.1.0'];
 const DEFAULT_FULL_VERSION = [DEFAULT_BASE_VERSION, ...LIBRARY_SCHEMAS].join(',');
 
 /**
@@ -32,8 +29,8 @@ function normalizeVersion(hedVersion: string | string[]): string {
 	}
 	if (Array.isArray(hedVersion)) {
 		return hedVersion
-			.map(v => v.trim())
-			.filter(v => v.length > 0)
+			.map((v) => v.trim())
+			.filter((v) => v.length > 0)
 			.join(',');
 	}
 	if (typeof hedVersion !== 'string') {
@@ -41,8 +38,8 @@ function normalizeVersion(hedVersion: string | string[]): string {
 	}
 	return hedVersion
 		.split(',')
-		.map(part => part.trim())
-		.filter(part => part.length > 0)
+		.map((part) => part.trim())
+		.filter((part) => part.length > 0)
 		.join(',');
 }
 
@@ -206,7 +203,7 @@ export class SchemaManager {
 		if (schemas.schemas) {
 			for (const [prefix, schema] of schemas.schemas) {
 				if (prefix && schema !== schemas.baseSchema) {
-					schemaList.push({ schema, prefix: prefix + ':' });
+					schemaList.push({ schema, prefix: `${prefix}:` });
 				}
 			}
 		}
@@ -251,9 +248,7 @@ export class SchemaManager {
 		const children: HedTag[] = [];
 
 		// Remove prefix if present for matching
-		const cleanParent = parentShortForm.includes(':')
-			? parentShortForm.split(':')[1]
-			: parentShortForm;
+		const cleanParent = parentShortForm.includes(':') ? parentShortForm.split(':')[1] : parentShortForm;
 
 		for (const { schema, prefix } of this.getAllSchemaObjects(schemas)) {
 			if (schema?.entries?.tags) {
@@ -283,7 +278,7 @@ export class SchemaManager {
 		let tagName = shortForm;
 		if (shortForm.includes(':')) {
 			[prefix, tagName] = shortForm.split(':');
-			prefix = prefix + ':';
+			prefix = `${prefix}:`;
 		}
 
 		for (const { schema, prefix: schemaPrefix } of this.getAllSchemaObjects(schemas)) {
@@ -314,7 +309,7 @@ export class SchemaManager {
 		let searchPrefix = prefix;
 		if (prefix.includes(':')) {
 			[libraryPrefix, searchPrefix] = prefix.split(':');
-			libraryPrefix = libraryPrefix + ':';
+			libraryPrefix = `${libraryPrefix}:`;
 		}
 		const lowerPrefix = searchPrefix.toLowerCase();
 
@@ -496,7 +491,7 @@ export class SchemaManager {
 			relatedTag,
 			requireChild: entry.hasBooleanAttribute?.('requireChild') ?? false,
 			unique: entry.hasBooleanAttribute?.('unique') ?? false,
-			defaultUnits
+			defaultUnits,
 		};
 
 		// SchemaTag has shortTagName and longTagName getters
@@ -510,7 +505,7 @@ export class SchemaManager {
 			description,
 			parent: entry.parent?.name || null,
 			children: [], // Could be populated but not needed for basic features
-			attributes
+			attributes,
 		};
 	}
 

@@ -3,18 +3,13 @@
  * Provides schema-aware autocomplete for HED strings.
  */
 
-import {
-	CompletionItem,
-	CompletionItemKind,
-	InsertTextFormat,
-	Position
-} from 'vscode-languageserver';
-import { TextDocument } from 'vscode-languageserver-textdocument';
+import { type CompletionItem, CompletionItemKind, InsertTextFormat, type Position } from 'vscode-languageserver';
+import type { TextDocument } from 'vscode-languageserver-textdocument';
+import { getContentOffset, getHedRegionAtPosition, getTagAtOffset, parseJsonForHedStrings } from './documentParser.js';
+import { embeddingsManager, type SemanticMatch } from './embeddings.js';
 import { schemaManager } from './schemaManager.js';
-import { parseJsonForHedStrings, getHedRegionAtPosition, getContentOffset, getTagAtOffset } from './documentParser.js';
-import { parseTsvForHedStrings, getTsvHedRegionAtPosition, isTsvDocument } from './tsvParser.js';
-import { HedTag, HedRegion } from './types.js';
-import { embeddingsManager, SemanticMatch } from './embeddings.js';
+import { getTsvHedRegionAtPosition, isTsvDocument, parseTsvForHedStrings } from './tsvParser.js';
+import type { HedRegion, HedTag } from './types.js';
 
 /**
  * Get HED region at position for any document type.
@@ -37,90 +32,90 @@ export const completionTriggerCharacters = ['/', ',', '(', ' '];
  */
 const SEMANTIC_MAPPINGS: Record<string, string[]> = {
 	// Buildings and places
-	'house': ['Building', 'Residence', 'Structure'],
-	'home': ['Building', 'Residence'],
-	'room': ['Room', 'Indoor-place'],
-	'office': ['Building', 'Workplace'],
-	'school': ['Building', 'Educational-institution'],
-	'hospital': ['Building', 'Medical-facility'],
+	house: ['Building', 'Residence', 'Structure'],
+	home: ['Building', 'Residence'],
+	room: ['Room', 'Indoor-place'],
+	office: ['Building', 'Workplace'],
+	school: ['Building', 'Educational-institution'],
+	hospital: ['Building', 'Medical-facility'],
 
 	// People
-	'person': ['Human', 'Agent', 'Human-agent'],
-	'man': ['Human', 'Male', 'Adult'],
-	'woman': ['Human', 'Female', 'Adult'],
-	'child': ['Human', 'Youth'],
-	'doctor': ['Human', 'Medical-practitioner'],
+	person: ['Human', 'Agent', 'Human-agent'],
+	man: ['Human', 'Male', 'Adult'],
+	woman: ['Human', 'Female', 'Adult'],
+	child: ['Human', 'Youth'],
+	doctor: ['Human', 'Medical-practitioner'],
 
 	// Actions
-	'walk': ['Walk', 'Ambulate', 'Move'],
-	'run': ['Run', 'Move-quickly'],
-	'speak': ['Speak', 'Vocalize', 'Communicate'],
-	'talk': ['Speak', 'Vocalize'],
-	'look': ['Fixate', 'Attend-to', 'View'],
-	'see': ['View', 'Perceive', 'Detect'],
-	'hear': ['Hear', 'Listen', 'Perceive'],
-	'touch': ['Touch', 'Feel', 'Tactile-action'],
-	'grab': ['Grasp', 'Reach', 'Move-hand'],
-	'hold': ['Grasp', 'Hold'],
-	'push': ['Push', 'Press', 'Move'],
-	'pull': ['Pull', 'Move'],
-	'click': ['Press', 'Click', 'Mouse-button-press'],
-	'press': ['Press', 'Push'],
-	'type': ['Keyboard-key-press', 'Type'],
+	walk: ['Walk', 'Ambulate', 'Move'],
+	run: ['Run', 'Move-quickly'],
+	speak: ['Speak', 'Vocalize', 'Communicate'],
+	talk: ['Speak', 'Vocalize'],
+	look: ['Fixate', 'Attend-to', 'View'],
+	see: ['View', 'Perceive', 'Detect'],
+	hear: ['Hear', 'Listen', 'Perceive'],
+	touch: ['Touch', 'Feel', 'Tactile-action'],
+	grab: ['Grasp', 'Reach', 'Move-hand'],
+	hold: ['Grasp', 'Hold'],
+	push: ['Push', 'Press', 'Move'],
+	pull: ['Pull', 'Move'],
+	click: ['Press', 'Click', 'Mouse-button-press'],
+	press: ['Press', 'Push'],
+	type: ['Keyboard-key-press', 'Type'],
 
 	// Sensory
-	'sound': ['Sound', 'Auditory-presentation', 'Noise'],
-	'noise': ['Noise', 'Sound', 'Signal-noise'],
-	'music': ['Music', 'Sound', 'Auditory-presentation'],
-	'light': ['Light', 'Illumination', 'Visual-presentation'],
-	'color': ['Color', 'Hue'],
-	'image': ['Image', 'Picture', 'Visual-presentation'],
-	'picture': ['Image', 'Picture', 'Photograph'],
-	'video': ['Video', 'Movie', 'Motion-picture'],
-	'movie': ['Movie', 'Video', 'Motion-picture'],
+	sound: ['Sound', 'Auditory-presentation', 'Noise'],
+	noise: ['Noise', 'Sound', 'Signal-noise'],
+	music: ['Music', 'Sound', 'Auditory-presentation'],
+	light: ['Light', 'Illumination', 'Visual-presentation'],
+	color: ['Color', 'Hue'],
+	image: ['Image', 'Picture', 'Visual-presentation'],
+	picture: ['Image', 'Picture', 'Photograph'],
+	video: ['Video', 'Movie', 'Motion-picture'],
+	movie: ['Movie', 'Video', 'Motion-picture'],
 
 	// Shapes
-	'square': ['Square', 'Rectangle', '2D-shape'],
-	'triangle': ['Triangle', '2D-shape'],
-	'circle': ['Circle', 'Ellipse', '2D-shape'],
-	'rectangle': ['Rectangle', '2D-shape'],
+	square: ['Square', 'Rectangle', '2D-shape'],
+	triangle: ['Triangle', '2D-shape'],
+	circle: ['Circle', 'Ellipse', '2D-shape'],
+	rectangle: ['Rectangle', '2D-shape'],
 
 	// Time
-	'start': ['Onset', 'Start', 'Beginning'],
-	'end': ['Offset', 'End', 'Termination'],
-	'begin': ['Onset', 'Start', 'Beginning'],
-	'stop': ['Offset', 'Stop', 'Termination'],
-	'pause': ['Pause', 'Break'],
-	'wait': ['Delay', 'Wait', 'Pause'],
+	start: ['Onset', 'Start', 'Beginning'],
+	end: ['Offset', 'End', 'Termination'],
+	begin: ['Onset', 'Start', 'Beginning'],
+	stop: ['Offset', 'Stop', 'Termination'],
+	pause: ['Pause', 'Break'],
+	wait: ['Delay', 'Wait', 'Pause'],
 
 	// Experiment
-	'trial': ['Trial', 'Experimental-trial'],
-	'block': ['Block', 'Experimental-block'],
-	'stimulus': ['Stimulus', 'Experimental-stimulus', 'Sensory-event'],
-	'response': ['Response', 'Participant-response'],
-	'feedback': ['Feedback', 'Informational-stimulus'],
-	'cue': ['Cue', 'Warning', 'Signal'],
-	'target': ['Target', 'Goal'],
-	'distractor': ['Distractor', 'Non-target'],
+	trial: ['Trial', 'Experimental-trial'],
+	block: ['Block', 'Experimental-block'],
+	stimulus: ['Stimulus', 'Experimental-stimulus', 'Sensory-event'],
+	response: ['Response', 'Participant-response'],
+	feedback: ['Feedback', 'Informational-stimulus'],
+	cue: ['Cue', 'Warning', 'Signal'],
+	target: ['Target', 'Goal'],
+	distractor: ['Distractor', 'Non-target'],
 
 	// Equipment
-	'button': ['Button', 'Response-button', 'Mouse-button'],
-	'keyboard': ['Keyboard', 'Keyboard-key'],
-	'mouse': ['Mouse', 'Computer-mouse'],
-	'screen': ['Screen', 'Computer-screen', 'Display'],
-	'monitor': ['Screen', 'Computer-screen', 'Display'],
-	'speaker': ['Speaker', 'Loudspeaker', 'Audio-device'],
-	'headphone': ['Headphones', 'Audio-device'],
+	button: ['Button', 'Response-button', 'Mouse-button'],
+	keyboard: ['Keyboard', 'Keyboard-key'],
+	mouse: ['Mouse', 'Computer-mouse'],
+	screen: ['Screen', 'Computer-screen', 'Display'],
+	monitor: ['Screen', 'Computer-screen', 'Display'],
+	speaker: ['Speaker', 'Loudspeaker', 'Audio-device'],
+	headphone: ['Headphones', 'Audio-device'],
 
 	// Body parts
-	'eye': ['Eye', 'Eyes'],
-	'hand': ['Hand', 'Hands'],
-	'finger': ['Finger', 'Fingers'],
-	'face': ['Face', 'Head'],
-	'head': ['Head'],
-	'arm': ['Arm', 'Upper-extremity'],
-	'leg': ['Leg', 'Lower-extremity'],
-	'foot': ['Foot', 'Feet'],
+	eye: ['Eye', 'Eyes'],
+	hand: ['Hand', 'Hands'],
+	finger: ['Finger', 'Fingers'],
+	face: ['Face', 'Head'],
+	head: ['Head'],
+	arm: ['Arm', 'Upper-extremity'],
+	leg: ['Leg', 'Lower-extremity'],
+	foot: ['Foot', 'Feet'],
 };
 
 /**
@@ -149,9 +144,7 @@ export function extractDefinitions(document: TextDocument): DefinitionInfo[] {
 	const definitions = new Map<string, DefinitionInfo>();
 
 	// Get all HED regions from the document
-	const regions = isTsvDocument(document)
-		? parseTsvForHedStrings(document)
-		: parseJsonForHedStrings(document);
+	const regions = isTsvDocument(document) ? parseTsvForHedStrings(document) : parseJsonForHedStrings(document);
 
 	// Extract definition names from each region
 	for (const region of regions) {
@@ -178,10 +171,7 @@ export function extractDefinitions(document: TextDocument): DefinitionInfo[] {
  * Note: For definition completions (after Def/ or Def-expand/), we never add
  * leading space since the user is completing after a slash.
  */
-function createDefinitionCompletionItem(
-	def: DefinitionInfo,
-	isDefExpand: boolean
-): CompletionItem {
+function createDefinitionCompletionItem(def: DefinitionInfo, isDefExpand: boolean): CompletionItem {
 	const prefix = isDefExpand ? 'Def-expand' : 'Def';
 
 	if (def.hasPlaceholder) {
@@ -193,7 +183,7 @@ function createDefinitionCompletionItem(
 			documentation: formatDefinitionDocumentation(def, prefix),
 			insertText: `${def.name}/\${1:value}`,
 			insertTextFormat: InsertTextFormat.Snippet,
-			sortText: `1-${def.name.toLowerCase()}`
+			sortText: `1-${def.name.toLowerCase()}`,
 		};
 	} else {
 		// Simple definition: insert name directly
@@ -204,7 +194,7 @@ function createDefinitionCompletionItem(
 			documentation: formatDefinitionDocumentation(def, prefix),
 			insertText: def.name,
 			insertTextFormat: InsertTextFormat.PlainText,
-			sortText: `1-${def.name.toLowerCase()}`
+			sortText: `1-${def.name.toLowerCase()}`,
 		};
 	}
 }
@@ -237,10 +227,7 @@ function formatDefinitionDocumentation(def: DefinitionInfo, prefix: string): str
 /**
  * Provide completion items for a position in a document.
  */
-export async function provideCompletions(
-	document: TextDocument,
-	position: Position
-): Promise<CompletionItem[]> {
+export async function provideCompletions(document: TextDocument, position: Position): Promise<CompletionItem[]> {
 	// Debug: log that completion was triggered
 	console.log(`[HED] Completion triggered at line ${position.line}, char ${position.character}`);
 
@@ -318,7 +305,7 @@ function analyzeCompletionContext(content: string, offset: number): CompletionCo
 			return {
 				type: 'child',
 				parentTag: parentMatch[1],
-				afterSeparator: true
+				afterSeparator: true,
 			};
 		}
 	}
@@ -327,7 +314,7 @@ function analyzeCompletionContext(content: string, offset: number): CompletionCo
 	if (lastChar === ',' || lastChar === '(') {
 		return {
 			type: 'top-level',
-			afterSeparator: true
+			afterSeparator: true,
 		};
 	}
 
@@ -341,7 +328,7 @@ function analyzeCompletionContext(content: string, offset: number): CompletionCo
 				type: 'child',
 				parentTag: tagInfo.tag.slice(0, slashIndex),
 				prefix: tagInfo.tag.slice(slashIndex + 1),
-				afterSeparator: false
+				afterSeparator: false,
 			};
 		}
 
@@ -349,14 +336,14 @@ function analyzeCompletionContext(content: string, offset: number): CompletionCo
 		return {
 			type: 'partial',
 			prefix: tagInfo.tag,
-			afterSeparator: false
+			afterSeparator: false,
 		};
 	}
 
 	// Default to top-level completion
 	return {
 		type: 'top-level',
-		afterSeparator: false
+		afterSeparator: false,
 	};
 }
 
@@ -367,12 +354,13 @@ async function getCompletionsForContext(context: CompletionContext, document: Te
 	const items: CompletionItem[] = [];
 
 	switch (context.type) {
-		case 'top-level':
+		case 'top-level': {
 			const topLevelTags = await schemaManager.getTopLevelTags();
 			for (const tag of topLevelTags) {
 				items.push(createCompletionItem(tag, context.afterSeparator));
 			}
 			break;
+		}
 
 		case 'child':
 			if (context.parentTag) {
@@ -419,7 +407,7 @@ async function getCompletionsForContext(context: CompletionContext, document: Te
 				for (const match of semanticMatches) {
 					// Skip if already in items (direct match takes precedence)
 					const fullTag = match.prefix + match.tag;
-					if (!items.some(item => item.label === fullTag)) {
+					if (!items.some((item) => item.label === fullTag)) {
 						items.push(createSemanticSuggestionFromMatch(match, context.prefix));
 					}
 				}
@@ -429,7 +417,7 @@ async function getCompletionsForContext(context: CompletionContext, document: Te
 					const extensibleParents = await schemaManager.findExtensibleParents(context.prefix);
 					for (const parent of extensibleParents) {
 						// Don't add if already in items
-						if (!items.some(item => item.label === parent.shortForm)) {
+						if (!items.some((item) => item.label === parent.shortForm)) {
 							items.push(createExtensionSuggestion(parent, context.prefix));
 						}
 					}
@@ -460,11 +448,7 @@ function matchesPrefix(tagName: string, prefix: string): boolean {
 /**
  * Create a completion item from a HED tag.
  */
-function createCompletionItem(
-	tag: HedTag,
-	addLeadingSpace: boolean = false,
-	parentPath?: string
-): CompletionItem {
+function createCompletionItem(tag: HedTag, addLeadingSpace: boolean = false, _parentPath?: string): CompletionItem {
 	const insertText = addLeadingSpace ? ` ${tag.shortForm}` : tag.shortForm;
 
 	const item: CompletionItem = {
@@ -474,14 +458,14 @@ function createCompletionItem(
 		documentation: formatTagDocumentation(tag),
 		insertText,
 		insertTextFormat: InsertTextFormat.PlainText,
-		sortText: getSortText(tag)
+		sortText: getSortText(tag),
 	};
 
 	// Add a slash hint if the tag has children
 	if (tag.children.length > 0) {
 		item.command = {
 			title: 'Show children',
-			command: 'editor.action.triggerSuggest'
+			command: 'editor.action.triggerSuggest',
 		};
 	}
 
@@ -535,7 +519,7 @@ function getSortText(tag: HedTag, priority: number = 2): string {
 /**
  * Create a completion item for a semantic suggestion.
  */
-function createSemanticSuggestion(tag: HedTag, searchTerm: string): CompletionItem {
+function _createSemanticSuggestion(tag: HedTag, searchTerm: string): CompletionItem {
 	const item: CompletionItem = {
 		label: tag.shortForm,
 		kind: CompletionItemKind.Reference,
@@ -546,8 +530,8 @@ function createSemanticSuggestion(tag: HedTag, searchTerm: string): CompletionIt
 		sortText: getSortText(tag, 1), // High priority for semantic matches
 		filterText: searchTerm, // Allow VS Code to show this when typing the search term
 		labelDetails: {
-			description: `(for "${searchTerm}")`
-		}
+			description: `(for "${searchTerm}")`,
+		},
 	};
 
 	return item;
@@ -593,8 +577,8 @@ async function getSemanticSuggestions(query: string): Promise<SemanticMatch[]> {
 	try {
 		const matches = await embeddingsManager.findSimilar(query, 5);
 		// Filter by similarity threshold
-		return matches.filter(m => m.similarity >= SIMILARITY_THRESHOLD);
-	} catch (error) {
+		return matches.filter((m) => m.similarity >= SIMILARITY_THRESHOLD);
+	} catch (_error) {
 		console.log('[HED] Embedding search failed, falling back to static mappings');
 	}
 
@@ -607,7 +591,7 @@ async function getSemanticSuggestions(query: string): Promise<SemanticMatch[]> {
 				tag: tagName,
 				longForm: tagName,
 				prefix: '',
-				similarity: 0.8 // High similarity for static mappings
+				similarity: 0.8, // High similarity for static mappings
 			});
 		}
 		return results;
@@ -634,8 +618,8 @@ function createSemanticSuggestionFromMatch(match: SemanticMatch, searchTerm: str
 		sortText: `4-${String(100 - similarityPercent).padStart(3, '0')}-${fullTag.toLowerCase()}`,
 		filterText: searchTerm,
 		labelDetails: {
-			description: `(semantic match)`
-		}
+			description: `(semantic match)`,
+		},
 	};
 }
 
@@ -673,8 +657,8 @@ function createExtensionSuggestion(parent: HedTag, searchTerm: string): Completi
 		sortText: getSortText(parent, 3),
 		filterText: searchTerm, // Allow VS Code to show this when typing the search term
 		labelDetails: {
-			description: '(extension)'
-		}
+			description: '(extension)',
+		},
 	};
 }
 
@@ -717,10 +701,10 @@ function createNoMatchHint(searchTerm: string): CompletionItem {
 			'- Browse the HED schema for similar tags',
 			'- If needed, extend an existing tag using Parent/Extension syntax',
 			'',
-			'**Tip:** Use a more general term to find related tags.'
+			'**Tip:** Use a more general term to find related tags.',
 		].join('\n'),
 		insertText: '',
-		sortText: '9-not-found'
+		sortText: '9-not-found',
 	};
 }
 
