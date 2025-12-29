@@ -32,6 +32,12 @@ View tag descriptions, full paths, and related tags on hover.
 
 ![Hover Demo](images/hover.gif)
 
+### Semantic Search & Warnings
+
+Type natural language terms to find relevant HED tags. Warnings help catch semantic issues like using a more specific tag than needed.
+
+![Semantic Search and Warnings Demo](images/semantic-warning.gif)
+
 ## Supported File Types
 
 - **JSON sidecars** (`*_events.json`, `dataset_description.json`)
