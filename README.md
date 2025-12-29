@@ -34,7 +34,7 @@ View tag descriptions, full paths, and related tags on hover.
 
 ### Semantic Search & Warnings
 
-Type natural language terms to find relevant HED tags. Warnings help catch semantic issues like using a more specific tag than needed.
+Type natural language terms to find relevant HED tags. Warnings help catch deviations from HED, like tag extension.
 
 ![Semantic Search and Warnings Demo](images/semantic-warning.gif)
 
