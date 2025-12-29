@@ -175,35 +175,34 @@ export function extractDefinitions(document: TextDocument): DefinitionInfo[] {
 
 /**
  * Create a completion item for a definition reference.
+ * Note: For definition completions (after Def/ or Def-expand/), we never add
+ * leading space since the user is completing after a slash.
  */
 function createDefinitionCompletionItem(
 	def: DefinitionInfo,
-	isDefExpand: boolean,
-	afterSeparator: boolean
+	isDefExpand: boolean
 ): CompletionItem {
 	const prefix = isDefExpand ? 'Def-expand' : 'Def';
 
 	if (def.hasPlaceholder) {
 		// Definition with placeholder: insert with snippet for value
-		const snippetText = afterSeparator ? ` ${def.name}/\${1:value}` : `${def.name}/\${1:value}`;
 		return {
 			label: `${def.name}/…`,
 			kind: CompletionItemKind.Reference,
 			detail: `${prefix}/${def.name}/value (requires value)`,
 			documentation: formatDefinitionDocumentation(def, prefix),
-			insertText: snippetText,
+			insertText: `${def.name}/\${1:value}`,
 			insertTextFormat: InsertTextFormat.Snippet,
 			sortText: `1-${def.name.toLowerCase()}`
 		};
 	} else {
 		// Simple definition: insert name directly
-		const insertText = afterSeparator ? ` ${def.name}` : def.name;
 		return {
 			label: def.name,
 			kind: CompletionItemKind.Reference,
 			detail: `${prefix}/${def.name}`,
 			documentation: formatDefinitionDocumentation(def, prefix),
-			insertText,
+			insertText: def.name,
 			insertTextFormat: InsertTextFormat.PlainText,
 			sortText: `1-${def.name.toLowerCase()}`
 		};
@@ -386,7 +385,7 @@ async function getCompletionsForContext(context: CompletionContext, document: Te
 
 					for (const def of definitions) {
 						if (!context.prefix || matchesPrefix(def.name, context.prefix)) {
-							items.push(createDefinitionCompletionItem(def, isDefExpand, context.afterSeparator));
+							items.push(createDefinitionCompletionItem(def, isDefExpand));
 						}
 					}
 					break;

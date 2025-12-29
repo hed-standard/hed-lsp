@@ -26,6 +26,7 @@ import { parseTsvForHedStrings, isTsvDocument, hasHedColumn } from './tsvParser.
 import { validateDocument } from './validation.js';
 import { provideCompletions, resolveCompletionItem, completionTriggerCharacters } from './completion.js';
 import { provideHover } from './hover.js';
+import { provideDefinition } from './definitionProvider.js';
 import { provideSemanticTokens, semanticTokensLegend } from './semanticTokens.js';
 
 /**
@@ -78,6 +79,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
 				triggerCharacters: completionTriggerCharacters
 			},
 			hoverProvider: true,
+			definitionProvider: true,
 			semanticTokensProvider: {
 				legend: semanticTokensLegend,
 				full: true
@@ -295,6 +297,25 @@ connection.onHover(
 			return await provideHover(document, params.position);
 		} catch (error) {
 			connection.console.error(`Hover error: ${error}`);
+			return null;
+		}
+	}
+);
+
+/**
+ * Provide Go to Definition for Def references.
+ */
+connection.onDefinition(
+	(params: TextDocumentPositionParams) => {
+		const document = documents.get(params.textDocument.uri);
+		if (!document) {
+			return null;
+		}
+
+		try {
+			return provideDefinition(document, params.position);
+		} catch (error) {
+			connection.console.error(`Definition error: ${error}`);
 			return null;
 		}
 	}
