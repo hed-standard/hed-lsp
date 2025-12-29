@@ -1,0 +1,51 @@
+# Development files
+.vscode/**
+.github/**
+.context/**
+.rules/**
+.claude/**
+.git/**
+.gitignore
+CLAUDE.md
+
+# Source files (only need compiled output)
+client/src/**
+server/src/**
+server/scripts/**
+**/*.ts
+!**/*.d.ts
+tsconfig.json
+**/tsconfig.json
+**/*.tsbuildinfo
+
+# Test files
+test-files/**
+**/__tests__/**
+**/*.test.ts
+**/vitest.config.ts
+coverage/**
+
+# Build tools and config
+biome.json
+cspell.json
+.vscodeignore
+
+# Node modules (bundled separately)
+node_modules/**
+client/node_modules/**
+server/node_modules/**
+
+# Package files
+*.vsix
+package-lock.json
+
+# Documentation (keep README for marketplace)
+docs/**
+CONTRIBUTING.md
+
+# Data files - keep only compact embeddings
+server/data/tag-embeddings.json
+
+# OS files
+.DS_Store
+Thumbs.db
