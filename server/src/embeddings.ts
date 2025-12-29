@@ -77,7 +77,7 @@ export interface EmbeddingConfig {
 }
 
 const DEFAULT_CONFIG: EmbeddingConfig = {
-	modelId: 'onnx-community/Qwen3-Embedding-0.6B-ONNX',
+	modelId: 'neuromechanist/Qwen3-Embedding-0.6B-ONNX-Q8',
 	dtype: 'q8', // Quantized for speed and smaller size
 	enabled: true,
 };
