@@ -11,84 +11,7 @@
 
 import { schemaManager } from './schemaManager.js';
 import { embeddingsManager } from './embeddings.js';
-import type { HedTag } from './types.js';
-
-/**
- * Semantic word mappings: common terms to their HED equivalents.
- * Copied from completion.ts for standalone CLI use.
- */
-const SEMANTIC_MAPPINGS: Record<string, string[]> = {
-	// Buildings and places
-	house: ['Building', 'Residence', 'Structure'],
-	home: ['Building', 'Residence'],
-	room: ['Room', 'Indoor-place'],
-	office: ['Building', 'Workplace'],
-
-	// People
-	person: ['Human', 'Agent', 'Human-agent'],
-	man: ['Human', 'Male', 'Adult'],
-	woman: ['Human', 'Female', 'Adult'],
-	child: ['Human', 'Youth'],
-
-	// Actions
-	walk: ['Walk', 'Ambulate', 'Move'],
-	run: ['Run', 'Move-quickly'],
-	speak: ['Speak', 'Vocalize', 'Communicate'],
-	look: ['Fixate', 'Attend-to', 'View'],
-	see: ['View', 'Perceive', 'Detect'],
-	hear: ['Hear', 'Listen', 'Perceive'],
-	touch: ['Touch', 'Feel', 'Tactile-action'],
-	push: ['Push', 'Press', 'Move'],
-	pull: ['Pull', 'Move'],
-	click: ['Press', 'Click', 'Mouse-button-press'],
-	press: ['Press', 'Push'],
-	type: ['Keyboard-key-press', 'Type'],
-
-	// Sensory
-	sound: ['Sound', 'Auditory-presentation', 'Noise'],
-	noise: ['Noise', 'Sound', 'Signal-noise'],
-	music: ['Music', 'Sound', 'Auditory-presentation'],
-	light: ['Light', 'Illumination', 'Visual-presentation'],
-	color: ['Color', 'Hue'],
-	image: ['Image', 'Picture', 'Visual-presentation'],
-	picture: ['Image', 'Picture', 'Photograph'],
-	video: ['Video', 'Movie', 'Motion-picture'],
-	flash: ['Flash', 'Flickering', 'Visual-presentation'],
-
-	// Shapes
-	square: ['Square', 'Rectangle', '2D-shape'],
-	triangle: ['Triangle', '2D-shape'],
-	circle: ['Circle', 'Ellipse', '2D-shape'],
-
-	// Time
-	start: ['Onset', 'Start', 'Beginning'],
-	end: ['Offset', 'End', 'Termination'],
-	begin: ['Onset', 'Start', 'Beginning'],
-	stop: ['Offset', 'Stop', 'Termination'],
-	pause: ['Pause', 'Break'],
-
-	// Experiment
-	trial: ['Trial', 'Experimental-trial'],
-	block: ['Block', 'Experimental-block'],
-	stimulus: ['Stimulus', 'Experimental-stimulus', 'Sensory-event'],
-	response: ['Response', 'Participant-response'],
-	feedback: ['Feedback', 'Informational-stimulus'],
-	cue: ['Cue', 'Warning', 'Signal'],
-	target: ['Target', 'Goal'],
-
-	// Equipment
-	button: ['Button', 'Response-button', 'Mouse-button'],
-	keyboard: ['Keyboard', 'Keyboard-key'],
-	mouse: ['Mouse', 'Computer-mouse'],
-	screen: ['Screen', 'Computer-screen', 'Display'],
-
-	// Body parts
-	eye: ['Eye', 'Eyes'],
-	hand: ['Hand', 'Hands'],
-	finger: ['Finger', 'Fingers'],
-	face: ['Face', 'Head'],
-	head: ['Head'],
-};
+import { SEMANTIC_MAPPINGS } from './semanticMappings.js';
 
 interface CliOptions {
 	json: boolean;
@@ -120,9 +43,22 @@ function parseArgs(args: string[]): { options: CliOptions; queries: string[] } {
 		if (arg === '--json' || arg === '-j') {
 			options.json = true;
 		} else if (arg === '--schema' || arg === '-s') {
-			options.schema = args[++i] || '8.4.0';
+			// Check bounds before reading value
+			if (i + 1 < args.length && !args[i + 1].startsWith('-')) {
+				i++;
+				options.schema = args[i];
+			} else {
+				console.error('Warning: --schema requires a version argument, using default 8.4.0');
+			}
 		} else if (arg === '--top' || arg === '-n') {
-			options.top = parseInt(args[++i], 10) || 10;
+			// Check bounds before reading value
+			if (i + 1 < args.length && !args[i + 1].startsWith('-')) {
+				i++;
+				const val = parseInt(args[i], 10);
+				options.top = !isNaN(val) && val > 0 ? val : 10;
+			} else {
+				console.error('Warning: --top requires a number argument, using default 10');
+			}
 		} else if (arg === '--semantic') {
 			options.semantic = true;
 		} else if (arg === '--help' || arg === '-h') {
@@ -190,7 +126,10 @@ async function findSuggestions(
 				}
 			}
 		} catch (error) {
-			// Schema search failed, continue with what we have
+			// Log warning but continue with keyword results
+			console.error(
+				`Warning: Schema search failed: ${error instanceof Error ? error.message : error}`
+			);
 		}
 	}
 
@@ -210,7 +149,10 @@ async function findSuggestions(
 				}
 			}
 		} catch (error) {
-			// Semantic search failed, continue with what we have
+			// Log warning but continue with other results
+			console.error(
+				`Warning: Semantic search failed: ${error instanceof Error ? error.message : error}`
+			);
 		}
 	}
 
@@ -256,7 +198,11 @@ async function main(): Promise<void> {
 				if (queries.length > 1) {
 					console.log(`\n${result.query}:`);
 				}
-				console.log(result.suggestions.join(', '));
+				if (result.suggestions.length === 0) {
+					console.log('(no suggestions found)');
+				} else {
+					console.log(result.suggestions.join(', '));
+				}
 			}
 		}
 	} catch (error) {
