@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /**
  * HED Tag Suggestion CLI
  * Provides tag suggestions for external tools like OSA.
@@ -9,8 +10,8 @@
  *   hed-suggest --schema 8.4.0 --top 5 "response"
  */
 
-import { schemaManager } from './schemaManager.js';
 import { embeddingsManager } from './embeddings.js';
+import { schemaManager } from './schemaManager.js';
 import { SEMANTIC_MAPPINGS } from './semanticMappings.js';
 
 interface CliOptions {
@@ -55,7 +56,7 @@ function parseArgs(args: string[]): { options: CliOptions; queries: string[] } {
 			if (i + 1 < args.length && !args[i + 1].startsWith('-')) {
 				i++;
 				const val = parseInt(args[i], 10);
-				options.top = !isNaN(val) && val > 0 ? val : 10;
+				options.top = !Number.isNaN(val) && val > 0 ? val : 10;
 			} else {
 				console.error('Warning: --top requires a number argument, using default 10');
 			}
@@ -96,10 +97,7 @@ Examples:
 /**
  * Find suggestions for a query using keyword mappings and schema search.
  */
-async function findSuggestions(
-	query: string,
-	options: CliOptions
-): Promise<SuggestionResult> {
+async function findSuggestions(query: string, options: CliOptions): Promise<SuggestionResult> {
 	const normalizedQuery = query.toLowerCase().trim();
 	const suggestions: string[] = [];
 	let source: 'keyword' | 'schema' | 'semantic' = 'schema';
@@ -116,10 +114,7 @@ async function findSuggestions(
 	// 2. Search schema for tags containing the query
 	if (suggestions.length < options.top) {
 		try {
-			const schemaTags = await schemaManager.searchTagsContaining(
-				normalizedQuery,
-				options.schema
-			);
+			const schemaTags = await schemaManager.searchTagsContaining(normalizedQuery, options.schema);
 			for (const tag of schemaTags) {
 				if (!suggestions.includes(tag.shortForm)) {
 					suggestions.push(tag.shortForm);
@@ -127,9 +122,7 @@ async function findSuggestions(
 			}
 		} catch (error) {
 			// Log warning but continue with keyword results
-			console.error(
-				`Warning: Schema search failed: ${error instanceof Error ? error.message : error}`
-			);
+			console.error(`Warning: Schema search failed: ${error instanceof Error ? error.message : error}`);
 		}
 	}
 
@@ -137,10 +130,7 @@ async function findSuggestions(
 	if (options.semantic && suggestions.length < options.top) {
 		try {
 			if (embeddingsManager.isAvailable()) {
-				const semanticResults = await embeddingsManager.findSimilar(
-					normalizedQuery,
-					options.top
-				);
+				const semanticResults = await embeddingsManager.findSimilar(normalizedQuery, options.top);
 				for (const result of semanticResults) {
 					if (!suggestions.includes(result.tag)) {
 						suggestions.push(result.tag);
@@ -150,9 +140,7 @@ async function findSuggestions(
 			}
 		} catch (error) {
 			// Log warning but continue with other results
-			console.error(
-				`Warning: Semantic search failed: ${error instanceof Error ? error.message : error}`
-			);
+			console.error(`Warning: Semantic search failed: ${error instanceof Error ? error.message : error}`);
 		}
 	}
 
