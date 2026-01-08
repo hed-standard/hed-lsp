@@ -97,6 +97,58 @@ The extension automatically detects schema versions from `dataset_description.js
 - **Hover**: View tag documentation
 - **Go to Definition** (F12): Jump from `Def/Name` to `Definition/Name`
 
+## CLI Tool
+
+The `hed-suggest` CLI provides HED tag suggestions for external tools and scripts.
+
+### Installation
+
+```bash
+cd server
+npm install
+npm run compile
+
+# Option 1: Use directly with node
+node ./out/cli.js "button press"
+
+# Option 2: Install globally
+npm link  # Makes hed-suggest available in PATH
+```
+
+### Usage
+
+```bash
+# Basic usage
+hed-suggest "button press"
+# Button, Response-button, Mouse-button, Press, Push
+
+# Multiple queries
+hed-suggest "button" "stimulus" "response"
+
+# JSON output for programmatic use
+hed-suggest --json "button press" "visual flash"
+# {"button press": ["Button", ...], "visual flash": ["Flash", ...]}
+
+# Limit results
+hed-suggest --top 5 "stimulus"
+
+# Use specific schema version
+hed-suggest --schema 8.3.0 "response"
+
+# Enable semantic search (requires model download on first use)
+hed-suggest --semantic "participant action"
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `-j, --json` | Output results as JSON |
+| `-s, --schema VER` | Use specific schema version (default: 8.4.0) |
+| `-n, --top N` | Return top N suggestions (default: 10) |
+| `--semantic` | Use semantic search with embeddings |
+| `-h, --help` | Show help message |
+
 ## Development
 
 ```bash
@@ -127,6 +179,7 @@ hed-lsp/
 ├── server/              # LSP server implementation
 │   └── src/
 │       ├── server.ts        # LSP connection and handlers
+│       ├── cli.ts           # hed-suggest CLI tool
 │       ├── validation.ts    # HED validation
 │       ├── completion.ts    # Autocomplete provider
 │       ├── hover.ts         # Hover documentation
