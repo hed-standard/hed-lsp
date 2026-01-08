@@ -4,6 +4,9 @@
 	"version": "0.3.3",
 	"license": "MIT",
 	"main": "./out/server.js",
+	"bin": {
+		"hed-suggest": "./out/cli.js"
+	},
 	"scripts": {
 		"compile": "tsc -b",
 		"watch": "tsc -b -w",
