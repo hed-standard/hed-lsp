@@ -77,7 +77,7 @@ export class SchemaManager {
 		}
 
 		try {
-			console.log(`[HED] Loading schema: ${normalizedVersion}`);
+			console.error(`[HED] Loading schema: ${normalizedVersion}`);
 			const schemas = await buildSchemasFromVersion(normalizedVersion);
 			this.schemaCache.set(normalizedVersion, schemas);
 			return schemas;
