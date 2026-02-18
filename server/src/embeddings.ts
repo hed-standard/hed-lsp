@@ -951,8 +951,7 @@ class EmbeddingsManager {
 		// Try exact match first, then try with spaces converted to hyphens.
 		// KEYWORD_INDEX uses hyphens (e.g., "muscle-artifact") but callers may
 		// pass spaces (e.g., "muscle artifact").
-		const matchingTags = KEYWORD_INDEX[normalizedQuery]
-			|| KEYWORD_INDEX[normalizedQuery.replace(/\s+/g, '-')];
+		const matchingTags = KEYWORD_INDEX[normalizedQuery] || KEYWORD_INDEX[normalizedQuery.replace(/\s+/g, '-')];
 
 		if (!matchingTags) {
 			return [];

@@ -358,7 +358,8 @@ export class SchemaManager {
 
 	/**
 	 * Search for tags containing a substring anywhere in the name.
-	 * Returns matches sorted by relevance (prefix matches first, then contains).
+	 * Returns matches sorted by relevance: prefix matches first,
+	 * then substring matches, then token matches for compound queries.
 	 */
 	async searchTagsContaining(query: string, version?: string): Promise<HedTag[]> {
 		const schemas = await this.getSchema(version);
@@ -368,7 +369,7 @@ export class SchemaManager {
 		const lowerQuery = query.toLowerCase();
 
 		// Tokenize compound queries: "muscle-artifact" or "muscle artifact" -> ["muscle", "artifact"]
-		const queryTokens = lowerQuery.split(/[-\s]+/).filter(t => t.length > 0);
+		const queryTokens = lowerQuery.split(/[-\s]+/).filter((t) => t.length > 0);
 		const isCompound = queryTokens.length > 1;
 
 		for (const { schema, prefix } of this.getAllSchemaObjects(schemas)) {
@@ -397,12 +398,10 @@ export class SchemaManager {
 						const tag = this.schemaEntryToHedTag(entry, prefix);
 						if (tag) containsMatches.push(tag);
 					} else if (isCompound) {
-						// For compound queries, check if any token appears in the tag name.
-						// This allows "muscle artifact" to match "EMG-artifact" via the "artifact" token.
+						// Match if any query token exactly equals a hyphen-delimited tag name token.
+						// e.g., "muscle artifact" matches "emg-artifact" via shared "artifact" token.
 						const nameTokens = lowerName.split('-');
-						// Match if any query token equals a tag name token exactly.
-						// e.g., "muscle artifact" matches "emg-artifact" via "artifact" == "artifact".
-						const hasMatch = queryTokens.some((qt: string) => nameTokens.some((nt: string) => nt === qt));
+						const hasMatch = queryTokens.some((qt) => nameTokens.includes(qt));
 						if (hasMatch) {
 							const tag = this.schemaEntryToHedTag(entry, prefix);
 							if (tag) tokenMatches.push(tag);

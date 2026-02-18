@@ -5,6 +5,13 @@ All notable changes to the HED Language Support extension will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-02-18
+
+### Fixed
+- CLI `--semantic` flag now properly enables embeddings and initializes the model
+- Compound query matching for `searchTagsContaining` (e.g., "muscle artifact" now finds "EMG-artifact")
+- `findByKeyword` normalizes spaces to hyphens for KEYWORD_INDEX lookup
+
 ## [0.3.3] - 2025-12-29
 
 ### Changed
