@@ -167,6 +167,12 @@ async function main(): Promise<void> {
 		// Load schema
 		await schemaManager.getSchema(options.schema);
 
+		// Enable semantic search if requested
+		if (options.semantic) {
+			embeddingsManager.setEnabled(true);
+			await embeddingsManager.initializeModel();
+		}
+
 		// Process all queries
 		const results: SuggestionResult[] = [];
 		for (const query of queries) {
