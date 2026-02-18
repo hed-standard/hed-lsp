@@ -358,13 +358,19 @@ export class SchemaManager {
 
 	/**
 	 * Search for tags containing a substring anywhere in the name.
-	 * Returns matches sorted by relevance (prefix matches first, then contains).
+	 * Returns matches sorted by relevance: prefix matches first,
+	 * then substring matches, then token matches for compound queries.
 	 */
 	async searchTagsContaining(query: string, version?: string): Promise<HedTag[]> {
 		const schemas = await this.getSchema(version);
 		const prefixMatches: HedTag[] = [];
 		const containsMatches: HedTag[] = [];
+		const tokenMatches: HedTag[] = [];
 		const lowerQuery = query.toLowerCase();
+
+		// Tokenize compound queries: "muscle-artifact" or "muscle artifact" -> ["muscle", "artifact"]
+		const queryTokens = lowerQuery.split(/[-\s]+/).filter((t) => t.length > 0);
+		const isCompound = queryTokens.length > 1;
 
 		for (const { schema, prefix } of this.getAllSchemaObjects(schemas)) {
 			if (schema?.entries?.tags) {
@@ -391,13 +397,22 @@ export class SchemaManager {
 					} else if (lowerName.includes(lowerQuery)) {
 						const tag = this.schemaEntryToHedTag(entry, prefix);
 						if (tag) containsMatches.push(tag);
+					} else if (isCompound) {
+						// Match if any query token exactly equals a hyphen-delimited tag name token.
+						// e.g., "muscle artifact" matches "emg-artifact" via shared "artifact" token.
+						const nameTokens = lowerName.split('-');
+						const hasMatch = queryTokens.some((qt) => nameTokens.includes(qt));
+						if (hasMatch) {
+							const tag = this.schemaEntryToHedTag(entry, prefix);
+							if (tag) tokenMatches.push(tag);
+						}
 					}
 				}
 			}
 		}
 
-		// Return prefix matches first, then contains matches
-		return [...prefixMatches, ...containsMatches];
+		// Return prefix matches first, then substring matches, then token matches
+		return [...prefixMatches, ...containsMatches, ...tokenMatches];
 	}
 
 	/**
