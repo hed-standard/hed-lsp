@@ -1,0 +1,9 @@
+packages:
+  - client
+  - server
+allowBuilds:
+  core-js-pure: true
+  esbuild: true
+  onnxruntime-node: true
+  protobufjs: true
+  sharp: true

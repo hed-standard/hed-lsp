@@ -121,17 +121,14 @@
 			}
 		}
 	},
-	"workspaces": [
-		"client",
-		"server"
-	],
+	"packageManager": "pnpm@10.33.4",
 	"scripts": {
-		"vscode:prepublish": "npm run esbuild-base -- --production",
+		"vscode:prepublish": "pnpm run esbuild-base -- --production",
 		"compile": "tsc -b",
 		"watch": "tsc -b -w",
 		"esbuild-base": "node esbuild.config.mjs",
-		"esbuild": "npm run esbuild-base",
-		"esbuild-watch": "npm run esbuild-base -- --watch",
+		"esbuild": "pnpm run esbuild-base",
+		"esbuild-watch": "pnpm run esbuild-base -- --watch",
 		"lint": "biome lint .",
 		"format": "biome format --write .",
 		"format:check": "biome format .",
