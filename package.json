@@ -121,7 +121,7 @@
 			}
 		}
 	},
-	"packageManager": "pnpm@11.0.9",
+	"packageManager": "pnpm@10.33.4",
 	"scripts": {
 		"vscode:prepublish": "pnpm run esbuild-base -- --production",
 		"compile": "tsc -b",
