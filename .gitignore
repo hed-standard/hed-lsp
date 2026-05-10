@@ -44,9 +44,9 @@ yarn-error.log*
 coverage/
 .nyc_output/
 
-# Package managers (keep package-lock.json for CI)
+# Package managers (keep pnpm-lock.yaml for CI)
 yarn.lock
-pnpm-lock.yaml
+package-lock.json
 
 # Temporary files
 *.tmp
