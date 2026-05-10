@@ -12,12 +12,12 @@ Thank you for your interest in contributing to HED-LSP!
 
 2. Install dependencies:
    ```bash
-   npm install
+   pnpm install
    ```
 
 3. Start the compiler in watch mode:
    ```bash
-   npm run watch
+   pnpm run watch
    ```
 
 4. Open VS Code and press F5 to launch the Extension Development Host.
@@ -31,8 +31,8 @@ Thank you for your interest in contributing to HED-LSP!
 
 1. Create a new branch for your feature or fix
 2. Make your changes with clear, atomic commits
-3. Ensure the code compiles: `npm run compile`
-4. Run linting: `npm run lint`
+3. Ensure the code compiles: `pnpm run compile`
+4. Run linting: `pnpm run lint`
 5. Test manually in the Extension Development Host
 6. Submit a pull request
 
