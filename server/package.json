@@ -15,7 +15,7 @@
 	},
 	"dependencies": {
 		"@huggingface/transformers": "^4.2.0",
-		"hed-validator": "^4.1.4",
+		"hed-validator": "^4.2.0",
 		"vscode-languageserver": "^9.0.1",
 		"vscode-languageserver-textdocument": "^1.0.11"
 	},
