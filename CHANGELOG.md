@@ -5,6 +5,23 @@ All notable changes to the HED Language Support extension will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-05-21
+
+### Added
+- New `hed/suggest` JSON-RPC request on the LSP server. Long-running clients
+  (editors, the HEDit backend) can hold one persistent connection and submit
+  batched tag-suggestion queries instead of spawning the `hed-suggest` CLI
+  per query. Request payload: `{queries: string[], schema?: string, top?:
+  number, semantic?: boolean}`. Response: `Record<string, string[]>`,
+  matching `hed-suggest --json` output shape.
+- `server/src/suggestionEngine.ts`: shared module exporting `findSuggestions`
+  and `suggestBatch`. Both the `hed-suggest` CLI and the `hed/suggest`
+  request handler delegate to this module so they share the schema load and
+  semantic-embedding warmup.
+
+### Changed
+- `cli.ts` now delegates to `suggestBatch`. CLI behavior is unchanged.
+
 ## [0.3.4] - 2026-02-18
 
 ### Fixed

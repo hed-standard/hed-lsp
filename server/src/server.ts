@@ -25,6 +25,7 @@ import { embeddingsManager } from './embeddings.js';
 import { provideHover } from './hover.js';
 import { schemaManager } from './schemaManager.js';
 import { provideSemanticTokens, semanticTokensLegend } from './semanticTokens.js';
+import { suggestBatch } from './suggestionEngine.js';
 import { isTsvDocument, parseTsvForHedStrings } from './tsvParser.js';
 import { defaultSettings, type HedLspSettings, type HedRegion } from './types.js';
 import { validateDocument } from './validation.js';
@@ -359,6 +360,37 @@ connection.onDefinition((params: TextDocumentPositionParams) => {
 	} catch (error) {
 		connection.console.error(`Definition error: ${error}`);
 		return null;
+	}
+});
+
+/**
+ * Batched HED tag suggestion request.
+ *
+ * Custom request `hed/suggest` accepts a list of natural-language queries
+ * and returns `{ query: [tag, ...] }` matching the `hed-suggest --json`
+ * output shape. Lets external clients (e.g. the HEDit Python backend)
+ * reuse this long-running server instead of spawning the CLI per query.
+ */
+interface HedSuggestParams {
+	queries: string[];
+	schema?: string;
+	top?: number;
+	semantic?: boolean;
+}
+
+connection.onRequest('hed/suggest', async (params: HedSuggestParams): Promise<Record<string, string[]>> => {
+	if (!params || !Array.isArray(params.queries) || params.queries.length === 0) {
+		return {};
+	}
+	try {
+		return await suggestBatch(params.queries, {
+			schema: params.schema,
+			top: params.top,
+			semantic: params.semantic,
+		});
+	} catch (error) {
+		connection.console.error(`hed/suggest error: ${error instanceof Error ? error.message : error}`);
+		return {};
 	}
 });
 
