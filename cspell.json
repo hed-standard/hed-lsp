@@ -56,10 +56,6 @@
 		"server/data/*.json"
 	],
 	"ignoreRegExpList": [
-		"HED[A-Za-z0-9]*"
-	],
-	"ignoreWords": [
-		"matc",
-		"Reac"
+		"/\\bHED[A-Za-z0-9]*/g"
 	]
 }

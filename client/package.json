@@ -108,9 +108,10 @@
 		"watch": "tsc -b -w"
 	},
 	"dependencies": {
-		"vscode-languageclient": "^9.0.1"
+		"vscode-languageclient": "^10.1.2"
 	},
 	"devDependencies": {
-		"@types/vscode": "^1.116.0"
+		"@types/node": "^26.6.5",
+		"@types/vscode": "^1.140.0"
 	}
 }

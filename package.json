@@ -136,10 +136,10 @@
 		"spellcheck": "cspell \"**/*.{ts,md}\""
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.4.12",
-		"@types/node": "^25",
-		"cspell": "^9.4.0",
-		"esbuild": "^0.28.0",
-		"typescript": "^5.7.2"
+		"@biomejs/biome": "^2.5.15",
+		"@types/node": "^26.6.5",
+		"cspell": "^10.3.6",
+		"esbuild": "^0.28.2",
+		"typescript": "^7.0.2"
 	}
 }
