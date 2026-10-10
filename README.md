@@ -105,14 +105,14 @@ The `hed-suggest` CLI provides HED tag suggestions for external tools and script
 
 ```bash
 cd server
-pnpm install
-pnpm run compile
+bun install
+bun run compile
 
 # Option 1: Use directly with node
 node ./out/cli.js "button press"
 
 # Option 2: Install globally
-pnpm link --global  # Makes hed-suggest available in PATH
+bun link --global  # Makes hed-suggest available in PATH
 ```
 
 ### Usage
@@ -157,16 +157,16 @@ git clone https://github.com/hed-standard/hed-lsp.git
 cd hed-lsp
 
 # Install dependencies
-pnpm install
+bun install
 
 # Compile
-pnpm run compile
+bun run compile
 
 # Run tests
-cd server && pnpm test
+cd server && bun run test
 
 # Package extension
-pnpm dlx @vscode/vsce package
+bunx --package @vscode/vsce vsce package
 ```
 
 ## Project Structure

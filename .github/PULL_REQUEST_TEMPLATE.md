@@ -9,8 +9,8 @@ Brief description of changes.
 Fixes #(issue number)
 
 ## Test Plan
-- [ ] Compiled successfully (`npm run compile`)
-- [ ] Tests pass (`cd server && npm test`)
+- [ ] Compiled successfully (`bun run compile`)
+- [ ] Tests pass (`cd server && bun run test`)
 - [ ] Manually tested in VS Code
 
 ## Checklist
