@@ -24,10 +24,10 @@ HED-LSP provides intelligent editing support for [HED (Hierarchical Event Descri
 
 ```bash
 # Install dependencies
-npm install
+bun install
 
 # Build the project
-npm run compile
+bun run compile
 
 # Run in VS Code
 # Press F5 to launch Extension Development Host
