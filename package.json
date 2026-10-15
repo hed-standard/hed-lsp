@@ -121,14 +121,14 @@
 			}
 		}
 	},
-	"packageManager": "pnpm@10.33.4",
+	"packageManager": "bun@1.4.3",
 	"scripts": {
-		"vscode:prepublish": "pnpm run esbuild-base -- --production",
+		"vscode:prepublish": "bun run esbuild-base -- --production",
 		"compile": "tsc -b",
 		"watch": "tsc -b -w",
 		"esbuild-base": "node esbuild.config.mjs",
-		"esbuild": "pnpm run esbuild-base",
-		"esbuild-watch": "pnpm run esbuild-base -- --watch",
+		"esbuild": "bun run esbuild-base",
+		"esbuild-watch": "bun run esbuild-base -- --watch",
 		"lint": "biome lint .",
 		"format": "biome format --write .",
 		"format:check": "biome format .",
@@ -141,5 +141,24 @@
 		"cspell": "^10.3.6",
 		"esbuild": "^0.28.2",
 		"typescript": "^7.0.2"
+	},
+	"trustedDependencies": [
+		"core-js-pure",
+		"esbuild",
+		"onnxruntime-node",
+		"protobufjs",
+		"sharp"
+	],
+	"overrides": {
+		"strnum": "2.4.2"
+	},
+	"workspaces": {
+		"packages": [
+			"client",
+			"server"
+		],
+		"selfContained": [
+			"server"
+		]
 	}
 }

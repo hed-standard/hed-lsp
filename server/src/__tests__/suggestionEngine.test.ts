@@ -52,8 +52,8 @@ describe('suggestBatch', () => {
 		const output = await suggestBatch(['red'], { schema: '8.4.0', top: 5 });
 
 		expect(typeof output).toBe('object');
-		expect(Array.isArray(output['red'])).toBe(true);
-		for (const tag of output['red']) {
+		expect(Array.isArray(output.red)).toBe(true);
+		for (const tag of output.red) {
 			expect(typeof tag).toBe('string');
 			expect(tag.length).toBeGreaterThan(0);
 		}

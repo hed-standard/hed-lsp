@@ -40,6 +40,7 @@ coverage/**
 biome.json
 cspell.json
 esbuild.config.mjs
+bunfig.toml
 .vscodeignore
 
 # Node modules - root and client excluded, server needs runtime deps
@@ -54,9 +55,9 @@ server/node_modules/**
 # Exclude transformers cache if present
 server/node_modules/@huggingface/transformers/.cache/**
 
-# Package files
+# Package-manager files
 *.vsix
-package-lock.json
+bun.lock
 
 # Documentation (keep README for marketplace)
 docs/**

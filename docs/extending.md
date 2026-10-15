@@ -25,7 +25,7 @@ const KEYWORD_INDEX: Record<string, string[]> = {
 - Use lowercase keys
 - Map to existing HED tags only
 - Multiple tags are allowed (most specific first)
-- Rebuild after changes: `npm run compile`
+- Rebuild after changes: `bun run compile`
 
 ### 2. Embedding Index (Semantic Similarity)
 
@@ -42,7 +42,7 @@ const KEYWORD_INDEX: Record<string, string[]> = {
 
 Then regenerate embeddings:
 ```bash
-npx ts-node server/scripts/generateEmbeddings.ts
+bun run server/scripts/generateEmbeddings.ts
 ```
 
 ## Workflow for Adding Keywords
@@ -54,8 +54,8 @@ flowchart TD
     B -->|Yes| C[Add to embeddings.ts KEYWORD_INDEX]
     B -->|No| D[Add to generateEmbeddings.ts]
 
-    C --> E[npm run compile]
-    D --> F[npx ts-node server/scripts/generateEmbeddings.ts]
+    C --> E[bun run compile]
+    D --> F[bun run server/scripts/generateEmbeddings.ts]
 
     E --> G[Test in VS Code]
     F --> G
@@ -124,7 +124,7 @@ main();
 
 Run with:
 ```bash
-npx ts-node test-keywords.ts
+bun run test-keywords.ts
 ```
 
 ## Adding New Keyword Categories
@@ -168,8 +168,8 @@ Or use the HED online tools: https://hedtools.org or browse at https://www.hedta
 ### Step 4: Regenerate and Test
 
 ```bash
-npm run compile
-npx ts-node server/scripts/generateEmbeddings.ts
+bun run compile
+bun run server/scripts/generateEmbeddings.ts
 # Test in VS Code
 ```
 
@@ -202,7 +202,7 @@ const SCHEMA_VERSION = '8.4.0,sc:score_2.1.0,la:lang_1.1.0,my:mylib_1.0.0';
 ### Step 2: Regenerate Embeddings
 
 ```bash
-npx ts-node server/scripts/generateEmbeddings.ts
+bun run server/scripts/generateEmbeddings.ts
 ```
 
 The generator automatically includes all tags from all loaded schemas.
