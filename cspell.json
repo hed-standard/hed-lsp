@@ -10,6 +10,7 @@
 		"asynchrony",
 		"bids",
 		"biomejs",
+		"bunx",
 		"colour",
 		"cspell",
 		"distractor",
@@ -52,7 +53,7 @@
 		"node_modules",
 		"out",
 		"*.vsix",
-		"package-lock.json",
+		"bun.lock",
 		"server/data/*.json"
 	],
 	"ignoreRegExpList": [

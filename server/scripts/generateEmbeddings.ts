@@ -1,4 +1,4 @@
-#!/usr/bin/env npx ts-node
+#!/usr/bin/env bun
 
 /**
  * Generate Embeddings Script
@@ -8,7 +8,7 @@
  * 1. Tag embeddings - for direct HED tag matching
  * 2. Keyword embeddings - curated terms that point to HED tags (anchors)
  *
- * Usage: npx ts-node server/scripts/generateEmbeddings.ts
+ * Usage: bun server/scripts/generateEmbeddings.ts
  */
 
 import * as fs from 'node:fs';
