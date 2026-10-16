@@ -113,16 +113,19 @@ flowchart TD
     A[Request arrives] --> B[Assign request ID, CORS headers, client key, start timeout timer]
     B --> C{GET /v1/health?}
     C -->|Yes| H[Answer health, no limits]
-    C -->|No| D[Pay the door unit]
+    C -->|No| D[Pay the door: 1 unit, or 1 per 4096 declared bytes of a POST]
     D -->|Bucket empty| X1[429 RATE_LIMITED]
     D --> E{Route and method known?}
     E -->|No| X2[404, 405, or 204 for OPTIONS]
-    E -->|Yes| F{Default schema loaded?}
+    E -->|Yes| E2{POST has a Content-Length?}
+    E2 -->|No| X9[411 LENGTH_REQUIRED]
+    E2 -->|Yes| F{Default schema loaded?}
     F -->|No| X3[503 STARTING]
-    F -->|Yes| G{In-flight slot free?}
+    F -->|Yes| G{Client and shared in-flight slots free?}
     G -->|No| X4[503 OVERLOADED]
     G -->|Yes| I[Read body: media type, size, JSON, fields]
     I -->|Refused| X5[415, 413, or 400]
+    I -->|Body too slow| X10[408 REQUEST_TIMEOUT]
     I --> J[Check batch and item limits, choose schema]
     J -->|Refused| X6[400 BATCH_TOO_LARGE or UNKNOWN_SCHEMA]
     J --> K[Charge the units for the text, by length]
@@ -140,7 +143,10 @@ flowchart TD
 
 Two timers surround this path.
 The request timer, `REQUEST_TIMEOUT_MS`, starts when the headers arrive and answers 503 `TIMEOUT` if the whole path, queue wait included, has not finished; the work stops at its next item.
-The in-flight slot is held from the moment the headers arrive until the work has stopped, so the cap counts work that is still running after a timeout.
+The body timer, `BODY_TIMEOUT_MS`, starts at the same moment and answers 408 `REQUEST_TIMEOUT` if the body is not complete in time.
+The in-flight slots, one for the client and one shared, are held from the moment the headers arrive until the work has stopped, so the caps count work that is still running after a timeout.
+Any answer that is sent while the body is still arriving first arranges for the rest of it to be read and dropped, up to four times `MAX_BODY_BYTES`, after which the connection is closed.
+No charge is refunded on any of these exits.
 
 ### Data Flow for Validation
 

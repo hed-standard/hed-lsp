@@ -2,7 +2,7 @@
  * The HTTP adapter for the HED engine: routing, the v1 envelope, the endpoints, and the limits. A
  * request gets a fresh ID, CORS headers, and exactly one JSON response; a failure is an ApiError
  * that becomes the error envelope, and anything else becomes a generic 500 with the detail in the
- * log. Every request except a GET of health pays at the door against its client's rate bucket
+ * log. Every request except a GET or HEAD of health pays at the door against its client's rate bucket
  * before anything else happens: one unit, or for a POST one unit for each 4096 bytes of body it
  * declares, so refusals, unknown paths, and OPTIONS requests are limited like other traffic. A POST
  * must declare its length, and a request then pays for what it asks, by the length of its text. A
@@ -324,7 +324,8 @@ function discardRest(req: http.IncomingMessage, discardLimit: number, alreadyRea
 
 /**
  * Read the request body, refusing more than `limit` bytes: by Content-Length before reading a
- * byte, and by counting while streaming for a body that declares no length or lies about it.
+ * byte, and by counting while streaming. A POST without a length never gets here and Node holds a
+ * declared length to its word, so the count is a second line of defense.
  * Nothing past the limit is kept. `progress` counts the bytes consumed, so the discard that
  * follows a refusal continues the count.
  */

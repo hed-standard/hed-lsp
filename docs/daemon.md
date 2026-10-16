@@ -30,7 +30,8 @@ curl -s -X POST -H 'Content-Type: application/json' \
 
 Settings are read once from `HED_LSP_*` environment variables (see [Limits and settings](#limits-and-settings)).
 A bad value stops the daemon before it listens, with a message that names the variable, and exit status 2.
-On SIGTERM or SIGINT the daemon stops accepting connections, lets the requests in flight finish for up to 10 seconds, and exits 0.
+On SIGTERM or SIGINT the daemon stops accepting connections, lets the requests in flight finish for up to 8 seconds, and exits 0.
+Eight seconds is below the 10 seconds that Docker waits after SIGTERM before it sends SIGKILL.
 Exit status 1 means a failure at run time, such as an address that cannot be bound.
 
 ## API reference, version 1
@@ -40,6 +41,10 @@ Exit status 1 means a failure at run time, such as an address that cannot be bou
 - Every response carries an `X-Request-Id` header, and the same ID is in the body of an error.
 - A POST body must be a JSON object with the media type `application/json`.
   A charset parameter is allowed if it is UTF-8.
+- A POST must carry a `Content-Length` header.
+  A body sent in chunks, without a length, gets 411 `LENGTH_REQUIRED` before any of it is read.
+- A route that answers GET also answers HEAD, with the status and headers of the GET, `Content-Length` included, and no body.
+  HEAD on a POST route gets 405.
 - A body that is not valid JSON gets 400 `INVALID_JSON`.
   A body that is JSON but not an object, such as an array, gets 400 `INVALID_REQUEST`.
 - A field the endpoint does not define gets 400 `UNKNOWN_FIELD`, with the field names and the allowed names in `details`.
@@ -64,6 +69,7 @@ Exit status 1 means a failure at run time, such as an address that cannot be bou
 
 - Cross-Origin Resource Sharing (CORS) allows any origin to call the API with GET, POST, and OPTIONS, without credentials.
   `Access-Control-Expose-Headers` lists `Retry-After` and `X-Request-Id`, and an OPTIONS request is answered 204 with an `Allow` header.
+  A preflight answer carries `Access-Control-Max-Age: 600`, so a browser asks once in ten minutes and not before each request.
 - Responses carry `Cache-Control: no-store`.
 
 ### `GET /v1/health`
@@ -123,6 +129,8 @@ A request without `schema` uses `8.5.0`, the standard schema alone, so a bare re
 `schema` may be a string or an array of strings.
 It is split on commas, trimmed, and compared as a case-sensitive set, so `"8.4.0,sc:score_2.1.0,la:lang_1.1.0"`, `["la:lang_1.1.0", "sc:score_2.1.0", "8.4.0"]`, and a different order of the same parts name the same schema.
 A value of another type gets 400 `INVALID_REQUEST`, and a spec outside the allowlist gets 400 `UNKNOWN_SCHEMA`, with the allowed specs in `details.allowed`.
+A `schema` longer than 256 characters, or an array whose parts joined with commas are longer, gets 400 `UNKNOWN_SCHEMA` as well, without being parsed, because parsing costs time in proportion to its length.
+The longest default entry is 34 characters.
 The response names the schema as `schema: { requested, used }`.
 
 ### `POST /v1/validate`
@@ -166,6 +174,8 @@ More strings than the limit get 400 `BATCH_TOO_LARGE`.
 - `issueCount` is the number of issues found, and `valid` counts all of them, even those left out of `issues`.
 - `truncated` is true when an issue was left out or a message was cut.
   A string with no issues is never truncated.
+- A string that makes the validator throw gets an item error, `INTERNAL_ERROR` with the message `validation failed`, and nothing of the exception is returned or logged.
+  A string nested thousands of levels deep runs the validator out of stack (2045 levels, or 4095 characters, did on Node 26, and the depth varies with the Node version), and a string with a repeated tag, such as `Red, Red`, makes it throw an error for the repeat.
 
 The answer is bounded because a string of n open parentheses gives about n + 2 issues, and each message quotes the string, so the output grows with the square of its length.
 Three limits apply, and none of them changes `valid` or `issueCount`:
@@ -225,12 +235,14 @@ Its `status` says what happened to semantic search; see [Semantic search](#seman
 | 400 | `UNKNOWN_SCHEMA` | The schema is not in the allowlist; `details.allowed` lists them |
 | 404 | `NOT_FOUND` | No such path |
 | 405 | `METHOD_NOT_ALLOWED` | Wrong method for the path; the `Allow` header lists the right ones |
-| 413 | `PAYLOAD_TOO_LARGE` | The body is larger than `MAX_BODY_BYTES`, by its Content-Length or as it streams |
+| 408 | `REQUEST_TIMEOUT` | The body was still incomplete `BODY_TIMEOUT_MS` after the headers; the connection is closed |
+| 411 | `LENGTH_REQUIRED` | A POST without `Content-Length`, such as a chunked body; refused before the body is read |
+| 413 | `PAYLOAD_TOO_LARGE` | The body is larger than `MAX_BODY_BYTES`, by its Content-Length; refused before the body is read |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | The Content-Type is not `application/json` in UTF-8 |
 | 429 | `RATE_LIMITED` | The client is over its rate; `Retry-After` gives whole seconds |
 | 500 | `INTERNAL_ERROR` | An unexpected failure; the message is generic and the detail is in the log |
 | 503 | `STARTING` | The default schema has not loaded yet; `Retry-After: 1` |
-| 503 | `OVERLOADED` | `MAX_IN_FLIGHT` requests are already running; `Retry-After: 1` |
+| 503 | `OVERLOADED` | The client already has `MAX_IN_FLIGHT_PER_CLIENT` requests running, or all clients together have `MAX_IN_FLIGHT`; `Retry-After: 1` |
 | 503 | `SEMANTIC_BUSY` | The semantic slot and its queue are full; `Retry-After: 5` |
 | 503 | `SCHEMA_UNAVAILABLE` | The schema failed to load and is waiting out its backoff; `Retry-After` gives the wait |
 | 503 | `TIMEOUT` | The request ran past `REQUEST_TIMEOUT_MS`; `Retry-After: 1`, and the connection is closed |
@@ -268,10 +280,12 @@ The values below are starting values chosen to keep one shared machine safe, and
 | `RATE_ITEMS_PER_SEC`, `RATE_ITEMS_BURST` | `100`, `1000` | Refill rate and size of each client's general bucket, in units |
 | `SEMANTIC_RATE_PER_SEC`, `SEMANTIC_RATE_BURST` | `1`, `20` | The same for each client's semantic bucket |
 | `CHARGE_CHARS_PER_UNIT` | `256` | Characters that cost one unit of charge |
-| `MAX_IN_FLIGHT` | `32` | Requests running at once |
+| `MAX_IN_FLIGHT` | `8` | Requests running at once, all clients together |
+| `MAX_IN_FLIGHT_PER_CLIENT` | `4` | Requests running at once for one client |
 | `SEMANTIC_CONCURRENCY` | `1` | Semantic requests running at once; 1 is the only accepted value |
 | `SEMANTIC_QUEUE` | `8` | Semantic requests waiting for the slot |
 | `REQUEST_TIMEOUT_MS` | `30000` | Time for a whole request, queue wait included |
+| `BODY_TIMEOUT_MS` | `10000` | Time for a request body to arrive in full, counted from the headers |
 | `HEADERS_TIMEOUT_MS` | `10000` | Time for the headers to arrive; at most the request timeout plus 5000 |
 | `KEEPALIVE_TIMEOUT_MS` | `65000` | Idle time before a connection is closed, longer than a proxy's reuse window |
 | `MAX_CONNECTIONS` | `256` | Open connections |
@@ -283,23 +297,29 @@ The values below are starting values chosen to keep one shared machine safe, and
 
 Each client has a bucket of units that refills at `RATE_ITEMS_PER_SEC` up to `RATE_ITEMS_BURST`.
 
-- Every request except a GET of `/v1/health` pays one unit at the door, before anything else is done with it.
+- Every request except a GET or HEAD of `/v1/health` pays at the door, before anything else is done with it and before a byte of its body is read.
+  A POST pays one unit for each 4096 bytes of body it declares, rounded up and at least one, so a large body costs more than a small one even when it is refused.
+  Any other request pays one unit.
   Unknown paths, wrong methods, and OPTIONS requests are limited like other traffic.
 - A request then pays for what it asks.
   A string or a query costs `max(1, ceil(length / CHARGE_CHARS_PER_UNIT))` units, and an item that is not a string costs one.
-  The door unit counts toward this charge, and a request costs at least one unit, so an empty batch is not free.
-- Time grows with length, which is why length is charged: one string of 4096 characters takes about 10 ms to validate, 100 of them take about a second of processor time, and a string of 50 characters takes about 0.1 ms.
+  The door counts toward this charge: a request costs the larger of what the door took and what its items cost, and never more than the burst, so an empty batch is not free.
+- Time grows with length, which is why length is charged: a string of 4096 open parentheses, the slowest kind measured, takes 19.5 to 25 ms to validate, and 100 of them take 2.2 s of processor time, while 4096 characters of ordinary text take 3.9 ms.
   An ordinary string costs 1 unit, and a string of 4096 characters costs 16.
 - A request that costs more than the burst is charged the whole burst, so it can pass from a full bucket.
   At the defaults, 100 strings of 4096 characters cost 1600 units, are charged 1000, and can be sent about once every 10 seconds.
 - A request that asks for semantic search and runs it is charged the same number of units against the semantic bucket as well.
-- A refusal takes nothing: the door unit is given back, and the answer is 429 `RATE_LIMITED` with the whole seconds to wait.
+- Nothing is refunded.
+  A charge is for the request and not for its result, so a request that is refused for its rate, its schema, a full queue, a timeout, or a daemon that is busy or starting keeps what it paid, the door included.
+  A client that is over its rate gets 429 `RATE_LIMITED` with `Retry-After`, the whole seconds after which the same request would pass, counting the door that the next attempt pays again.
+- The buckets read a monotonic clock, so a change of the system clock does not stop a bucket from refilling or end a schema backoff early.
 
 ### Who a client is
 
 The rate limit is per client address.
-The address of the connection is used, unless it is in `TRUSTED_PROXIES`, in which case the rightmost valid entry of `X-Forwarded-For` is used, which is the one the proxy itself appended.
-An entry that is not an Internet Protocol (IP) address is never believed.
+The address of the connection is used, unless it is in `TRUSTED_PROXIES`, in which case the rightmost entry of `X-Forwarded-For` is used, which is the one the proxy itself appended.
+Only that entry is read.
+If it is not an Internet Protocol (IP) address, the address of the connection is used, and the entries to its left are never looked at.
 An IPv6 client is limited by its /64 prefix, because one subscriber usually controls a whole /64.
 When the daemon listens on an address other than loopback and trusts only the default proxies, every client reaches it through some other address and shares one key, so the daemon warns at startup.
 Set `TRUSTED_PROXIES` to the address of the proxy in front of it.
@@ -307,10 +327,21 @@ Set `TRUSTED_PROXIES` to the address of the proxy in front of it.
 ### Requests in flight and timeouts
 
 A request is in flight from the moment its headers arrive until its work stops, so a client that sends a body slowly holds a slot.
-When `MAX_IN_FLIGHT` requests are in flight, the next gets 503 `OVERLOADED`.
+Two caps apply: `MAX_IN_FLIGHT_PER_CLIENT` for one client, so that one client cannot take every slot, and `MAX_IN_FLIGHT` for all clients together.
+A request over either cap gets 503 `OVERLOADED` with `Retry-After: 1`.
+A body that is still incomplete `BODY_TIMEOUT_MS` after the headers gets 408 `REQUEST_TIMEOUT` and the connection is closed.
+Its work is canceled and its slot is free at once, so a slow sender holds a slot for 10 seconds and not for the whole request timeout.
 A request that runs past `REQUEST_TIMEOUT_MS` is answered 503 `TIMEOUT`.
 Its work stops between items, and it keeps its slot until then; a semantic run that has already started finishes.
 Node's own request timer is set 5 seconds past the daemon's, so the daemon always answers first.
+
+A request that is refused before its body is read, for whatever reason, does not leave the client free to keep sending.
+The daemon reads and drops up to four times `MAX_BODY_BYTES` of the body, counted from its first byte (2 MiB by default), so a client that sends a little more than the limit still reads the answer, and it closes the connection past that.
+The same holds for a body that nobody reads on a request that is answered, such as a GET with a body.
+
+Node's socket timeout is set to `REQUEST_TIMEOUT_MS` plus 5 seconds, so a connection that moves no bytes is closed, such as a client that stops reading a large response.
+Node does not fire it while a write is in progress until a whole period has passed with the write unmoved, so a stuck write is closed after two to three periods, about 70 to 105 seconds with the defaults.
+A kept-alive connection that is idle between requests is closed after `KEEPALIVE_TIMEOUT_MS` instead, plus one second that Node adds, and the socket timeout does not shorten that.
 
 ## Semantic search
 
@@ -336,7 +367,9 @@ Semantic search finds tags by meaning with an embedding model, and it is off by 
 ## What is logged and kept
 
 The daemon writes one JSON line per request to standard error: the time, the request ID, the method, the path without its query string, the status, the milliseconds, the number of items, the schema used, the semantic status, the error code, and whether the client went away before the answer was sent.
+A path that is not a route is logged as `unknown route`, because it is the client's text, and a request that was cut off before its answer was written is logged with `aborted: true` and no status.
 Engine messages go through the same writer as JSON lines.
+An unexpected exception is logged by its type and its stack frames, never its message, which can quote the request, and the engine's own log lines name an error by its type for the same reason.
 
 - Request bodies, queries, HED strings, and IP addresses are never logged.
   A test checks that no log line carries request text.
@@ -351,13 +384,17 @@ A reverse proxy in front of the daemon, such as Apache, has its own logs, and th
 The `Dockerfile` at the root builds the daemon for `linux/amd64`.
 The build stage runs on the Bun image, installs with `bun install --frozen-lockfile`, compiles, and installs only the production dependencies with `bun install --frozen-lockfile --production`.
 The runtime stage is `node:22-bookworm-slim`.
-Both base images are pinned by digest, and Dependabot proposes updates.
+Both base images are pinned by digest, and both stages are pinned to `linux/amd64` with `FROM --platform`, so the build gives the same image on any host.
+BuildKit's linter warns about a constant platform in `FROM`; the warning is expected.
+Dependabot proposes updates to the digests.
+The `.dockerignore` keeps environment files, built extensions, agent notes, and logs out of the build context.
 
 ```bash
 docker buildx build --platform linux/amd64 \
   --build-arg HED_LSP_COMMIT=$(git rev-parse --short HEAD) -t hed-lsp-daemon:local .
 
 docker run -d --name hed-lsp --restart unless-stopped \
+  --stop-timeout 15 \
   -p 127.0.0.1:38530:38530 \
   --read-only --tmpfs /tmp \
   -v hed-lsp-cache:/home/node/.cache \
@@ -367,6 +404,8 @@ docker run -d --name hed-lsp --restart unless-stopped \
 
 - The process runs as the `node` user and listens on `0.0.0.0:38530` inside the container.
   Publish the port on the loopback address of the host, and let a reverse proxy face the network.
+- `--stop-timeout 15` is recommended.
+  The daemon drains for 8 seconds after SIGTERM, below Docker's default stop timeout of 10 seconds, and 15 leaves room for the exit that follows.
 - `/home/node/.cache` is the mount point of the model cache, owned by `node`.
 - The image has no `curl`, so its `HEALTHCHECK` runs `node out/daemon/healthcheck.js`, which asks for `/v1/health` and succeeds for `ok` and `degraded`.
 - Measured in a local container, the daemon used about 200 MiB with semantic search off and about 2 GiB with it on and the model loaded.
@@ -419,5 +458,7 @@ The target honors the header only when the address of the machine running the ha
 - Semantic inference runs on the main thread.
   One embedding holds the event loop for about 20 milliseconds on a fast desktop computer, and an embedding already running always finishes, even when its request has timed out.
   Moving it to a worker thread is the remedy if non-semantic latency suffers.
+- Concurrent requests are interleaved: a long batch yields between items, so requests share the thread and each takes longer.
+  This is deliberate, because it keeps small requests responsive while a large one runs, and the caps on requests in flight bound the overload.
 - Some informational engine messages, such as a schema being loaded, are logged at level `error`, because the engine writes them to standard error.
 - The limits are starting values and have not yet been measured on the public host.
