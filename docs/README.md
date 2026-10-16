@@ -19,6 +19,7 @@ HED-LSP provides intelligent editing support for [HED (Hierarchical Event Descri
 | [Completion System](./completion.md) | How autocomplete works, including trigger logic |
 | [Semantic Search](./semantic-search.md) | Dual-embedding architecture for intelligent suggestions |
 | [HTTP Daemon](./daemon.md) | The v1 API, limits and settings, logging, and the container image |
+| [Deploying on hedtools](./deployment-hedtools.md) | Runbook for the container on the hedtools host: topology, steps with approval gates, the Apache route, measurement, monitoring, privacy, and rollback |
 | [Extending](./extending.md) | How to add new keywords and customize behavior |
 
 ## Quick Start
