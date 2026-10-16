@@ -852,12 +852,22 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		// One timer for the whole request, from the headers to the last item, so time spent reading the
 		// body or waiting in the semantic queue counts. It answers first; the work stops at its next
 		// item and gives its slots back then.
+		// A second timer covers the body alone: a body still incomplete BODY_TIMEOUT_MS after the headers
+		// is answered 408 and the connection is closed, so a slow sender holds a slot for 10 seconds and
+		// not for the whole request timeout. Either timer stops the work between items.
 		let timer: NodeJS.Timeout | undefined;
+		let bodyTimer: NodeJS.Timeout | undefined;
 		const timedOut = new Promise<never>((_, reject) => {
 			timer = setTimeout(() => {
 				work.abort();
 				reject(new ApiError('TIMEOUT', 'the request took too long', { retryAfterSeconds: 1 }));
 			}, config.requestTimeoutMs);
+			bodyTimer = setTimeout(() => {
+				if (!req.complete) {
+					work.abort();
+					reject(new ApiError('REQUEST_TIMEOUT', 'the request body did not arrive in time'));
+				}
+			}, config.bodyTimeoutMs);
 		});
 		running.add(work);
 
@@ -870,12 +880,13 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 				return;
 			}
 			reply = replyToFailure(error, ctx);
-			if (ctx.errorCode === 'TIMEOUT') {
+			if (ctx.errorCode === 'TIMEOUT' || ctx.errorCode === 'REQUEST_TIMEOUT') {
 				// The body of a request that timed out may still be arriving, so the connection is not reused.
 				reply.headers = { ...reply.headers, Connection: 'close' };
 			}
 		} finally {
 			clearTimeout(timer);
+			clearTimeout(bodyTimer);
 			running.delete(work);
 		}
 		if (res.destroyed || res.headersSent) {

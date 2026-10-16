@@ -71,6 +71,8 @@ export interface DaemonConfig {
 	semanticConcurrency: number;
 	semanticQueue: number;
 	requestTimeoutMs: number;
+	/** How long after its headers a request body may take to arrive in full. */
+	bodyTimeoutMs: number;
 	headersTimeoutMs: number;
 	keepAliveTimeoutMs: number;
 	maxConnections: number;
@@ -392,6 +394,7 @@ export function loadConfig(env: Env = process.env): DaemonConfig {
 		semanticConcurrency: readSemanticConcurrency(env),
 		semanticQueue: readInt(env, 'SEMANTIC_QUEUE', 8, 0, MAX_INT),
 		requestTimeoutMs,
+		bodyTimeoutMs: readInt(env, 'BODY_TIMEOUT_MS', 10_000, 1, MAX_INT),
 		headersTimeoutMs,
 		keepAliveTimeoutMs: readInt(env, 'KEEPALIVE_TIMEOUT_MS', 65_000, 1, MAX_INT),
 		maxConnections: readInt(env, 'MAX_CONNECTIONS', 256, 1, MAX_INT),

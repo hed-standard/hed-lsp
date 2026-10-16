@@ -772,6 +772,107 @@ describe('the request timeout', () => {
 	});
 });
 
+describe('the body timeout', () => {
+	/**
+	 * A POST that declares `length` bytes and sends `parts` of them, `gapMs` apart, over a raw socket.
+	 * Resolves with everything the daemon sent and how long the connection lasted. The client ends the
+	 * connection itself when a whole JSON answer has arrived and `stopOnAnswer` is set, and gives up
+	 * after 10 seconds.
+	 */
+	function sendSlowly(
+		daemon: RunningDaemon,
+		length: number,
+		parts: string[],
+		gapMs: number,
+		stopOnAnswer = false,
+	): Promise<{ text: string; ms: number; closedByDaemon: boolean }> {
+		return new Promise((resolve) => {
+			const startedAt = Date.now();
+			const socket = net.connect(Number(new URL(daemon.url).port), '127.0.0.1');
+			let text = '';
+			let closedByDaemon = true;
+			const giveUp = setTimeout(() => {
+				closedByDaemon = false;
+				socket.destroy();
+			}, 10_000);
+			socket.on('data', (chunk) => {
+				text += chunk.toString('latin1');
+				if (stopOnAnswer && text.includes('\r\n\r\n') && text.endsWith('}')) {
+					closedByDaemon = false;
+					socket.destroy();
+				}
+			});
+			socket.on('error', () => undefined);
+			socket.on('close', () => {
+				clearTimeout(giveUp);
+				resolve({ text, ms: Date.now() - startedAt, closedByDaemon });
+			});
+			socket.on('connect', async () => {
+				socket.write(
+					`POST /v1/validate HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: ${length}\r\n\r\n`,
+				);
+				for (const part of parts) {
+					await sleep(gapMs);
+					if (socket.destroyed) {
+						return;
+					}
+					socket.write(part);
+				}
+			});
+		});
+	}
+
+	it('answers 408 and closes the connection when the body is still incomplete, and frees the slot', async () => {
+		const daemon = await start({ HED_LSP_BODY_TIMEOUT_MS: '300', HED_LSP_MAX_IN_FLIGHT: '1' });
+		const startedAt = Date.now();
+		const held = holdRequest(daemon.url, '/v1/validate', { length: 1000, first: '{"strings"' });
+		await waitFor(async () => (await call(daemon.url, '/v1/schemas')).status === 503, 5000, 'the slot to be taken');
+
+		const reply = await held.response;
+
+		expect(reply.status).toBe(408);
+		expect(reply.json.error.code).toBe('REQUEST_TIMEOUT');
+		expect(reply.json.requestId).toBe(reply.headers['x-request-id']);
+		expect(reply.headers.connection).toBe('close');
+		expect(reply.headers['access-control-allow-origin']).toBe('*');
+		expect(Date.now() - startedAt).toBeGreaterThanOrEqual(250);
+		expect(Date.now() - startedAt).toBeLessThan(3000);
+		await waitFor(async () => (await call(daemon.url, '/v1/schemas')).status === 200, 5000, 'the slot to be free');
+		const line = daemon.logLines().find((entry) => entry.msg === 'request' && entry.error === 'REQUEST_TIMEOUT');
+		expect(line).toMatchObject({ method: 'POST', path: '/v1/validate', status: 408 });
+	});
+
+	it('counts from the headers, so a body that drips in a byte at a time still times out on schedule', async () => {
+		const daemon = await start({ HED_LSP_BODY_TIMEOUT_MS: '400' });
+
+		const result = await sendSlowly(
+			daemon,
+			1000,
+			Array.from({ length: 40 }, () => 'a'),
+			50,
+		);
+
+		expect(result.text.split('\r\n')[0]).toBe('HTTP/1.1 408 Request Timeout');
+		expect(result.text).toContain('REQUEST_TIMEOUT');
+		expect(result.closedByDaemon).toBe(true);
+		// The last piece would have gone out after 2 seconds; the daemon gave up at 400 ms.
+		expect(result.ms).toBeGreaterThanOrEqual(350);
+		expect(result.ms).toBeLessThan(1800);
+	});
+
+	it('leaves a body that arrives in time alone, and keeps the connection', async () => {
+		const daemon = await start({ HED_LSP_BODY_TIMEOUT_MS: '2000' });
+		const body = JSON.stringify({ strings: [VALID] });
+
+		const result = await sendSlowly(daemon, body.length, [body.slice(0, 5), body.slice(5)], 100, true);
+
+		expect(result.text.split('\r\n')[0]).toBe('HTTP/1.1 200 OK');
+		// The connection stayed open: the client was the one to end it, after the answer.
+		expect(result.closedByDaemon).toBe(false);
+		expect(result.text).not.toContain('Connection: close');
+	});
+});
+
 describe('the Node server settings', () => {
 	it('sets the headers, request, and keep-alive timeouts and the connection cap from the configuration', async () => {
 		const { daemon, config } = await start({
