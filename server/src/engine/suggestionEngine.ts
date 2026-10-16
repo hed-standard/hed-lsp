@@ -12,7 +12,7 @@ import { embeddingsManager } from './embeddings.js';
 import { lookupOwn } from './keywordLookup.js';
 import { log } from './log.js';
 import { schemaManager } from './schemaManager.js';
-import { DEFAULT_HED_SCHEMA } from './schemaVersion.js';
+import { DEFAULT_HED_SCHEMA, resolveSchemaOption } from './schemaVersion.js';
 import { SEMANTIC_MAPPINGS } from './semanticMappings.js';
 
 export interface SuggestionOptions {
@@ -36,16 +36,19 @@ const DEFAULT_OPTIONS: SuggestionOptions = {
 };
 
 /**
- * Merge caller options over the defaults. An undefined or null field counts as absent, and so does
- * a blank schema. JSON clients may send null for a field they omit, and a null top would otherwise
- * return no suggestions.
+ * Merge caller options over the defaults. Every option the caller passes is kept, so a field added
+ * to SuggestionOptions later is not dropped. An undefined or null field counts as absent, and so
+ * does a blank schema; JSON clients may send null for a field they omit.
  */
-function withDefaults(options: Partial<SuggestionOptions>): SuggestionOptions {
+function withDefaults(options: Partial<SuggestionOptions> | null | undefined): SuggestionOptions {
+	const given = options ?? {};
 	return {
-		schema: options.schema?.trim() || DEFAULT_OPTIONS.schema,
-		top: options.top ?? DEFAULT_OPTIONS.top,
-		semantic: options.semantic ?? DEFAULT_OPTIONS.semantic,
-		queryFormat: options.queryFormat ?? undefined,
+		...DEFAULT_OPTIONS,
+		...given,
+		schema: resolveSchemaOption(given.schema, DEFAULT_OPTIONS.schema),
+		top: given.top ?? DEFAULT_OPTIONS.top,
+		semantic: given.semantic ?? DEFAULT_OPTIONS.semantic,
+		queryFormat: given.queryFormat ?? undefined,
 	};
 }
 
@@ -62,7 +65,7 @@ function withDefaults(options: Partial<SuggestionOptions>): SuggestionOptions {
  */
 export async function findSuggestions(
 	query: string,
-	options: Partial<SuggestionOptions> = {},
+	options: Partial<SuggestionOptions> | null = {},
 ): Promise<SuggestionResult> {
 	const opts = withDefaults(options);
 	const normalizedQuery = query.toLowerCase().trim();
@@ -122,7 +125,7 @@ export async function findSuggestions(
  */
 export async function suggestBatch(
 	queries: string[],
-	options: Partial<SuggestionOptions> = {},
+	options: Partial<SuggestionOptions> | null = {},
 ): Promise<Record<string, string[]>> {
 	const opts = withDefaults(options);
 

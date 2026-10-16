@@ -118,6 +118,21 @@ describe('language server over stdio', () => {
 			})) as Record<string, string[]>;
 			expect(byCurrent.modulator).toContain('sc:Modulator');
 
+			// A blank schema and a schema given as parts resolve the same way as the forms above.
+			const blankSchema = (await session.connection.sendRequest('hed/suggest', {
+				queries: ['modulator'],
+				schema: '  ',
+				top: 10,
+			})) as Record<string, string[]>;
+			expect(blankSchema.modulator).toContain('sc:Modulator');
+
+			const schemaParts = (await session.connection.sendRequest('hed/suggest', {
+				queries: ['modulator'],
+				schema: ['8.4.0', 'sc:score_2.1.0'],
+				top: 10,
+			})) as Record<string, string[]>;
+			expect(schemaParts.modulator).toContain('sc:Modulator');
+
 			expect(await stopServer(session)).toBe(0);
 		} finally {
 			session.child.kill();

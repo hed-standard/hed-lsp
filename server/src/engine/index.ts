@@ -8,7 +8,7 @@
  */
 
 import { schemaManager } from './schemaManager.js';
-import { DEFAULT_HED_SCHEMA } from './schemaVersion.js';
+import { DEFAULT_HED_SCHEMA, resolveSchemaOption } from './schemaVersion.js';
 import type { ValidationIssue } from './types.js';
 import { validateHedString } from './validation.js';
 
@@ -21,10 +21,11 @@ export { hasValidationErrors, validateHedString } from './validation.js';
 
 export interface ValidateOptions {
 	/**
-	 * Schema version to validate against: a base version (8.5.0) or a comma-separated list that
-	 * names libraries (8.4.0,sc:score_2.1.0). Omitted or blank means DEFAULT_HED_SCHEMA.
+	 * Schema version to validate against: a base version (8.5.0), a comma-separated list that names
+	 * libraries (8.4.0,sc:score_2.1.0), or an array of those parts. Omitted or blank means
+	 * DEFAULT_HED_SCHEMA.
 	 */
-	schema?: string;
+	schema?: string | string[];
 }
 
 /**
@@ -33,7 +34,7 @@ export interface ValidateOptions {
  * The schema is loaded by its version; the schema manager's current version is never
  * changed, so concurrent callers with different versions cannot affect one another.
  */
-export async function validate(hed: string, options: ValidateOptions = {}): Promise<ValidationIssue[]> {
-	const schemas = await schemaManager.getSchema(options.schema?.trim() || DEFAULT_HED_SCHEMA);
+export async function validate(hed: string, options?: ValidateOptions | null): Promise<ValidationIssue[]> {
+	const schemas = await schemaManager.getSchema(resolveSchemaOption(options?.schema, DEFAULT_HED_SCHEMA));
 	return validateHedString(hed, schemas);
 }

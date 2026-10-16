@@ -25,6 +25,7 @@ import { parseJsonForHedStrings } from './documentParser.js';
 import { embeddingsManager } from './engine/embeddings.js';
 import { setLogger } from './engine/log.js';
 import { schemaManager } from './engine/schemaManager.js';
+import { resolveSchemaOption } from './engine/schemaVersion.js';
 import { suggestBatch } from './engine/suggestionEngine.js';
 import { provideHover } from './hover.js';
 import { provideSemanticTokens, semanticTokensLegend } from './semanticTokens.js';
@@ -382,7 +383,7 @@ connection.onDefinition((params: TextDocumentPositionParams) => {
  */
 interface HedSuggestParams {
 	queries: string[];
-	schema?: string;
+	schema?: string | string[];
 	top?: number;
 	semantic?: boolean;
 }
@@ -394,7 +395,7 @@ connection.onRequest('hed/suggest', async (params: HedSuggestParams): Promise<Re
 	try {
 		// A request without a schema means the schema this server is configured for, not the engine default.
 		return await suggestBatch(params.queries, {
-			schema: params.schema?.trim() || schemaManager.getCurrentVersion(),
+			schema: resolveSchemaOption(params.schema, schemaManager.getCurrentVersion()),
 			top: params.top,
 			semantic: params.semantic,
 		});

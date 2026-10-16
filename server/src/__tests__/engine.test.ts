@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import * as engine from '../engine/index.js';
 import { log, setLogger } from '../engine/log.js';
 import { schemaManager } from '../engine/schemaManager.js';
+import { resolveSchemaOption } from '../engine/schemaVersion.js';
 import { validateHedString } from '../engine/validation.js';
 
 const samples = [
@@ -78,15 +79,18 @@ describe('engine.validate', () => {
 
 describe('suggestion options', () => {
 	it('treats undefined, null, and blank options as absent', async () => {
-		const omitted = await engine.suggestBatch(['red square'], {});
-		const undefinedValues = await engine.suggestBatch(['red square'], {
+		const queries = ['red square', 'modulator'];
+		const omitted = await engine.suggestBatch(queries, {});
+		const undefinedValues = await engine.suggestBatch(queries, {
 			schema: undefined,
 			top: undefined,
 			semantic: undefined,
 		});
-		// JSON clients send null, not undefined, for a field they leave out.
-		const jsonNulls = await engine.suggestBatch(['red square'], JSON.parse('{"schema":"","top":null,"semantic":null}'));
+		// JSON clients send null, not undefined, for a field they leave out. A blank schema must resolve
+		// to the default, which has no SCORE tags; the current schema has them, so 'modulator' tells them apart.
+		const jsonNulls = await engine.suggestBatch(queries, JSON.parse('{"schema":"  ","top":null,"semantic":null}'));
 
+		expect(omitted.modulator).toEqual([]);
 		expect(undefinedValues).toEqual(omitted);
 		expect(jsonNulls).toEqual(omitted);
 	});
@@ -95,6 +99,29 @@ describe('suggestion options', () => {
 		const omitted = await engine.suggestBatch(['red square'], {});
 
 		expect(omitted['red square']).toContain('Red-color');
+	});
+
+	it('accepts a schema given as an array of parts', async () => {
+		const parts = await engine.suggestBatch(['modulator'], JSON.parse('{"schema":["8.4.0","sc:score_2.1.0"]}'));
+
+		expect(parts.modulator).toContain('sc:Modulator');
+	});
+
+	it('accepts null options as absent', async () => {
+		const omitted = await engine.suggestBatch(['red square'], {});
+
+		expect(await engine.suggestBatch(['red square'], null)).toEqual(omitted);
+	});
+});
+
+describe('schema option resolution', () => {
+	it('joins arrays, and uses the fallback for missing, blank, and non-string values', () => {
+		expect(resolveSchemaOption(['8.4.0', 'sc:score_2.1.0'], 'fallback')).toBe('8.4.0,sc:score_2.1.0');
+		expect(resolveSchemaOption(' 8.4.0 ', 'fallback')).toBe('8.4.0');
+		expect(resolveSchemaOption('   ', 'fallback')).toBe('fallback');
+		expect(resolveSchemaOption(undefined, 'fallback')).toBe('fallback');
+		expect(resolveSchemaOption(null, 'fallback')).toBe('fallback');
+		expect(resolveSchemaOption(7, 'fallback')).toBe('fallback');
 	});
 });
 
