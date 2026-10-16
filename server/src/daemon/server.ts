@@ -931,6 +931,13 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		},
 	);
 	server.maxConnections = config.maxConnections;
+	// Node's socket timeout counts time without any read or write on a connection while a request is
+	// being handled, and closes the connection when it runs out. It is off by default, so a client that
+	// stops reading a response held its connection until the operating system gave up. It is set past
+	// the request timeout, because a request that waits its whole timeout in the semantic queue moves
+	// no bytes, and the daemon answers it with a 503 first. Between two requests on a kept-alive
+	// connection, KEEPALIVE_TIMEOUT_MS replaces it, so the keep-alive window is not shortened.
+	server.timeout = config.requestTimeoutMs + NODE_REQUEST_TIMEOUT_MARGIN_MS;
 	// The warm-up starts after the listeners of the caller have run, so a caller that announces the
 	// address, as the entry point does, announces it before the first semantic work begins.
 	server.on('listening', () => setImmediate(() => semantic.start()));

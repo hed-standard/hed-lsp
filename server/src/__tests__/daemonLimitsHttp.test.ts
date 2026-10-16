@@ -887,6 +887,8 @@ describe('the Node server settings', () => {
 		expect(daemon.server.requestTimeout).toBe(config.requestTimeoutMs + 5000);
 		expect(daemon.server.requestTimeout).toBe(7500);
 		expect(daemon.server.keepAliveTimeout).toBe(3500);
+		// The socket timeout, which ends a connection that moves no bytes, such as a client that stops reading.
+		expect(daemon.server.timeout).toBe(config.requestTimeoutMs + 5000);
 		expect(daemon.server.maxConnections).toBe(7);
 	});
 
