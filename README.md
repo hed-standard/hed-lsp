@@ -178,12 +178,12 @@ hed-lsp/
 │       └── extension.ts
 ├── server/              # LSP server implementation
 │   └── src/
+│       ├── engine/          # Pure engine (no LSP imports): validation, suggestions, schema, embeddings
 │       ├── server.ts        # LSP connection and handlers
 │       ├── cli.ts           # hed-suggest CLI tool
-│       ├── validation.ts    # HED validation
+│       ├── diagnostics.ts   # Validation to editor diagnostics
 │       ├── completion.ts    # Autocomplete provider
 │       ├── hover.ts         # Hover documentation
-│       ├── embeddings.ts    # Semantic search
 │       └── definitionProvider.ts
 ├── docs/                # Architecture documentation
 └── .github/             # CI/CD workflows
