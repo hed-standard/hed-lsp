@@ -9,7 +9,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ANCHOR_KEYWORDS } from './anchorKeywords.js';
-import { dataDir } from './dataPath.js';
+import { dataDir, EMBEDDING_FILES } from './dataPath.js';
 import {
 	DEFAULT_QUERY_FORMAT,
 	DTYPE,
@@ -221,13 +221,10 @@ class EmbeddingsManager {
 		if (this.embeddingsLoaded) return true;
 
 		try {
-			// Try compact version first (smaller file), then full version
+			// The compact version comes first in EMBEDDING_FILES (smaller file), then the full version
 			const dir = dataDir();
-			let embeddingsPath = path.join(dir, 'tag-embeddings.compact.json');
-			if (!fs.existsSync(embeddingsPath)) {
-				embeddingsPath = path.join(dir, 'tag-embeddings.json');
-			}
-			if (fs.existsSync(embeddingsPath)) {
+			const embeddingsPath = EMBEDDING_FILES.map((name) => path.join(dir, name)).find((file) => fs.existsSync(file));
+			if (embeddingsPath) {
 				const data = fs.readFileSync(embeddingsPath, 'utf-8');
 				const db: EmbeddingsDatabase = JSON.parse(data);
 
