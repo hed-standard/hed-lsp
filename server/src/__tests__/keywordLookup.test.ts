@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { provideCompletions } from '../completion.js';
+import { provideCompletions, staticMappingMatches } from '../completion.js';
 import { embeddingsManager } from '../embeddings.js';
 import { findSuggestions, suggestBatch } from '../suggestionEngine.js';
 
@@ -71,6 +71,23 @@ describe('embeddingsManager.findByKeyword against the shipped keyword data', () 
 		const tags = embeddingsManager.findByKeyword('  K-Complex ').map((match) => match.tag);
 
 		expect(tags).toEqual(['K-complex']);
+	});
+});
+
+describe('staticMappingMatches (completion fallback)', () => {
+	it.each(['constructor', '__proto__'])('returns no matches for %s', (query) => {
+		expect(staticMappingMatches(query)).toEqual([]);
+	});
+
+	it('returns the mapped tags with the fallback similarity', () => {
+		const matches = staticMappingMatches('house');
+
+		expect(matches.map((match) => match.tag)).toEqual(['Building', 'Residence', 'Structure']);
+		expect(matches.every((match) => match.similarity === 0.8)).toBe(true);
+	});
+
+	it('lowercases the query before matching', () => {
+		expect(staticMappingMatches('House').map((match) => match.tag)).toEqual(['Building', 'Residence', 'Structure']);
 	});
 });
 

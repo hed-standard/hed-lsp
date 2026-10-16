@@ -492,23 +492,23 @@ async function getSemanticSuggestions(query: string): Promise<SemanticMatch[]> {
 		console.log('[HED] Embedding search failed, falling back to static mappings');
 	}
 
-	// Fallback to static mappings
-	const lowerQuery = query.toLowerCase();
-	const mapped = lookupOwn(SEMANTIC_MAPPINGS, lowerQuery);
-	if (mapped) {
-		const results: SemanticMatch[] = [];
-		for (const tagName of mapped) {
-			results.push({
-				tag: tagName,
-				longForm: tagName,
-				prefix: '',
-				similarity: 0.8, // High similarity for static mappings
-			});
-		}
-		return results;
-	}
+	return staticMappingMatches(query);
+}
 
-	return [];
+/**
+ * Static keyword matches from SEMANTIC_MAPPINGS, used when embedding search fails.
+ */
+export function staticMappingMatches(query: string): SemanticMatch[] {
+	const mapped = lookupOwn(SEMANTIC_MAPPINGS, query.toLowerCase());
+	if (!mapped) {
+		return [];
+	}
+	return mapped.map((tagName) => ({
+		tag: tagName,
+		longForm: tagName,
+		prefix: '',
+		similarity: 0.8, // High similarity for static mappings
+	}));
 }
 
 /**
