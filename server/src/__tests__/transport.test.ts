@@ -133,6 +133,14 @@ describe('language server over stdio', () => {
 			})) as Record<string, string[]>;
 			expect(schemaParts.modulator).toContain('sc:Modulator');
 
+			// One query that cannot be answered is left out; the others still return (issue 60).
+			const withBadQuery = (await session.connection.sendRequest('hed/suggest', {
+				queries: ['red square', 42, 'modulator'],
+				top: 10,
+			})) as Record<string, string[]>;
+			expect(Object.keys(withBadQuery)).toEqual(['red square', 'modulator']);
+			expect(withBadQuery.modulator).toContain('sc:Modulator');
+
 			expect(await stopServer(session)).toBe(0);
 		} finally {
 			session.child.kill();

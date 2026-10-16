@@ -187,3 +187,36 @@ describe('suggestBatch result contract', () => {
 		expect(lines.filter((line) => line.startsWith('[HED Embeddings]'))).toEqual([]);
 	});
 });
+
+describe('suggestBatch with a failing query', () => {
+	const schema = '8.4.0,sc:score_2.1.0';
+
+	it('keeps the other queries and omits the one that failed', async () => {
+		const lines: string[] = [];
+		const previousSink = setLogger({ info: (message) => lines.push(message), error: (message) => lines.push(message) });
+		let output: Record<string, string[]>;
+		try {
+			// A number is not a valid query; JSON clients can send one.
+			output = await suggestBatch(['red square', 42, 'modulator'] as unknown as string[], { schema, top: 5 });
+		} finally {
+			setLogger(previousSink);
+		}
+
+		expect(Object.keys(output)).toEqual(['red square', 'modulator']);
+		expect(output['red square']).toContain('Red');
+		expect(output.modulator).toContain('sc:Modulator');
+		expect(lines.filter((line) => line.includes('Suggestions failed'))).toEqual([
+			expect.stringContaining('Suggestions failed for query 2 of 3'),
+		]);
+	});
+
+	it('still rejects when the schema cannot be loaded', async () => {
+		// The engine logs the failed load to stderr; keep that out of the test output.
+		const previousSink = setLogger({ info: () => {}, error: () => {} });
+		try {
+			await expect(suggestBatch(['red square'], { schema: '9.9.9' })).rejects.toThrow();
+		} finally {
+			setLogger(previousSink);
+		}
+	});
+});

@@ -122,6 +122,10 @@ export async function findSuggestions(
  * (when requested) initializing the embedding model once for the whole
  * batch. Returns a `{ query: [suggestion, ...] }` map matching the JSON
  * shape that `hed-suggest --json` emits today.
+ *
+ * A query that fails is logged and left out of the map, so the other queries still return: an
+ * absent key means the query failed, and an empty list means it found no matches. A failure that
+ * affects the whole request, such as a schema that cannot be loaded, still rejects.
  */
 export async function suggestBatch(
 	queries: string[],
@@ -141,9 +145,16 @@ export async function suggestBatch(
 	}
 
 	const entries: [string, string[]][] = [];
-	for (const query of queries) {
-		const result = await findSuggestions(query, opts);
-		entries.push([query, result.suggestions]);
+	for (const [index, query] of queries.entries()) {
+		try {
+			const result = await findSuggestions(query, opts);
+			entries.push([query, result.suggestions]);
+		} catch (error) {
+			// The position identifies the failing query, so the log line does not repeat the query text.
+			log.error(
+				`[HED] Suggestions failed for query ${index + 1} of ${queries.length}: ${error instanceof Error ? error.message : error}`,
+			);
+		}
 	}
 	// Object.fromEntries defines own properties, so a query named `__proto__` stays a key.
 	return Object.fromEntries(entries);
