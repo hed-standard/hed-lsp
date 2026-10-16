@@ -10,7 +10,7 @@
 	"scripts": {
 		"compile": "tsc -b",
 		"watch": "tsc -b -w",
-		"test": "vitest run",
+		"test": "tsc -b && vitest run",
 		"test:watch": "vitest"
 	},
 	"dependencies": {
