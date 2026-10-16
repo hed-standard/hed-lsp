@@ -9,7 +9,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { Schemas } from 'hed-validator';
 import { buildSchemasFromVersion } from 'hed-validator';
-import { DEFAULT_HED_SCHEMA } from './schemaVersion.js';
+import { DEFAULT_HED_SCHEMA, FALLBACK_HED_SCHEMA } from './schemaVersion.js';
 import type { HedTag, HedTagAttributes } from './types.js';
 
 /**
@@ -83,6 +83,17 @@ export class SchemaManager {
 			this.schemaCache.set(normalizedVersion, schemas);
 			return schemas;
 		} catch (error) {
+			if (normalizedVersion === DEFAULT_HED_SCHEMA) {
+				// The default is fetched from GitHub. Fall back to the schema bundled with hed-validator so
+				// validation keeps working offline; the warning is logged once, when the schema is first needed.
+				const reason = error instanceof Error ? error.message : String(error);
+				console.error(
+					`[HED] Could not load HED ${DEFAULT_HED_SCHEMA} (${reason}); using bundled ${FALLBACK_HED_SCHEMA}. Tags added in ${DEFAULT_HED_SCHEMA} are unavailable until it loads.`,
+				);
+				const fallback = await buildSchemasFromVersion(FALLBACK_HED_SCHEMA);
+				this.schemaCache.set(normalizedVersion, fallback);
+				return fallback;
+			}
 			console.error(`Failed to load HED schema ${normalizedVersion}:`, error);
 			throw error;
 		}

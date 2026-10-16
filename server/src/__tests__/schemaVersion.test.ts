@@ -7,7 +7,8 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_HED_SCHEMA, EMBEDDING_SCHEMA_VERSION } from '../schemaVersion.js';
+import { schemaManager } from '../schemaManager.js';
+import { DEFAULT_HED_SCHEMA, EMBEDDING_SCHEMA_VERSION, FALLBACK_HED_SCHEMA } from '../schemaVersion.js';
 
 /** Collects the `default` values of every property whose key mentions schemaVersion. */
 function schemaVersionDefaults(node: unknown, found: string[] = []): string[] {
@@ -29,6 +30,12 @@ describe('default HED schema', () => {
 		const json = JSON.parse(readFileSync(path.join(repoRoot, manifest), 'utf-8'));
 
 		expect(schemaVersionDefaults(json)).toEqual([DEFAULT_HED_SCHEMA]);
+	});
+
+	it('falls back to a schema bundled with hed-validator, which needs no network', async () => {
+		const schemas = await schemaManager.getSchema(FALLBACK_HED_SCHEMA);
+
+		expect(schemas).toBeDefined();
 	});
 
 	it('starts the embedding schema set from the default', () => {

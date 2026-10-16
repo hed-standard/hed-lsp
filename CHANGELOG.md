@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - The default HED schema is 8.5.0 (the `hed.schemaVersion` setting, the `hed-suggest` CLI, suggestions, and the embedding index). The version lives in one module, `server/src/schemaVersion.ts`.
+- The default schema is fetched from GitHub, because hed-validator 4.2.0 does not bundle 8.5.0. If the fetch fails, the server falls back to the bundled 8.4.0 and logs a warning, so validation works offline but lacks the 8.5.0 additions. Regenerating the embedding index and running the 8.5.0 contract tests need network access.
 - The embedding model settings (model id, quantization, pooling, normalization) live in one module shared by the runtime and the generator, and a contract test records which model repositories publish the same weights.
 
 ### Fixed

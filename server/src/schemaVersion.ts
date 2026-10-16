@@ -6,6 +6,12 @@
 export const DEFAULT_HED_SCHEMA = '8.5.0';
 
 /**
+ * Newest HED schema bundled inside hed-validator. The default is fetched from GitHub, so when that
+ * fetch fails the runtime falls back to this bundled schema and warns, keeping validation offline.
+ */
+export const FALLBACK_HED_SCHEMA = '8.4.0';
+
+/**
  * Schema set the embedding index and the anchor map are built against: the base
  * schema plus the libraries whose tags the index includes. Anchor targets must
  * resolve in this set, so extension names cannot become suggestions.
