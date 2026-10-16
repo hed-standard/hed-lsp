@@ -64,9 +64,9 @@ interface SlowClient {
  * Why `resume()` reads one byte at a time. A reset does not drop the data that the client's kernel
  * already holds, so the client reads that first and meets the reset after it. On Linux, libuv reads
  * the queue in buffers of 64 KB; when the last read does not fill its buffer and the poll event carries
- * POLLHUP, which a reset sets, libuv ends the stream at once without another read(), and the
+ * the hang-up flag, which a reset sets, libuv ends the stream at once without another read(), and the
  * ECONNRESET stays unread in the kernel. The client then gets a plain 'end' with no error, as for a clean
- * close (seen with strace on Node 22, and the same on Node 20; the RST itself is on the wire in tcpdump).
+ * close (seen with strace on Node 22, and the same on Node 20; the RST itself shows in a packet capture).
  * macOS has no such shortcut. A buffer of one byte is full for as long as any data is left, so the read
  * after the last byte is made on an empty queue and fails with ECONNRESET on both systems, while a
  * connection that was closed with a FIN still ends with 'end'. The reset is thereby told from a clean
