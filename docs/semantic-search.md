@@ -275,7 +275,7 @@ node server/out/eval/evalSemantic.js --split dev
 
 ### Pre-registered experiment: query instruction
 
-Three query formats were compared on the dev split (96 pairs): E0 raw, E1 Qwen's retrieval instruction, and E2 an HED-specific instruction. The gate required a variant to raise dev recall@10 by at least 2.0 points over E0. The test split was not read, because no variant cleared the gate.
+Three query formats were compared on the dev split (96 pairs): E0 raw, E1 Qwen's retrieval instruction, and E2 an HED-specific instruction. The gate required a variant to raise dev recall@10 by at least 2.0 points over E0; on the test split, the gate requires recall@10 and hit@10 not to drop below E0. The test split was not read, because no variant cleared the dev gate.
 
 Semantic-only results (`findSimilar`, top 10) on the default schema, with paired bootstrap 95% intervals against E0:
 
