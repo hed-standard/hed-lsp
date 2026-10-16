@@ -61,12 +61,12 @@ graph TB
 
 ### Components
 
-1. **Keyword Embeddings** (~180 curated terms)
+1. **Keyword Embeddings** (457 curated terms in `server/src/anchorKeywords.ts`)
    - Each keyword points to one or more HED tags
    - Examples: "marmoset" → [Animal, Animal-agent]
    - Acts as "anchors" that vote for tags
 
-2. **Tag Embeddings** (~2000 HED tags)
+2. **Tag Embeddings** (1,994 HED tags)
    - Direct embeddings of tag names
    - Used for similarity matching
 
@@ -173,11 +173,12 @@ const combinedScore = directSimilarity;
 
 ## Embedding Model
 
-- **Model**: Qwen3-Embedding-0.6B (ONNX quantized)
+- **Model**: Qwen3-Embedding-0.6B, `neuromechanist/Qwen3-Embedding-0.6B-ONNX-Q8` at `uint8`. The file is byte-identical to `onnx-community/Qwen3-Embedding-0.6B-ONNX` at `q8` (same SHA-256), so the shipped vectors and runtime queries use the same weights. Settings live in `server/src/embeddingConfig.ts`.
 - **Dimensions**: 1024
 - **Size**: ~600MB (downloaded on first use)
 - **Pooling**: Last token
 - **Normalization**: L2 normalized (cosine = dot product)
+- **Query format**: raw (the query as typed). Documents are embedded bare. See [Evaluation](#evaluation) for the query-instruction experiment.
 
 ## Pre-computed Embeddings
 
@@ -253,6 +254,34 @@ flowchart TD
 | Embedding search | ~50ms | Pre-computed vectors |
 | Model inference | ~200ms | Only when needed |
 | File loading | ~500ms | Once at startup |
+
+## Evaluation
+
+The eval set (`server/eval/hed-examples-pairs.json`) pairs 206 BIDS sidecar level descriptions with their HED strings from `hed-examples`. The expected tags are the leaf tags of each string, resolved with schema 8.4.0. The builder skips strings that fail validation under that schema, and skips strings with no leaf tags (for example, definition-only or label-only strings). Dev and test are split by dataset, so no dataset appears in both.
+
+Run it with `bun run compile`, then:
+
+```bash
+node server/out/eval/evalSemantic.js --split dev
+```
+
+### Pre-registered experiment: query instruction
+
+Three query formats were compared on the dev split (96 pairs): E0 raw, E1 Qwen's retrieval instruction, and E2 an HED-specific instruction. The gate required E1 or E2 to raise dev recall@10 by at least 2.0 points over E0. The test split was not read, because no variant cleared the gate.
+
+Semantic-only results (`findSimilar`, top 10), with paired bootstrap 95% intervals against E0:
+
+| Config | Query format | hit@10 | recall@10 | MRR | Recall@10 vs E0, points (95% CI) |
+|--------|--------------|--------|-----------|-----|----------------------------------|
+| E0 | raw | 32.3% | 16.2% | 0.181 | baseline |
+| E1 | Qwen instruction | 13.5% | 4.9% | 0.078 | -11.2 [-17.3, -5.3] |
+| E2 | HED instruction | 7.3% | 2.4% | 0.027 | -13.7 [-19.9, -8.0] |
+
+Queries with no semantic candidate at all (dev, 96 queries): E0 0, E1 41, E2 48. Mean candidates per query: E0 9.9, E1 2.7, E2 2.3.
+
+**Verdict:** neither instruction cleared the gate, so the runtime keeps the raw format and nothing in search behavior changed.
+
+**Confound:** the similarity thresholds (0.6 for keyword votes, 0.5 for direct tag matches) were calibrated on raw queries. Instruction formats shift the similarity scale down, so most candidates fall below the thresholds. This experiment therefore measures the instructions together with the fixed thresholds; it does not isolate the instruction alone. A fair comparison needs per-format thresholds calibrated on dev, which is a separate pre-registered experiment.
 
 ## Future Improvements
 
