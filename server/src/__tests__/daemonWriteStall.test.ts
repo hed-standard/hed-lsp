@@ -52,45 +52,72 @@ interface SlowClient {
 	expected(): number;
 	/** The code of the first error of the socket, such as ECONNRESET for a reset, or undefined if there was none. */
 	errorCode(): string | undefined;
-	/** Start reading again without pauses, as a client that was only slow. */
+	/**
+	 * Start reading again without pauses, as a client that was only slow. What is left is read one byte
+	 * at a time, so that a reset reaches the client as an error on Linux too: see `slowClient`.
+	 */
 	resume(): void;
 	closed: Promise<void>;
 }
 
+/**
+ * Why `resume()` reads one byte at a time. A reset does not drop the data that the client's kernel
+ * already holds, so the client reads that first and meets the reset after it. On Linux, libuv reads
+ * the queue in buffers of 64 KB; when the last read does not fill its buffer and the poll event carries
+ * POLLHUP, which a reset sets, libuv ends the stream at once without another read(), and the
+ * ECONNRESET stays unread in the kernel. The client then gets a plain 'end' with no error, as for a clean
+ * close (seen with strace on Node 22, and the same on Node 20; the RST itself is on the wire in tcpdump).
+ * macOS has no such shortcut. A buffer of one byte is full for as long as any data is left, so the read
+ * after the last byte is made on an empty queue and fails with ECONNRESET on both systems, while a
+ * connection that was closed with a FIN still ends with 'end'. The reset is thereby told from a clean
+ * close by the error the client reads. What is left to drain is the receive buffer of one connection.
+ */
 function slowClient(daemon: RunningDaemon, body: string, reading: Reading = {}): SlowClient {
-	const socket = net.connect(portOf(daemon), '127.0.0.1');
 	let firstDataAt = 0;
 	let received = 0;
 	let expected = 0;
 	let sinceBreak = 0;
 	let errorCode: string | undefined;
-	let stopped = !reading.paced;
+	let draining = false;
+	const bulk = Buffer.alloc(64 * 1024);
+	const single = Buffer.alloc(1);
+	const socket = net.connect({
+		port: portOf(daemon),
+		host: '127.0.0.1',
+		onread: {
+			buffer: () => (draining ? single : bulk),
+			callback: (size, chunk) => {
+				firstDataAt ||= Date.now();
+				received += size;
+				if (expected === 0) {
+					const text = Buffer.from(chunk.buffer, chunk.byteOffset, size).toString('latin1');
+					const length = /content-length: (\d+)/i.exec(text);
+					const headEnd = text.indexOf('\r\n\r\n');
+					if (length && headEnd !== -1) {
+						expected = headEnd + 4 + Number(length[1]);
+					}
+				}
+				if (draining) {
+					return true;
+				}
+				if (reading.paced) {
+					sinceBreak += size;
+					if (sinceBreak >= reading.paced.everyBytes) {
+						sinceBreak = 0;
+						setTimeout(() => socket.resume(), reading.paced.pauseMs);
+						return false;
+					}
+					return true;
+				}
+				// The default client reads the first data that arrives and no more.
+				return false;
+			},
+		},
+	});
 	// An RST or an error ends the connection too, so one promise covers both.
 	const closed = new Promise<void>((resolve) => socket.on('close', () => resolve()));
 	socket.on('error', (error: NodeJS.ErrnoException) => {
 		errorCode ??= error.code;
-	});
-	socket.on('data', (chunk: Buffer) => {
-		firstDataAt ||= Date.now();
-		received += chunk.length;
-		if (expected === 0) {
-			const text = chunk.toString('latin1');
-			const length = /content-length: (\d+)/i.exec(text);
-			const headEnd = text.indexOf('\r\n\r\n');
-			if (length && headEnd !== -1) {
-				expected = headEnd + 4 + Number(length[1]);
-			}
-		}
-		if (reading.paced) {
-			sinceBreak += chunk.length;
-			if (sinceBreak >= reading.paced.everyBytes) {
-				sinceBreak = 0;
-				socket.pause();
-				setTimeout(() => socket.resume(), reading.paced.pauseMs);
-			}
-		} else if (stopped) {
-			socket.pause();
-		}
 	});
 	socket.on('connect', () =>
 		socket.write(
@@ -104,7 +131,7 @@ function slowClient(daemon: RunningDaemon, body: string, reading: Reading = {}):
 		expected: () => expected,
 		errorCode: () => errorCode,
 		resume: () => {
-			stopped = false;
+			draining = true;
 			socket.resume();
 		},
 		closed,
