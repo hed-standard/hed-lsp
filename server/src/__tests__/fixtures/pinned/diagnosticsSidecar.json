@@ -1,0 +1,50 @@
+[
+  {
+    "severity": 1,
+    "code": "TAG_INVALID",
+    "message": "ERROR: [TAG_INVALID] Invalid tag - \"Not-a-real-tag-xyz\". Tag extensions must have a parent in the HED schema.  (For more information on this HED error, see https://hed-specification.readthedocs.io/en/latest/Appendix_B.html#tag-invalid.)",
+    "range": {
+      "start": {
+        "line": 14,
+        "character": 33
+      },
+      "end": {
+        "line": 14,
+        "character": 51
+      }
+    },
+    "source": "hed"
+  },
+  {
+    "severity": 1,
+    "code": "PARENTHESES_MISMATCH",
+    "message": "ERROR: [PARENTHESES_MISMATCH] Opening parenthesis at index 15 of string \"Sensory-event, (Red, Square\" does not have a corresponding closing parenthesis.  (For more information on this HED error, see https://hed-specification.readthedocs.io/en/latest/Appendix_B.html#parentheses-mismatch.)",
+    "range": {
+      "start": {
+        "line": 15,
+        "character": 32
+      },
+      "end": {
+        "line": 15,
+        "character": 33
+      }
+    },
+    "source": "hed"
+  },
+  {
+    "severity": 1,
+    "code": "TAG_INVALID",
+    "message": "ERROR: [TAG_INVALID] Tag has extra slash at index 20 of string \"Sensory-event, Label/\".  (For more information on this HED error, see https://hed-specification.readthedocs.io/en/latest/Appendix_B.html#tag-invalid.)",
+    "range": {
+      "start": {
+        "line": 16,
+        "character": 42
+      },
+      "end": {
+        "line": 16,
+        "character": 43
+      }
+    },
+    "source": "hed"
+  }
+]
