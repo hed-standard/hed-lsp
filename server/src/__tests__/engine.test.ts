@@ -1,7 +1,7 @@
 /**
- * Tests for the engine facade: `validate` returns the same issues as the lower-level
- * validator for the same schema, and it never changes the schema manager's current version.
- * Real schema and real validator; no mocks.
+ * Tests for the engine: the facade's `validate` (explicit schema versions, concurrent calls, and
+ * the current version left alone), suggestion option normalization, schema loading, and the
+ * logger. Real schemas and real processes; no mocks.
  */
 
 import { spawnSync } from 'node:child_process';

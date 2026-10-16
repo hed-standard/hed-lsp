@@ -1,9 +1,10 @@
 /**
  * HED engine: the public surface for validation, suggestions, and schema access.
  *
- * Inputs and outputs are plain JSON-compatible values, so one contract serves in-process
- * callers (the LSP server and the CLI), the daemon (Phase 4), and remote clients (Phase 6).
- * Nothing here imports the language server.
+ * Inputs and outputs are plain JSON-compatible values, so the same calls can serve in-process
+ * callers and, later, network clients. The language server and the CLI currently import the
+ * modules directly; this facade is the entry point for validation against an explicit schema
+ * version. Nothing here imports the language server.
  */
 
 import { schemaManager } from './schemaManager.js';

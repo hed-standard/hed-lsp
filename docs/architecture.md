@@ -58,7 +58,7 @@ sequenceDiagram
 
 ### Server Components
 
-The server is split into an engine and adapters. The engine (`server/src/engine/`) is pure: it has no language-server imports, and a boundary test enforces that. Adapters translate between the engine and an editor or a command line. Phase 4 adds a daemon adapter over the same engine.
+The server is split into an engine and adapters. The engine (`server/src/engine/`) is pure: it has no language-server imports, and a boundary test enforces that. Adapters translate between the engine and an editor or a command line. A daemon adapter over the same engine is planned.
 
 ```mermaid
 graph TB
@@ -69,27 +69,31 @@ graph TB
         E[cli.ts: hed-suggest]
     end
 
-    subgraph "Engine (src/engine)"
+    subgraph "Engine (server/src/engine)"
         F[index.ts: validate, suggestions, schema access]
         F --> G[validation.ts]
         F --> H[suggestionEngine.ts]
         H --> I[embeddings.ts]
         H --> J[schemaManager.ts]
-        G --> J
         I --> K[anchorKeywords.ts]
     end
 
     subgraph "External"
-        J --> L[hed-validator]
+        G --> L[hed-validator]
+        J --> L
         I --> M[transformers.js]
     end
 
+    A --> H
     B --> G
-    C --> H
+    B --> J
+    C --> I
+    C --> J
+    D --> J
     E --> H
 ```
 
-Engine log lines go to stderr by default, so the CLI JSON on stdout stays clean. The language server installs a sink that forwards them to the client.
+Engine log lines go to stderr by default, so the CLI JSON on stdout stays clean. The language server sends them to its console, which reaches the client under `--stdio` and stays on stdout under IPC.
 
 ### Data Flow for Validation
 

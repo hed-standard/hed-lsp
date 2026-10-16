@@ -13,10 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Semantic-search eval set of 206 description-to-HED pairs from `hed-examples`, with a harness that reports hit@10, recall@10, and MRR against the raw baseline. The query-instruction experiment ran on the dev split and was negative under fixed thresholds. The verdict is unchanged, but this release regenerates the index and cuts anchor targets, so search results change. See `docs/semantic-search.md`.
 
 ### Changed
-- The default HED schema is 8.5.0 (the `hed.schemaVersion` setting, the `hed-suggest` CLI, suggestions, and the embedding index). The version lives in one module, `server/src/schemaVersion.ts`.
-- The default schema is fetched from GitHub, because hed-validator 4.2.0 does not bundle 8.5.0. If the fetch fails, the server falls back to the bundled 8.4.0 and logs a warning, so validation works offline but lacks the 8.5.0 additions. Regenerating the embedding index and running the 8.5.0 contract tests need network access.
+- The default HED schema is 8.5.0 (the `hed.schemaVersion` setting, the `hed-suggest` CLI, suggestions, and the embedding index). The version lives in one module, `server/src/engine/schemaVersion.ts`.
+- The default schema is fetched from GitHub, because hed-validator 4.2.0 does not bundle 8.5.0. If the fetch fails, the server falls back to the bundled 8.4.0 and logs the reason, so validation works offline but lacks the 8.5.0 additions. Regenerating the embedding index and running the 8.5.0 contract tests need network access.
 - The embedding model settings (model id, quantization, pooling, normalization) live in one module shared by the runtime and the generator, and a contract test records which model repositories publish the same weights.
-- The embedding anchor keywords live in one file, `server/src/anchorKeywords.ts`.
+- The embedding anchor keywords live in one file, `server/src/engine/anchorKeywords.ts`.
   The generator imports that file instead of keeping its own copy. A new
   contract test fails when the shipped keyword embeddings drift from it.
 
@@ -28,10 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Completion on a HED value with either name and `hed-suggest` or `hed/suggest`
   with either name as a query now return normally.
 - `hed/suggest` batch results keep a query named `__proto__` as a key.
-- Suggestion requests that omit `top` now use the default of 10.
-  Before, the missing value overrode the default and skipped the schema search, so results were limited to the keyword matches.
+- Suggestion requests that omit `top`, or send `null` or a blank value for an option, now use the default.
+  Before, a missing `top` overrode the default and skipped the schema search, and a `null` `top` returned no results.
 - `hed-suggest --semantic --json` wrote engine log lines to stdout, mixed into its JSON output.
-  Engine logs now go to stderr, and the language server still sends them to its client.
+  Engine logs now go to stderr. The language server's console output is unchanged: it reaches the client under `--stdio` and stays on stdout under IPC.
+- Concurrent requests for a schema version that is not cached share one load. A failed load is not kept, so the next request retries it.
 
 ## [0.4.0] - 2026-05-21
 
