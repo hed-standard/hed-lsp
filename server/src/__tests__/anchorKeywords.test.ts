@@ -10,9 +10,9 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ANCHOR_KEYWORDS } from '../anchorKeywords.js';
-import { schemaManager } from '../schemaManager.js';
-import { EMBEDDING_SCHEMA_VERSION } from '../schemaVersion.js';
+import { ANCHOR_KEYWORDS } from '../engine/anchorKeywords.js';
+import { schemaManager } from '../engine/schemaManager.js';
+import { EMBEDDING_SCHEMA_VERSION } from '../engine/schemaVersion.js';
 
 interface ShippedKeyword {
 	keyword: string;

@@ -1,0 +1,4 @@
+onset	duration	trial_type	HED
+0.5	1.0	red	Sensory-event, Visual-presentation, (Red, Square)
+1.5	1.0	button	Agent-action, (Press, Keyboard-key)
+2.5	1.0	unknown	Sensory-event, Not-a-real-tag-xyz

@@ -1,0 +1,20 @@
+{
+  "trial_type": {
+    "LongName": "Trial type",
+    "Description": "Stimulus category shown on each trial",
+    "Levels": {
+      "red": "Red square presented",
+      "button": "Button press response",
+      "unknown": "Tag that is not in the schema",
+      "broken": "Unbalanced parentheses",
+      "placeholder": "Column placeholder"
+    },
+    "HED": {
+      "red": "Sensory-event, Visual-presentation, (Red, Square)",
+      "button": "Agent-action, (Press, Keyboard-key)",
+      "unknown": "Sensory-event, Not-a-real-tag-xyz",
+      "broken": "Sensory-event, (Red, Square",
+      "placeholder": "Sensory-event, Label/{column}"
+    }
+  }
+}

@@ -10,8 +10,9 @@
 import type { QueryFormat } from './embeddingConfig.js';
 import { embeddingsManager } from './embeddings.js';
 import { lookupOwn } from './keywordLookup.js';
+import { log } from './log.js';
 import { schemaManager } from './schemaManager.js';
-import { DEFAULT_HED_SCHEMA } from './schemaVersion.js';
+import { DEFAULT_HED_SCHEMA, resolveSchemaOption } from './schemaVersion.js';
 import { SEMANTIC_MAPPINGS } from './semanticMappings.js';
 
 export interface SuggestionOptions {
@@ -35,6 +36,23 @@ const DEFAULT_OPTIONS: SuggestionOptions = {
 };
 
 /**
+ * Merge caller options over the defaults. Every option the caller passes is kept, so a field added
+ * to SuggestionOptions later is not dropped. An undefined or null field counts as absent, and so
+ * does a blank schema; JSON clients may send null for a field they omit.
+ */
+function withDefaults(options: Partial<SuggestionOptions> | null | undefined): SuggestionOptions {
+	const given = options ?? {};
+	return {
+		...DEFAULT_OPTIONS,
+		...given,
+		schema: resolveSchemaOption(given.schema, DEFAULT_OPTIONS.schema),
+		top: given.top ?? DEFAULT_OPTIONS.top,
+		semantic: given.semantic ?? DEFAULT_OPTIONS.semantic,
+		queryFormat: given.queryFormat ?? undefined,
+	};
+}
+
+/**
  * Find suggestions for a single query using the cascade:
  *   1. keyword mappings (exact word match in SEMANTIC_MAPPINGS),
  *   2. schema substring search,
@@ -47,9 +65,9 @@ const DEFAULT_OPTIONS: SuggestionOptions = {
  */
 export async function findSuggestions(
 	query: string,
-	options: Partial<SuggestionOptions> = {},
+	options: Partial<SuggestionOptions> | null = {},
 ): Promise<SuggestionResult> {
-	const opts: SuggestionOptions = { ...DEFAULT_OPTIONS, ...options };
+	const opts = withDefaults(options);
 	const normalizedQuery = query.toLowerCase().trim();
 	const suggestions: string[] = [];
 	let source: 'keyword' | 'schema' | 'semantic' = 'schema';
@@ -72,7 +90,7 @@ export async function findSuggestions(
 				}
 			}
 		} catch (error) {
-			console.error(`Warning: Schema search failed: ${error instanceof Error ? error.message : error}`);
+			log.error(`Warning: Schema search failed: ${error instanceof Error ? error.message : error}`);
 		}
 	}
 
@@ -88,7 +106,7 @@ export async function findSuggestions(
 				}
 			}
 		} catch (error) {
-			console.error(`Warning: Semantic search failed: ${error instanceof Error ? error.message : error}`);
+			log.error(`Warning: Semantic search failed: ${error instanceof Error ? error.message : error}`);
 		}
 	}
 
@@ -107,9 +125,9 @@ export async function findSuggestions(
  */
 export async function suggestBatch(
 	queries: string[],
-	options: Partial<SuggestionOptions> = {},
+	options: Partial<SuggestionOptions> | null = {},
 ): Promise<Record<string, string[]>> {
-	const opts: SuggestionOptions = { ...DEFAULT_OPTIONS, ...options };
+	const opts = withDefaults(options);
 
 	if (queries.length === 0) {
 		return {};

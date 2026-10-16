@@ -17,3 +17,13 @@ export const FALLBACK_HED_SCHEMA = '8.4.0';
  * resolve in this set, so extension names cannot become suggestions.
  */
 export const EMBEDDING_SCHEMA_VERSION = `${DEFAULT_HED_SCHEMA},sc:score_2.1.0,la:lang_1.1.0`;
+
+/**
+ * Resolve a schema option from a caller to a version string. A string is used after trimming, and
+ * an array of parts is joined with commas, as dataset_description.json can give it. A blank,
+ * missing, or other value means the fallback.
+ */
+export function resolveSchemaOption(schema: unknown, fallback: string): string {
+	const text = Array.isArray(schema) ? schema.join(',') : schema;
+	return typeof text === 'string' && text.trim() ? text.trim() : fallback;
+}

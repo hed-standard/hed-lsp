@@ -6,7 +6,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { DEFAULT_HED_SCHEMA } from '../schemaVersion.js';
+import { DEFAULT_HED_SCHEMA } from '../engine/schemaVersion.js';
 
 /** Schema version used to resolve the expected tags. */
 export const EVAL_SCHEMA_VERSION = DEFAULT_HED_SCHEMA;

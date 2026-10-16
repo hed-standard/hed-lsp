@@ -4,8 +4,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { schemaManager } from '../engine/schemaManager.js';
 import { EVAL_SCHEMA_VERSION, loadEvalSet } from '../eval/evalSet.js';
-import { schemaManager } from '../schemaManager.js';
 
 const evalSet = loadEvalSet();
 

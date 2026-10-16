@@ -16,7 +16,7 @@ import {
 	MODEL_ID,
 	NORMALIZE,
 	POOLING,
-} from '../embeddingConfig.js';
+} from '../engine/embeddingConfig.js';
 
 function loadShippedModelId(): string {
 	const dataPath = path.join(__dirname, '..', '..', 'data', 'tag-embeddings.compact.json');

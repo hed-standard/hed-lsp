@@ -61,7 +61,7 @@ graph TB
 
 ### Components
 
-1. **Keyword Embeddings** (386 curated terms in `server/src/anchorKeywords.ts`)
+1. **Keyword Embeddings** (386 curated terms in `server/src/engine/anchorKeywords.ts`)
    - Each keyword points to one or more HED schema tags; extension words are not targets, because extensions are unbounded words rather than tags
    - Examples: "marmoset" → [Animal, Animal-agent]
    - Acts as "anchors" that vote for tags
@@ -173,7 +173,7 @@ const combinedScore = directSimilarity;
 
 ## Embedding Model
 
-- **Model**: Qwen3-Embedding-0.6B, `neuromechanist/Qwen3-Embedding-0.6B-ONNX-Q8` at `uint8`. The file is byte-identical to `onnx-community/Qwen3-Embedding-0.6B-ONNX` at `q8` (same SHA-256), so the shipped vectors and runtime queries use the same weights. Settings live in `server/src/embeddingConfig.ts`.
+- **Model**: Qwen3-Embedding-0.6B, `neuromechanist/Qwen3-Embedding-0.6B-ONNX-Q8` at `uint8`. The file is byte-identical to `onnx-community/Qwen3-Embedding-0.6B-ONNX` at `q8` (same SHA-256), so the shipped vectors and runtime queries use the same weights. Settings live in `server/src/engine/embeddingConfig.ts`.
 - **Dimensions**: 1024
 - **Size**: ~600MB (downloaded on first use)
 - **Pooling**: Last token

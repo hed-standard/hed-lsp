@@ -6,10 +6,10 @@
 import { type CompletionItem, CompletionItemKind, InsertTextFormat, type Position } from 'vscode-languageserver';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import { getContentOffset, getHedRegionAtPosition, getTagAtOffset, parseJsonForHedStrings } from './documentParser.js';
-import { embeddingsManager, type SemanticMatch } from './embeddings.js';
-import { lookupOwn } from './keywordLookup.js';
-import { schemaManager } from './schemaManager.js';
-import { SEMANTIC_MAPPINGS } from './semanticMappings.js';
+import { embeddingsManager, type SemanticMatch } from './engine/embeddings.js';
+import { lookupOwn } from './engine/keywordLookup.js';
+import { schemaManager } from './engine/schemaManager.js';
+import { SEMANTIC_MAPPINGS } from './engine/semanticMappings.js';
 import { getTsvHedRegionAtPosition, isTsvDocument, parseTsvForHedStrings } from './tsvParser.js';
 import type { HedRegion, HedTag } from './types.js';
 

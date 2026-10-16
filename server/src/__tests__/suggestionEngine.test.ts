@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { findSuggestions, suggestBatch } from '../suggestionEngine.js';
+import { findSuggestions, suggestBatch } from '../engine/suggestionEngine.js';
 
 describe('findSuggestions', () => {
 	it('returns a non-empty list for a canonical color query', async () => {

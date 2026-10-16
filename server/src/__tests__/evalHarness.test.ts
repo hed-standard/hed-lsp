@@ -4,13 +4,13 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import type { QueryFormat } from '../embeddingConfig.js';
+import type { QueryFormat } from '../engine/embeddingConfig.js';
+import { schemaManager } from '../engine/schemaManager.js';
+import { DEFAULT_HED_SCHEMA } from '../engine/schemaVersion.js';
 import { expectedTags } from '../eval/buildEvalSet.js';
 import { type ConfigRun, report } from '../eval/evalSemantic.js';
 import { loadEvalSet } from '../eval/evalSet.js';
 import { bootstrapMeanDifference, type RankScore } from '../eval/metrics.js';
-import { schemaManager } from '../schemaManager.js';
-import { DEFAULT_HED_SCHEMA } from '../schemaVersion.js';
 
 describe('expectedTags', () => {
 	it('keeps the leaf tags and drops value tags', async () => {

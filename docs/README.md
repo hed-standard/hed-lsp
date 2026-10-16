@@ -69,11 +69,20 @@ graph TB
 |------|---------|
 | `server.ts` | LSP connection, request routing |
 | `completion.ts` | Autocomplete provider |
-| `validation.ts` | HED string validation |
+| `diagnostics.ts` | Document diagnostics, mapped from engine validation |
 | `hover.ts` | Hover information provider |
+| `documentParser.ts` | JSON parsing for HED strings |
+
+### Engine (`server/src/engine/`)
+
+| File | Purpose |
+|------|---------|
+| `index.ts` | Public surface: `validate`, suggestions, schema access |
+| `validation.ts` | HED string validation, free of language-server types |
 | `schemaManager.ts` | Schema loading and caching |
 | `embeddings.ts` | Semantic search with dual-embedding |
-| `documentParser.ts` | JSON parsing for HED strings |
+| `suggestionEngine.ts` | Suggestion cascade shared by the server, CLI, and eval tooling |
+| `log.ts` | Engine logger, stderr by default |
 
 ### Client (`client/src/`)
 

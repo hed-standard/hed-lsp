@@ -9,8 +9,8 @@
 import { describe, expect, it } from 'vitest';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { provideCompletions, staticMappingMatches } from '../completion.js';
-import { embeddingsManager } from '../embeddings.js';
-import { findSuggestions, suggestBatch } from '../suggestionEngine.js';
+import { embeddingsManager } from '../engine/embeddings.js';
+import { findSuggestions, suggestBatch } from '../engine/suggestionEngine.js';
 
 // Only `constructor` and `__proto__` reproduce the inherited-member bug. The lookups
 // lowercase the query first, so `toString`, `valueOf`, and `hasOwnProperty` never reach

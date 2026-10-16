@@ -4,7 +4,7 @@ This guide explains how to extend the HED-LSP system with new keywords, improve 
 
 ## Adding New Keywords
 
-Keywords are the primary way to improve semantic search. Add them in one file, `server/src/anchorKeywords.ts`, which exports `ANCHOR_KEYWORDS`. That map feeds both the exact-match index and the embedding anchors, and the generator imports the same file, so there is no second copy to keep in sync.
+Keywords are the primary way to improve semantic search. Add them in one file, `server/src/engine/anchorKeywords.ts`, which exports `ANCHOR_KEYWORDS`. That map feeds both the exact-match index and the embedding anchors, and the generator imports the same file, so there is no second copy to keep in sync.
 
 ```typescript
 export const ANCHOR_KEYWORDS: Record<string, string[]> = {
@@ -33,13 +33,13 @@ cd server && bun run test
 
 ### Suggestion Mappings (Separate Map)
 
-`SEMANTIC_MAPPINGS` in `server/src/semanticMappings.ts` drives the keyword stage of `hed-suggest` and the `hed/suggest` request, and the static completion fallback. Its targets differ from the anchor map on purpose, so do not copy entries between the two files.
+`SEMANTIC_MAPPINGS` in `server/src/engine/semanticMappings.ts` drives the keyword stage of `hed-suggest` and the `hed/suggest` request, and the static completion fallback. Its targets differ from the anchor map on purpose, so do not copy entries between the two files.
 
 ## Workflow for Adding Keywords
 
 ```mermaid
 flowchart TD
-    A[Identify missing term] --> B[Add to server/src/anchorKeywords.ts]
+    A[Identify missing term] --> B[Add to server/src/engine/anchorKeywords.ts]
     B --> C[bun run server/scripts/generateEmbeddings.ts]
     C --> D[bun run compile, then cd server and bun run test]
     D --> E[Test in VS Code]
@@ -84,7 +84,7 @@ Create a test script:
 
 ```typescript
 // test-keywords.ts
-import { embeddingsManager } from './server/src/embeddings';
+import { embeddingsManager } from './server/src/engine/embeddings';
 
 async function test(query: string) {
   const results = await embeddingsManager.findSimilar(query, 5);
@@ -129,7 +129,7 @@ Search the HED schema with the HED online tools: https://hedtools.org or browse 
 
 ### Step 3: Add to the Anchor File
 
-Add the entries to `ANCHOR_KEYWORDS` in `server/src/anchorKeywords.ts`. The generator imports that file, so the same entries drive both exact matching and embedding generation.
+Add the entries to `ANCHOR_KEYWORDS` in `server/src/engine/anchorKeywords.ts`. The generator imports that file, so the same entries drive both exact matching and embedding generation.
 
 ```typescript
 // =====================
@@ -153,7 +153,7 @@ cd server && bun run test
 
 ## Adjusting Search Parameters
 
-In `server/src/embeddings.ts`, you can tune:
+In `server/src/engine/embeddings.ts`, you can tune:
 
 ```typescript
 // Minimum similarity to consider a keyword match
@@ -172,7 +172,7 @@ To support additional HED schemas or library schemas:
 
 ### Step 1: Update Schema Loading
 
-In `server/src/schemaVersion.ts`, extend the embedding schema set. The generator and the anchor contract test both read it:
+In `server/src/engine/schemaVersion.ts`, extend the embedding schema set. The generator and the anchor contract test both read it:
 ```typescript
 export const EMBEDDING_SCHEMA_VERSION = `${DEFAULT_HED_SCHEMA},sc:score_2.1.0,la:lang_1.1.0,my:mylib_1.0.0`;
 ```
@@ -190,7 +190,7 @@ The generator automatically includes all tags from all loaded schemas.
 ### Check if keyword exists
 
 ```typescript
-import { embeddingsManager } from './server/src/embeddings';
+import { embeddingsManager } from './server/src/engine/embeddings';
 
 // findByKeyword returns nothing until the tag data is loaded
 await embeddingsManager.loadEmbeddings();
@@ -208,7 +208,7 @@ console.log('Embedding dimensions:', embedding?.length);
 
 ### Enable debug logging
 
-In `server/src/embeddings.ts`, add logging:
+In `server/src/engine/embeddings.ts`, add logging:
 ```typescript
 async findSimilar(query: string, topK: number = 10) {
   console.log(`[DEBUG] Searching for: ${query}`);

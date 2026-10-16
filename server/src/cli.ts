@@ -10,8 +10,8 @@
  *   hed-suggest --schema 8.5.0 --top 5 "response"
  */
 
-import { DEFAULT_HED_SCHEMA } from './schemaVersion.js';
-import { type SuggestionOptions, suggestBatch } from './suggestionEngine.js';
+import { DEFAULT_HED_SCHEMA } from './engine/schemaVersion.js';
+import { type SuggestionOptions, suggestBatch } from './engine/suggestionEngine.js';
 
 interface CliOptions extends SuggestionOptions {
 	json: boolean;

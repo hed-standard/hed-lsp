@@ -58,35 +58,46 @@ sequenceDiagram
 
 ### Server Components
 
+The server is split into an engine and adapters. The engine (`server/src/engine/`) is pure: it has no language-server imports, and a boundary test enforces that. Adapters translate between the engine and an editor or a command line. A daemon adapter over the same engine is planned.
+
 ```mermaid
 graph TB
-    subgraph "server.ts"
-        A[Connection] --> B[Documents]
-        B --> C[onDidChangeContent]
-        B --> D[onCompletion]
-        B --> E[onHover]
+    subgraph "Adapters"
+        A[server.ts: LSP connection] --> B[diagnostics.ts]
+        A --> C[completion.ts]
+        A --> D[hover.ts]
+        E[cli.ts: hed-suggest]
     end
 
-    subgraph "Core Modules"
-        C --> F[validation.ts]
-        D --> G[completion.ts]
-        E --> H[hover.ts]
-    end
-
-    subgraph "Support Modules"
-        F --> I[schemaManager.ts]
-        G --> I
-        G --> J[embeddings.ts]
-        H --> I
-
-        I --> K[documentParser.ts]
+    subgraph "Engine (server/src/engine)"
+        F[index.ts: validate, suggestions, schema access]
+        F --> G[validation.ts]
+        F --> H[suggestionEngine.ts]
+        H --> I[embeddings.ts]
+        H --> J[schemaManager.ts]
+        I --> K[anchorKeywords.ts]
     end
 
     subgraph "External"
-        I --> L[hed-validator]
-        J --> M[transformers.js]
+        G --> L[hed-validator]
+        J --> L
+        I --> M[transformers.js]
     end
+
+    A --> H
+    A --> I
+    A --> J
+    B --> G
+    B --> J
+    C --> I
+    C --> J
+    D --> J
+    E --> H
+    F --> I
+    F --> J
 ```
+
+Engine log lines go to stderr by default, so the CLI JSON on stdout stays clean. The language server sends them to its console, one string per message. Under `--stdio` the client receives them as log messages; under IPC, info lines go to stdout and error lines go to stderr.
 
 ### Data Flow for Validation
 
@@ -153,14 +164,19 @@ hed-lsp/
 │
 ├── server/                 # Language server
 │   ├── src/
+│   │   ├── engine/         # Pure engine: no language-server imports
+│   │   │   ├── index.ts    # Facade: validate, suggestions, schema access
+│   │   │   ├── validation.ts # HED validation (pure)
+│   │   │   ├── suggestionEngine.ts # Suggestion cascade
+│   │   │   ├── schemaManager.ts # Schema loading
+│   │   │   ├── embeddings.ts # Semantic search
+│   │   │   └── log.ts      # Engine logging (stderr by default)
 │   │   ├── server.ts       # LSP connection & routing
-│   │   ├── completion.ts   # Autocomplete logic
-│   │   ├── validation.ts   # HED validation
-│   │   ├── hover.ts        # Hover information
-│   │   ├── schemaManager.ts # Schema loading
-│   │   ├── embeddings.ts   # Semantic search
+│   │   ├── completion.ts   # Autocomplete logic (adapter)
+│   │   ├── diagnostics.ts  # Validation to LSP diagnostics (adapter)
+│   │   ├── hover.ts        # Hover information (adapter)
 │   │   ├── documentParser.ts # JSON parsing
-│   │   └── types.ts        # Shared types
+│   │   └── types.ts        # LSP types and the re-exported engine types
 │   ├── data/
 │   │   └── tag-embeddings.compact.json
 │   ├── scripts/
