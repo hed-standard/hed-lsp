@@ -583,10 +583,10 @@ class EmbeddingsManager {
 	 * Delete the cached model to free up disk space.
 	 * Returns true if deletion was successful.
 	 */
-	async deleteCache(): Promise<boolean> {
+	async deleteCache(cacheDir: string = this.getCacheDir()): Promise<boolean> {
 		try {
-			const cacheDir = this.getCacheDir();
-			const modelDir = path.join(cacheDir, `models--${this.config.modelId.replace('/', '--')}`);
+			// Same layout isModelCached checks: <cacheDir>/<org>/<name>.
+			const modelDir = path.join(cacheDir, ...this.config.modelId.split('/'));
 
 			if (fs.existsSync(modelDir)) {
 				fs.rmSync(modelDir, { recursive: true, force: true });
@@ -596,7 +596,7 @@ class EmbeddingsManager {
 				return true;
 			}
 			console.log('[HED Embeddings] No cache to delete');
-			return true;
+			return false;
 		} catch (error) {
 			console.error('[HED Embeddings] Failed to delete cache:', error);
 			return false;
