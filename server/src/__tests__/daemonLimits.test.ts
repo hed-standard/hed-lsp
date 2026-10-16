@@ -209,6 +209,33 @@ describe('cancellation', () => {
 		await expect(abortable(Promise.resolve(1), controller.signal)).rejects.toBeInstanceOf(WorkCancelled);
 	});
 
+	it('leaves no unhandled rejection when the promise of an aborted wait fails later', async () => {
+		const unhandled: unknown[] = [];
+		const onUnhandled = (reason: unknown): void => {
+			unhandled.push(reason);
+		};
+		process.on('unhandledRejection', onUnhandled);
+		try {
+			const controller = new AbortController();
+			controller.abort();
+			let failLater!: (error: Error) => void;
+			const late = new Promise<string>((_, reject) => {
+				failLater = reject;
+			});
+
+			// The wait is refused at once, and then the promise it was given fails with nobody waiting.
+			await expect(abortable(late, controller.signal)).rejects.toBeInstanceOf(WorkCancelled);
+			failLater(new Error('failed after the abort'));
+			// Node reports an unhandled rejection once the microtasks and the next turn of the loop have run.
+			await new Promise((resolve) => setImmediate(resolve));
+			await new Promise((resolve) => setImmediate(resolve));
+
+			expect(unhandled).toEqual([]);
+		} finally {
+			process.off('unhandledRejection', onUnhandled);
+		}
+	});
+
 	it('stops waiting when a real timer aborts the signal', async () => {
 		const never = new Promise<void>(() => undefined);
 

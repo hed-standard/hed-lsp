@@ -310,6 +310,8 @@ export function throwIfCancelled(signal: AbortSignal): void {
  */
 export function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 	if (signal.aborted) {
+		// Nobody will wait for the promise now, so if it rejects later it must not count as unhandled.
+		promise.catch(() => undefined);
 		return Promise.reject(new WorkCancelled());
 	}
 	return new Promise<T>((resolve, reject) => {
