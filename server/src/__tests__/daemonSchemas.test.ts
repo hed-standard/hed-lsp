@@ -132,6 +132,58 @@ describe('SchemaRegistry.resolve', () => {
 	});
 });
 
+describe('SchemaRegistry.resolve and long specs', () => {
+	const schemas = registry();
+	const padded = (length: number): string => BUNDLED.padEnd(length, ' ');
+
+	it('accepts a string of exactly 256 characters and refuses one of 257, without parsing it', () => {
+		// Parsed, the 257 padded characters would be the allowlisted 8.4.0; parsed, a string of commas would be
+		// blank and mean the default. Both are refused, so the length is checked first.
+		expect(schemas.resolve(padded(256))).toBe(BUNDLED);
+		for (const value of [padded(257), ','.repeat(257), ` ${','.repeat(256)}`]) {
+			const error = thrown(() => schemas.resolve(value));
+
+			expect(error.code, `${value.length} characters`).toBe('UNKNOWN_SCHEMA');
+			expect(error.status).toBe(400);
+			expect(error.options.details).toEqual({ allowed: [BUNDLED, BUNDLED_WITH_LIBRARIES] });
+		}
+	});
+
+	it('counts an array by its parts joined with commas', () => {
+		// 5 + 1 + 250 = 256 characters joined.
+		expect(schemas.resolve([BUNDLED, ' '.repeat(250)])).toBe(BUNDLED);
+		expect(thrown(() => schemas.resolve([BUNDLED, ' '.repeat(251)])).code).toBe('UNKNOWN_SCHEMA');
+		expect(thrown(() => schemas.resolve(Array.from({ length: 258 }, () => ''))).code).toBe('UNKNOWN_SCHEMA');
+		expect(schemas.resolve(Array.from({ length: 257 }, () => ''))).toBe(BUNDLED);
+	});
+
+	it('never joins or reads a long array as a whole, so parsing does not run', () => {
+		// parseSchemaSpec joins an array of strings; this one counts the joins.
+		class Counting extends Array<string> {
+			joins = 0;
+			override join(separator?: string): string {
+				this.joins++;
+				return super.join(separator);
+			}
+		}
+		const long = new Counting();
+		long.push('a'.repeat(200), 'b'.repeat(200));
+		const short = new Counting();
+		short.push(BUNDLED);
+
+		expect(thrown(() => schemas.resolve(long)).code).toBe('UNKNOWN_SCHEMA');
+		expect(long.joins).toBe(0);
+		expect(schemas.resolve(short)).toBe(BUNDLED);
+		expect(short.joins).toBe(1);
+	});
+
+	it('leaves the wrong type to the type check, however long the array is', () => {
+		expect(thrown(() => schemas.resolve([1, 'a'.repeat(300)])).code).toBe('INVALID_REQUEST');
+		expect(thrown(() => schemas.resolve([...Array.from({ length: 1000 }, () => 'a'), 5])).code).toBe('UNKNOWN_SCHEMA');
+		expect(thrown(() => schemas.resolve({ length: 1000 })).code).toBe('INVALID_REQUEST');
+	});
+});
+
 describe('SchemaRegistry with the real engine', () => {
 	it('preloads the allowlist and reports each spec as loaded with the version used', async () => {
 		const schemas = registry();

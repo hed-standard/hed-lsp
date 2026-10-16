@@ -103,6 +103,40 @@ export const DEFAULT_MAX_STRING_CHARS = 4096;
 /** The shortest `MAX_ISSUE_MESSAGE_CHARS`: room for one character and the "..." that marks a cut. */
 export const MIN_ISSUE_MESSAGE_CHARS = 4;
 
+/**
+ * The longest schema spec a request may name, in characters, and the longest allowlist entry. The
+ * longest default entry is 34. Parsing a spec splits and sorts its parts, which costs time in
+ * proportion to its length, so a spec past this is refused without being parsed.
+ */
+export const MAX_SCHEMA_SPEC_CHARS = 256;
+
+/**
+ * Whether a `schema` value is longer than MAX_SCHEMA_SPEC_CHARS: for a string, its length; for an
+ * array of strings, the length of its parts joined by commas. It reads each length once, stops as
+ * soon as the total passes the limit, and never joins, splits, or trims anything. A value of any
+ * other kind, or an array that holds something besides strings, is not long: it is refused later
+ * as the wrong type.
+ */
+export function schemaSpecTooLong(value: unknown): boolean {
+	if (typeof value === 'string') {
+		return value.length > MAX_SCHEMA_SPEC_CHARS;
+	}
+	if (!Array.isArray(value)) {
+		return false;
+	}
+	let joined = -1;
+	for (const part of value) {
+		if (typeof part !== 'string') {
+			return false;
+		}
+		joined += part.length + 1;
+		if (joined > MAX_SCHEMA_SPEC_CHARS) {
+			return true;
+		}
+	}
+	return false;
+}
+
 /** A schema spec read from a string or an array of strings. */
 export type ParsedSpec =
 	| { kind: 'blank' }
@@ -255,6 +289,12 @@ function readSchemas(env: Env): { schemas: string[]; defaultSchema: string } {
 	const entries = rawList === undefined ? [...DEFAULT_SCHEMAS] : rawList.split(';');
 	const schemas = new Map<string, string>();
 	for (const entry of entries) {
+		if (schemaSpecTooLong(entry)) {
+			return fail(
+				'SCHEMAS',
+				`has an entry longer than ${MAX_SCHEMA_SPEC_CHARS} characters, which no request could name`,
+			);
+		}
 		const parsed = parseSchemaSpec(entry);
 		if (parsed.kind === 'blank') {
 			continue;

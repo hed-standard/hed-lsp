@@ -219,6 +219,7 @@ describe('loadConfig failures', () => {
 		['SCHEMAS', '8.4.0;8.4.0'],
 		['SCHEMAS', '8.4.0,sc:score_2.1.0;sc:score_2.1.0,8.4.0'],
 		['SCHEMAS', '8.4.0,8.4.0'],
+		['SCHEMAS', `8.4.0${' '.repeat(252)}`],
 		['DEFAULT_SCHEMA', '8.3.1'],
 		['DEFAULT_SCHEMA', ''],
 		['SCHEMA_LOAD_TIMEOUT_MS', '0'],

@@ -625,6 +625,25 @@ describe('POST /v1/validate schemas', () => {
 		}
 	});
 
+	it('answers UNKNOWN_SCHEMA for a schema longer than 256 characters, a string or an array, and accepts 256', async () => {
+		const wide = (length: number): string => BUNDLED.padEnd(length, ' ');
+		const refused = [wide(257), ','.repeat(300_000), Array.from({ length: 100_000 }, () => 'a')];
+
+		for (const schema of refused) {
+			const reply = await postJson(shared.url, '/v1/validate', { strings: [VALID], schema });
+
+			expect(reply.status).toBe(400);
+			expect(reply.json.error.code).toBe('UNKNOWN_SCHEMA');
+			expect(reply.json.error.details).toEqual({ allowed: [BUNDLED, BUNDLED_WITH_LIBRARIES] });
+		}
+		const suggest = await postJson(shared.url, '/v1/suggest', { queries: ['red'], schema: wide(257) });
+		const at = await postJson(shared.url, '/v1/validate', { strings: [VALID], schema: wide(256) });
+
+		expect(suggest.json.error.code).toBe('UNKNOWN_SCHEMA');
+		expect(at.status).toBe(200);
+		expect(at.json.schema).toEqual({ requested: BUNDLED, used: BUNDLED });
+	});
+
 	it('answers INVALID_REQUEST when the schema is not a string or an array of strings', async () => {
 		for (const schema of [5, true, {}, [1], ['8.4.0', null]]) {
 			const reply = await postJson(shared.url, '/v1/validate', { strings: [VALID], schema });

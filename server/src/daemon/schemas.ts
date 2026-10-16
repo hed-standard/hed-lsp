@@ -6,7 +6,7 @@
  */
 
 import { schemaVersionUsed } from '../engine/index.js';
-import { type DaemonConfig, parseSchemaSpec } from './config.js';
+import { type DaemonConfig, parseSchemaSpec, schemaSpecTooLong } from './config.js';
 import { errorDetail, type Logger } from './log.js';
 import { ApiError, type SchemaListing, type SchemaStatus } from './protocol.js';
 
@@ -90,6 +90,11 @@ export class SchemaRegistry {
 	 * spec outside the allowlist is an unknown schema.
 	 */
 	resolve(value: unknown): string {
+		// A spec longer than any allowlist entry is unknown whatever it holds, and it is refused before
+		// it is parsed, because parsing costs time in proportion to its length.
+		if (schemaSpecTooLong(value)) {
+			throw this.unknownSchema();
+		}
 		const parsed = parseSchemaSpec(value);
 		if (parsed.kind === 'blank') {
 			return this.defaultSpec;
@@ -103,7 +108,11 @@ export class SchemaRegistry {
 				return spec;
 			}
 		}
-		throw new ApiError('UNKNOWN_SCHEMA', 'schema is not one of the allowed schemas', {
+		throw this.unknownSchema();
+	}
+
+	private unknownSchema(): ApiError {
+		return new ApiError('UNKNOWN_SCHEMA', 'schema is not one of the allowed schemas', {
 			details: { allowed: this.allowed() },
 		});
 	}
