@@ -8,6 +8,7 @@
  */
 
 import { embeddingsManager } from './embeddings.js';
+import { lookupOwn } from './keywordLookup.js';
 import { schemaManager } from './schemaManager.js';
 import { SEMANTIC_MAPPINGS } from './semanticMappings.js';
 
@@ -51,8 +52,9 @@ export async function findSuggestions(
 
 	const words = normalizedQuery.split(/\s+/);
 	for (const word of words) {
-		if (SEMANTIC_MAPPINGS[word]) {
-			suggestions.push(...SEMANTIC_MAPPINGS[word]);
+		const mapped = lookupOwn(SEMANTIC_MAPPINGS, word);
+		if (mapped) {
+			suggestions.push(...mapped);
 			source = 'keyword';
 		}
 	}
@@ -116,10 +118,11 @@ export async function suggestBatch(
 		await embeddingsManager.initializeModel();
 	}
 
-	const output: Record<string, string[]> = {};
+	const entries: [string, string[]][] = [];
 	for (const query of queries) {
 		const result = await findSuggestions(query, opts);
-		output[query] = result.suggestions;
+		entries.push([query, result.suggestions]);
 	}
-	return output;
+	// Object.fromEntries defines own properties, so a query named `__proto__` stays a key.
+	return Object.fromEntries(entries);
 }

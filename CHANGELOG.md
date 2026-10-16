@@ -5,6 +5,19 @@ All notable changes to the HED Language Support extension will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Suggestion lookups no longer throw for the queries `constructor` or `__proto__`.
+  Completion on a HED value with either name and `hed-suggest` or `hed/suggest`
+  with either name as a query now return normally.
+- `hed/suggest` batch results keep a query named `__proto__` as a key.
+
+### Changed
+- The embedding anchor keywords live in one file, `server/src/anchorKeywords.ts`.
+  The generator imports that file instead of keeping its own copy. A new
+  contract test fails when the shipped keyword embeddings drift from it.
+
 ## [0.4.0] - 2026-05-21
 
 ### Added
