@@ -165,13 +165,28 @@ export interface SchemaUsed {
 export interface ValidateIssue {
 	code: string;
 	level: 'error' | 'warning';
+	/** Cut to `MAX_ISSUE_MESSAGE_CHARS` characters, ending with "...", when it is longer. */
 	message: string;
 	bounds?: [number, number];
 }
 
-export type ValidateResult =
-	| { index: number; valid: boolean; issues: ValidateIssue[] }
-	| { index: number; error: ItemError };
+/**
+ * The outcome for one string. `valid` means no issue with level `error` among all the issues the
+ * engine found, not only the ones returned. `issues` holds the first `MAX_ISSUES_PER_STRING` in the
+ * engine's order, with long messages cut, and fewer when the response has used up its
+ * `MAX_ISSUE_TEXT_CHARS` of message text: an item after that point has `issues: []`. `issueCount` is
+ * the true number of issues found, and `truncated` is true when an issue was left out or a message
+ * was cut. Both are always present.
+ */
+export interface ValidateItem {
+	index: number;
+	valid: boolean;
+	issues: ValidateIssue[];
+	issueCount: number;
+	truncated: boolean;
+}
+
+export type ValidateResult = ValidateItem | { index: number; error: ItemError };
 
 export interface ValidateResponse {
 	apiVersion: typeof API_VERSION;

@@ -40,7 +40,17 @@ export interface DaemonConfig {
 	schemaLoadTimeoutMs: number;
 	maxBodyBytes: number;
 	maxStrings: number;
+	/** The longest string a validate item may hold; a longer one is refused as INVALID_STRING. */
 	maxStringChars: number;
+	/** The most issues one validate item returns, in engine order; its `issueCount` stays the true total. */
+	maxIssuesPerString: number;
+	/** The longest issue message returned; a longer one is cut and ends with "...". */
+	maxIssueMessageChars: number;
+	/**
+	 * The message characters one validate response may carry in all. Items are filled in order; once
+	 * the total is spent, each later item keeps `valid` and `issueCount` and returns no issues.
+	 */
+	maxIssueTextChars: number;
 	maxQueries: number;
 	maxSemanticQueries: number;
 	maxQueryChars: number;
@@ -81,6 +91,17 @@ export const DEFAULT_SCHEMA = '8.5.0';
 
 /** Trusted proxies when `HED_LSP_TRUSTED_PROXIES` is unset: the local machine. */
 export const DEFAULT_TRUSTED_PROXIES: readonly string[] = ['127.0.0.1', '::1'];
+
+/**
+ * The default `MAX_STRING_CHARS`. A string of n open parentheses gives about n + 2 issues, and each
+ * message quotes the string, so the answer grows with n squared: 4096 characters make 18 MB of JSON
+ * before the issue and message limits, 16384 would make about 280 MB. The longest string in the
+ * evaluation set is 381 characters, so this leaves a tenfold margin.
+ */
+export const DEFAULT_MAX_STRING_CHARS = 4096;
+
+/** The shortest `MAX_ISSUE_MESSAGE_CHARS`: room for one character and the "..." that marks a cut. */
+export const MIN_ISSUE_MESSAGE_CHARS = 4;
 
 /** A schema spec read from a string or an array of strings. */
 export type ParsedSpec =
@@ -290,7 +311,10 @@ export function loadConfig(env: Env = process.env): DaemonConfig {
 		schemaLoadTimeoutMs: readInt(env, 'SCHEMA_LOAD_TIMEOUT_MS', 60_000, 1, MAX_INT),
 		maxBodyBytes: readInt(env, 'MAX_BODY_BYTES', 524_288, 1, MAX_INT),
 		maxStrings: readInt(env, 'MAX_STRINGS', 100, 1, MAX_INT),
-		maxStringChars: readInt(env, 'MAX_STRING_CHARS', 16_384, 1, MAX_INT),
+		maxStringChars: readInt(env, 'MAX_STRING_CHARS', DEFAULT_MAX_STRING_CHARS, 1, MAX_INT),
+		maxIssuesPerString: readInt(env, 'MAX_ISSUES_PER_STRING', 100, 1, MAX_INT),
+		maxIssueMessageChars: readInt(env, 'MAX_ISSUE_MESSAGE_CHARS', 1024, MIN_ISSUE_MESSAGE_CHARS, MAX_INT),
+		maxIssueTextChars: readInt(env, 'MAX_ISSUE_TEXT_CHARS', 1_048_576, 1, MAX_INT),
 		maxQueries: readInt(env, 'MAX_QUERIES', 50, 1, MAX_INT),
 		maxSemanticQueries: readInt(env, 'MAX_SEMANTIC_QUERIES', 20, 1, MAX_INT),
 		maxQueryChars: readInt(env, 'MAX_QUERY_CHARS', 512, 1, MAX_INT),

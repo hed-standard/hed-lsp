@@ -7,17 +7,24 @@
 
 import * as crypto from 'node:crypto';
 import * as http from 'node:http';
-import { setLogger } from '../engine/index.js';
-import { type DaemonConfig, readPackageVersion } from './config.js';
+import { TextDecoder } from 'node:util';
+import { setLogger, type ValidationIssue, validate } from '../engine/index.js';
+import { type DaemonConfig, MIN_ISSUE_MESSAGE_CHARS, readPackageVersion } from './config.js';
 import { createLogger, engineSink, errorDetail, type LineWriter, type Logger } from './log.js';
 import {
 	API_VERSION,
 	ApiError,
+	assertKnownFields,
 	CORS_HEADERS,
 	errorBody,
 	type HealthResponse,
 	type HealthStatus,
+	isPlainObject,
 	type SchemasResponse,
+	type ValidateIssue,
+	type ValidateItem,
+	type ValidateResponse,
+	type ValidateResult,
 } from './protocol.js';
 import { SchemaRegistry } from './schemas.js';
 import { SemanticService } from './semantic.js';
@@ -113,7 +120,261 @@ export function failureReply(error: unknown, requestId: string, logger: Logger):
 	return { status: apiError.status, body: errorBody(requestId, apiError), headers, code: apiError.code };
 }
 
+/** How one item that failed unexpectedly is reported: the log line, and the message the client sees. */
+export interface ItemFailureText {
+	log: string;
+	message: string;
+}
+
+export const VALIDATION_FAILED: ItemFailureText = {
+	log: 'validation failed for one string',
+	message: 'validation failed',
+};
+
+/**
+ * The error for one batch item that failed unexpectedly, inside a response that is still a 200.
+ * The log names the item by its position and keeps the error's type and stack frames; the error's
+ * message can quote the item, so neither the log nor the client gets it.
+ */
+export function itemFailure(
+	logger: Logger,
+	requestId: string,
+	index: number,
+	error: unknown,
+	text: ItemFailureText,
+): { code: 'INTERNAL_ERROR'; message: string } {
+	logger.error(text.log, { requestId, index, ...errorDetail(error) });
+	return { code: 'INTERNAL_ERROR', message: text.message };
+}
+
 const MAX_LOGGED_PATH = 120;
+
+/** The client closed the connection before the request was complete; there is nobody to answer. */
+class ClientAborted extends Error {
+	constructor() {
+		super('the client closed the connection');
+		this.name = 'ClientAborted';
+	}
+}
+
+/** Let other requests and timers run, so a long batch does not hold the event loop. */
+function yieldToEventLoop(): Promise<void> {
+	return new Promise((resolve) => setImmediate(resolve));
+}
+
+/**
+ * Require a JSON body: the media type must be application/json, and a charset parameter, if any,
+ * must be UTF-8, because the body is decoded as UTF-8.
+ */
+function checkContentType(header: string | undefined): void {
+	const unsupported = new ApiError('UNSUPPORTED_MEDIA_TYPE', 'Content-Type must be application/json');
+	if (header === undefined) {
+		throw unsupported;
+	}
+	const [type, ...params] = header.split(';');
+	if (type.trim().toLowerCase() !== 'application/json') {
+		throw unsupported;
+	}
+	for (const param of params) {
+		const equals = param.indexOf('=');
+		if (equals !== -1 && param.slice(0, equals).trim().toLowerCase() === 'charset') {
+			const charset = param
+				.slice(equals + 1)
+				.trim()
+				.replace(/^"|"$/g, '')
+				.toLowerCase();
+			if (charset !== 'utf-8') {
+				throw unsupported;
+			}
+		}
+	}
+}
+
+/**
+ * How much of a refused body is still read and thrown away, as a multiple of the body limit, so
+ * the client can finish sending and read the 413. Closing a socket that holds unread data resets
+ * the connection, and the client may then never see the response. A client whose body keeps
+ * arriving past the bound is cut off. The bound follows the configuration: 2 MiB by default.
+ */
+export const DISCARD_FACTOR = 4;
+
+/** The bytes of a refused body that are read and discarded before the connection is cut. */
+export function discardLimitBytes(maxBodyBytes: number): number {
+	return DISCARD_FACTOR * maxBodyBytes;
+}
+
+/**
+ * Read and drop the rest of a refused body. `alreadyRead` counts the bytes consumed before the
+ * refusal, so `discardLimit` bounds the whole body, not only what comes after the refusal.
+ */
+function discardRest(req: http.IncomingMessage, discardLimit: number, alreadyRead: number, onCutoff: () => void): void {
+	let discarded = alreadyRead;
+	req.on('data', (chunk: Buffer) => {
+		discarded += chunk.length;
+		if (discarded > discardLimit && !req.destroyed) {
+			onCutoff();
+			req.destroy();
+		}
+	});
+	req.resume();
+}
+
+/**
+ * Read the request body, refusing more than `limit` bytes: by Content-Length before reading a
+ * byte, and by counting while streaming for a body that declares no length or lies about it.
+ * Nothing past the limit is kept; the rest is discarded as it arrives, until the body as a whole
+ * passes `discardLimit` bytes and the connection is cut.
+ */
+function readBody(
+	req: http.IncomingMessage,
+	limit: number,
+	discardLimit: number,
+	onCutoff: () => void,
+): Promise<Buffer> {
+	const tooLarge = (): ApiError =>
+		new ApiError('PAYLOAD_TOO_LARGE', `the request body is larger than ${limit} bytes`, {
+			details: { maxBytes: limit },
+		});
+	const declared = req.headers['content-length'];
+	if (declared !== undefined && /^\d+$/.test(declared) && Number(declared) > limit) {
+		discardRest(req, discardLimit, 0, onCutoff);
+		return Promise.reject(tooLarge());
+	}
+	return new Promise((resolve, reject) => {
+		const chunks: Buffer[] = [];
+		let size = 0;
+		let finished = false;
+		const settle = (action: () => void): void => {
+			if (finished) {
+				return;
+			}
+			finished = true;
+			req.off('data', onData);
+			req.off('end', onEnd);
+			req.off('error', onError);
+			req.off('close', onClose);
+			action();
+		};
+		const onData = (chunk: Buffer): void => {
+			size += chunk.length;
+			if (size > limit) {
+				settle(() => {
+					discardRest(req, discardLimit, size, onCutoff);
+					reject(tooLarge());
+				});
+				return;
+			}
+			chunks.push(chunk);
+		};
+		const onEnd = (): void => settle(() => resolve(Buffer.concat(chunks, size)));
+		const onError = (): void => settle(() => reject(new ClientAborted()));
+		const onClose = (): void => settle(() => reject(new ClientAborted()));
+		req.on('data', onData);
+		req.on('end', onEnd);
+		req.on('error', onError);
+		req.on('close', onClose);
+	});
+}
+
+/** The body of a POST as a JSON object, after the media type, size, and syntax checks. */
+async function readJsonObject(
+	req: http.IncomingMessage,
+	limit: number,
+	discardLimit: number,
+	onCutoff: () => void,
+): Promise<Record<string, unknown>> {
+	checkContentType(req.headers['content-type']);
+	const raw = await readBody(req, limit, discardLimit, onCutoff);
+	let value: unknown;
+	try {
+		value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw));
+	} catch {
+		// The parser's message can quote the body, so the client gets a fixed one.
+		throw new ApiError('INVALID_JSON', 'the request body is not valid JSON in UTF-8');
+	}
+	if (!isPlainObject(value)) {
+		throw new ApiError('INVALID_REQUEST', 'the request body must be a JSON object');
+	}
+	return value;
+}
+
+/** Ends a message that was cut. */
+const CUT_MARK = '...';
+
+/**
+ * A message of at most `max` characters, counting the mark: a longer one is cut and ends with
+ * "...". The cut never leaves half of a surrogate pair, which JSON cannot carry as text.
+ */
+export function cutMessage(message: string, max: number): string {
+	if (message.length <= max) {
+		return message;
+	}
+	let end = Math.max(0, max - CUT_MARK.length);
+	const last = message.charCodeAt(end - 1);
+	if (end > 0 && last >= 0xd800 && last <= 0xdbff) {
+		end--;
+	}
+	return message.slice(0, end) + CUT_MARK;
+}
+
+function toIssue(issue: ValidationIssue, maxMessageChars: number): ValidateIssue {
+	const mapped: ValidateIssue = {
+		code: issue.hedCode,
+		level: issue.level,
+		message: cutMessage(issue.message, maxMessageChars),
+	};
+	if (issue.bounds) {
+		mapped.bounds = [issue.bounds[0], issue.bounds[1]];
+	}
+	return mapped;
+}
+
+/**
+ * The message characters a validate response may still carry, shared by its items, which are filled
+ * in order. Only message text spends it: an item with no issues costs nothing.
+ */
+export interface TextBudget {
+	remaining: number;
+}
+
+/**
+ * The item for one validated string. A string of n open parentheses gives about n + 2 issues that
+ * each quote the string, so what is returned is bounded: the first `maxIssuesPerString` issues in
+ * engine order, with long messages cut, and no more message text than the response's `budget` has
+ * left. The issue whose message crosses the budget keeps as much of it as is left, when that is
+ * enough for a cut message, and the budget is then spent: nothing after it is kept, in this item or
+ * a later one. `valid` and `issueCount` describe every issue found, and `truncated` says whether
+ * an issue was left out or a message was cut.
+ */
+export function validateItem(
+	index: number,
+	issues: ValidationIssue[],
+	limits: Pick<DaemonConfig, 'maxIssuesPerString' | 'maxIssueMessageChars'>,
+	budget: TextBudget = { remaining: Number.POSITIVE_INFINITY },
+): ValidateItem {
+	const kept: ValidateIssue[] = [];
+	for (const issue of issues.slice(0, limits.maxIssuesPerString)) {
+		const mapped = toIssue(issue, limits.maxIssueMessageChars);
+		if (mapped.message.length > budget.remaining) {
+			if (budget.remaining >= MIN_ISSUE_MESSAGE_CHARS) {
+				mapped.message = cutMessage(mapped.message, budget.remaining);
+				kept.push(mapped);
+			}
+			budget.remaining = 0;
+			break;
+		}
+		budget.remaining -= mapped.message.length;
+		kept.push(mapped);
+	}
+	const messageCut = kept.some((issue, i) => issue.message.length !== issues[i].message.length);
+	return {
+		index,
+		valid: !issues.some((issue) => issue.level === 'error'),
+		issues: kept,
+		issueCount: issues.length,
+		truncated: issues.length > kept.length || messageCut,
+	};
+}
 
 export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}): Daemon {
 	const logger = createLogger(options.write);
@@ -156,9 +417,61 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		return { status: 200, body };
 	}
 
+	/** The JSON object body of a POST, within MAX_BODY_BYTES. */
+	function readBodyOf(req: http.IncomingMessage, ctx: RequestContext): Promise<Record<string, unknown>> {
+		return readJsonObject(req, config.maxBodyBytes, discardLimitBytes(config.maxBodyBytes), () =>
+			logger.warn('connection closed because a refused body kept arriving', { requestId: ctx.id }),
+		);
+	}
+
+	async function validateStrings(req: http.IncomingMessage, ctx: RequestContext): Promise<Reply> {
+		const body = await readBodyOf(req, ctx);
+		assertKnownFields(body, ['strings', 'schema']);
+		const { strings } = body;
+		if (!Array.isArray(strings)) {
+			throw new ApiError('INVALID_REQUEST', 'strings must be an array');
+		}
+		ctx.items = strings.length;
+		if (strings.length > config.maxStrings) {
+			throw new ApiError('BATCH_TOO_LARGE', `strings holds at most ${config.maxStrings} items`, {
+				details: { field: 'strings', max: config.maxStrings },
+			});
+		}
+		const spec = registry.resolve(body.schema);
+		const used = await registry.ensure(spec);
+		ctx.schemaUsed = used;
+
+		const results: ValidateResult[] = [];
+		// One budget of message text for the whole response, spent by the items in order.
+		const budget: TextBudget = { remaining: config.maxIssueTextChars };
+		for (const [index, value] of strings.entries()) {
+			if (index > 0) {
+				await yieldToEventLoop();
+			}
+			if (typeof value !== 'string' || value.length > config.maxStringChars) {
+				results.push({
+					index,
+					error: {
+						code: 'INVALID_STRING',
+						message: `must be a string of at most ${config.maxStringChars} characters`,
+					},
+				});
+				continue;
+			}
+			try {
+				results.push(validateItem(index, await validate(value, { schema: spec }), config, budget));
+			} catch (error) {
+				results.push({ index, error: itemFailure(logger, ctx.id, index, error, VALIDATION_FAILED) });
+			}
+		}
+		const response: ValidateResponse = { apiVersion: API_VERSION, schema: { requested: spec, used }, results };
+		return { status: 200, body: response };
+	}
+
 	const routes = new Map<string, Route>([
 		['/v1/health', { methods: ['GET'], gated: false, handler: health }],
 		['/v1/schemas', { methods: ['GET'], gated: true, handler: schemas }],
+		['/v1/validate', { methods: ['POST'], gated: true, handler: validateStrings }],
 	]);
 
 	function allowHeader(route: Route): string {
@@ -235,6 +548,10 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		try {
 			reply = await dispatch(req, ctx);
 		} catch (error) {
+			if (error instanceof ClientAborted) {
+				// Nobody is left to answer; the close handler logs the request as aborted.
+				return;
+			}
 			reply = replyToFailure(error, ctx);
 		}
 		if (res.destroyed || res.headersSent) {

@@ -47,7 +47,10 @@ describe('loadConfig defaults', () => {
 			schemaLoadTimeoutMs: 60000,
 			maxBodyBytes: 524288,
 			maxStrings: 100,
-			maxStringChars: 16384,
+			maxStringChars: 4096,
+			maxIssuesPerString: 100,
+			maxIssueMessageChars: 1024,
+			maxIssueTextChars: 1048576,
 			maxQueries: 50,
 			maxSemanticQueries: 20,
 			maxQueryChars: 512,
@@ -110,6 +113,9 @@ describe('loadConfig overrides', () => {
 			HED_LSP_MAX_BODY_BYTES: '1000',
 			HED_LSP_MAX_STRINGS: '2',
 			HED_LSP_MAX_STRING_CHARS: '30',
+			HED_LSP_MAX_ISSUES_PER_STRING: '5',
+			HED_LSP_MAX_ISSUE_MESSAGE_CHARS: '40',
+			HED_LSP_MAX_ISSUE_TEXT_CHARS: '5000',
 			HED_LSP_MAX_QUERIES: '3',
 			HED_LSP_MAX_SEMANTIC_QUERIES: '2',
 			HED_LSP_MAX_QUERY_CHARS: '40',
@@ -143,6 +149,9 @@ describe('loadConfig overrides', () => {
 			maxBodyBytes: 1000,
 			maxStrings: 2,
 			maxStringChars: 30,
+			maxIssuesPerString: 5,
+			maxIssueMessageChars: 40,
+			maxIssueTextChars: 5000,
 			maxQueries: 3,
 			maxSemanticQueries: 2,
 			maxQueryChars: 40,
@@ -167,6 +176,13 @@ describe('loadConfig overrides', () => {
 	it('accepts true and false for the flags, in any case', () => {
 		expect(loadConfig({ HED_LSP_SEMANTIC: 'TRUE' }).semantic).toBe(true);
 		expect(loadConfig({ HED_LSP_MODEL_DOWNLOAD: 'False' }).modelDownload).toBe(false);
+	});
+
+	it('lets HED_LSP_MAX_STRING_CHARS raise the default of 4096, and accepts the shortest message and text limits', () => {
+		expect(loadConfig({ HED_LSP_MAX_STRING_CHARS: '16384' }).maxStringChars).toBe(16384);
+		expect(loadConfig({ HED_LSP_MAX_ISSUE_MESSAGE_CHARS: '4' }).maxIssueMessageChars).toBe(4);
+		expect(loadConfig({ HED_LSP_MAX_ISSUE_TEXT_CHARS: '1' }).maxIssueTextChars).toBe(1);
+		expect(loadConfig({ HED_LSP_MAX_ISSUES_PER_STRING: '1' }).maxIssuesPerString).toBe(1);
 	});
 
 	it('treats an empty trusted-proxy list as trusting nobody, and a blank commit as unknown', () => {
@@ -208,6 +224,12 @@ describe('loadConfig failures', () => {
 		['MAX_BODY_BYTES', '0'],
 		['MAX_STRINGS', '-5'],
 		['MAX_STRING_CHARS', 'x'],
+		['MAX_ISSUES_PER_STRING', '0'],
+		['MAX_ISSUES_PER_STRING', 'many'],
+		['MAX_ISSUE_MESSAGE_CHARS', '3'],
+		['MAX_ISSUE_MESSAGE_CHARS', '0'],
+		['MAX_ISSUE_TEXT_CHARS', '0'],
+		['MAX_ISSUE_TEXT_CHARS', 'lots'],
 		['MAX_QUERIES', '0'],
 		['MAX_SEMANTIC_QUERIES', '0'],
 		['MAX_QUERY_CHARS', '0'],

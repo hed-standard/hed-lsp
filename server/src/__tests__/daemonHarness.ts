@@ -117,11 +117,15 @@ export async function withNetworkFailure<T>(
 export interface Reply {
 	status: number;
 	headers: http.IncomingHttpHeaders;
+	/** The local port of the connection the response arrived on, to tell whether it was reused. */
+	localPort: number | undefined;
 	text: string;
 	json: any;
 }
 
 export interface CallOptions {
+	/** A keep-alive agent, to reuse a connection across calls. Each call uses its own connection by default. */
+	agent?: http.Agent;
 	method?: string;
 	headers?: Record<string, string>;
 	/** A string or buffer is sent whole; an array is sent as separate chunks with chunked encoding. */
@@ -141,7 +145,7 @@ export function call(base: string, path: string, options: CallOptions = {}): Pro
 			headers['Content-Length'] ??= String(Buffer.byteLength(body));
 		}
 		const chunks: Buffer[] = [];
-		let head: { status: number; headers: http.IncomingHttpHeaders } | undefined;
+		let head: { status: number; headers: http.IncomingHttpHeaders; localPort: number | undefined } | undefined;
 		let done = false;
 		const finish = (): void => {
 			if (done || !head) {
@@ -155,15 +159,19 @@ export function call(base: string, path: string, options: CallOptions = {}): Pro
 			} catch {
 				json = undefined;
 			}
-			resolve({ status: head.status, headers: head.headers, text, json });
+			resolve({ status: head.status, headers: head.headers, localPort: head.localPort, text, json });
 		};
-		const req = http.request(`${base}${path}`, { method: options.method ?? 'GET', headers, agent: false }, (res) => {
-			head = { status: res.statusCode ?? 0, headers: res.headers };
-			res.on('data', (chunk: Buffer) => chunks.push(chunk));
-			res.on('end', finish);
-			res.on('close', finish);
-			res.on('error', finish);
-		});
+		const req = http.request(
+			`${base}${path}`,
+			{ method: options.method ?? 'GET', headers, agent: options.agent ?? false },
+			(res) => {
+				head = { status: res.statusCode ?? 0, headers: res.headers, localPort: res.socket?.localPort };
+				res.on('data', (chunk: Buffer) => chunks.push(chunk));
+				res.on('end', finish);
+				res.on('close', finish);
+				res.on('error', finish);
+			},
+		);
 		req.on('error', (error) => {
 			if (head) {
 				finish();
