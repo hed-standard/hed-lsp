@@ -4,66 +4,50 @@ This guide explains how to extend the HED-LSP system with new keywords, improve 
 
 ## Adding New Keywords
 
-Keywords are the primary way to improve semantic search. There are two places to add them:
-
-### 1. Deterministic Index (Instant Lookup)
-
-Edit `server/src/embeddings.ts` and add entries to `KEYWORD_INDEX`:
+Keywords are the primary way to improve semantic search. Add them in one file, `server/src/anchorKeywords.ts`, which exports `ANCHOR_KEYWORDS`. That map feeds both the exact-match index and the embedding anchors, and the generator imports the same file, so there is no second copy to keep in sync.
 
 ```typescript
-const KEYWORD_INDEX: Record<string, string[]> = {
+export const ANCHOR_KEYWORDS: Record<string, string[]> = {
   // Existing entries...
 
   // Add your new keywords here:
   'optogenetics': ['Measurement-event', 'Experimental-stimulus'],
-  'calcium imaging': ['Measurement-event', 'Data-feature'],
-  'patch clamp': ['Measurement-event'],
+  'calcium-imaging': ['Measurement-event', 'Data-feature'],
+  'patch-clamp': ['Measurement-event'],
 };
 ```
 
 **Guidelines:**
-- Use lowercase keys
+- Use lowercase keys; write multi-word keys with hyphens (`calcium-imaging`). Queries with spaces also match hyphenated keys.
 - Map to existing HED tags only
 - Multiple tags are allowed (most specific first)
-- Rebuild after changes: `bun run compile`
 
-### 2. Embedding Index (Semantic Similarity)
-
-Edit `server/scripts/generateEmbeddings.ts` and add to its `KEYWORD_INDEX`:
-
-```typescript
-const KEYWORD_INDEX: Record<string, string[]> = {
-  // Add keywords for embedding generation
-  'optogenetics': ['Measurement-event', 'Experimental-stimulus'],
-  'calcium': ['Measurement-event', 'Data-feature'],
-  'voltage': ['Data-feature', 'Measurement-event'],
-};
-```
-
-Then regenerate embeddings:
+Then regenerate the shipped embeddings and run the tests:
 ```bash
 bun run server/scripts/generateEmbeddings.ts
+bun run compile
+cd server && bun run test
 ```
+
+`server/src/__tests__/anchorKeywords.test.ts` fails until the shipped embeddings match the file, so a missed regeneration is caught by the test suite.
+
+### Suggestion Mappings (Separate Map)
+
+`SEMANTIC_MAPPINGS` in `server/src/semanticMappings.ts` drives the keyword stage of `hed-suggest` and the `hed/suggest` request, and the static completion fallback. Its targets differ from the anchor map on purpose, so do not copy entries between the two files.
 
 ## Workflow for Adding Keywords
 
 ```mermaid
 flowchart TD
-    A[Identify missing term] --> B{Common exact term?}
+    A[Identify missing term] --> B[Add to server/src/anchorKeywords.ts]
+    B --> C[bun run server/scripts/generateEmbeddings.ts]
+    C --> D[bun run compile and cd server && bun run test]
+    D --> E[Test in VS Code]
 
-    B -->|Yes| C[Add to embeddings.ts KEYWORD_INDEX]
-    B -->|No| D[Add to generateEmbeddings.ts]
-
-    C --> E[bun run compile]
-    D --> F[bun run server/scripts/generateEmbeddings.ts]
-
-    E --> G[Test in VS Code]
-    F --> G
-
-    G --> H{Works correctly?}
-    H -->|Yes| I[Done]
-    H -->|No| J[Adjust mappings]
-    J --> B
+    E --> F{Works correctly?}
+    F -->|Yes| G[Done]
+    F -->|No| H[Adjust mappings]
+    H --> B
 ```
 
 ## Choosing Target Tags
@@ -148,10 +132,11 @@ grep -i "your-term" server/data/HEDLatest.json
 
 Or use the HED online tools: https://hedtools.org or browse at https://www.hedtags.org
 
-### Step 3: Add to Both Files
+### Step 3: Add to the Anchor File
+
+Add the entries to `ANCHOR_KEYWORDS` in `server/src/anchorKeywords.ts`. The generator imports that file, so the same entries drive both exact matching and embedding generation.
 
 ```typescript
-// In embeddings.ts - for exact matching
 // =====================
 // SLEEP RESEARCH (new category)
 // =====================
@@ -160,16 +145,14 @@ Or use the HED online tools: https://hedtools.org or browse at https://www.hedta
 'slow-wave': ['Asleep', 'Data-feature'],
 'spindle': ['Data-feature'],
 'k-complex': ['Data-feature'],
-
-// In generateEmbeddings.ts - for embedding generation
-// Same entries
 ```
 
 ### Step 4: Regenerate and Test
 
 ```bash
-bun run compile
 bun run server/scripts/generateEmbeddings.ts
+bun run compile
+cd server && bun run test
 # Test in VS Code
 ```
 
