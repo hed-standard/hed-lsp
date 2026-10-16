@@ -5,7 +5,9 @@
  * wire. The daemon reads and drops up to four times MAX_BODY_BYTES of it, counted from the start of
  * the body, and cuts the connection past that. Each case sends a body far larger than the bound over
  * a raw socket and checks that the daemon cuts the connection, logs it once, and still answers the
- * next request. Real daemon, real engine, real sockets. No mocks.
+ * next request. The discard has a deadline too, BODY_TIMEOUT_MS from the answer, because the timers
+ * that cover a request are over once it is answered: a body dripped in a byte at a time is cut at
+ * the deadline, however small it is. Real daemon, real engine, real sockets. No mocks.
  */
 
 import * as net from 'node:net';
@@ -88,14 +90,20 @@ function flood(port: number, head: string, chunked: boolean, total = TOTAL): Pro
 	});
 }
 
-/** The request line and headers of a request that promises `TOTAL` bytes of body, or sends it chunked. */
-function head(method: string, path: string, headers: Record<string, string> = {}, chunked = false): string {
+/** The request line and headers of a request that promises `length` bytes of body, `TOTAL` by default, or sends it chunked. */
+function head(
+	method: string,
+	path: string,
+	headers: Record<string, string> = {},
+	chunked = false,
+	length = TOTAL,
+): string {
 	const lines = [
 		`${method} ${path} HTTP/1.1`,
 		'Host: localhost',
 		...Object.entries(headers).map(([k, v]) => `${k}: ${v}`),
 	];
-	const framing = chunked ? 'Transfer-Encoding: chunked' : `Content-Length: ${TOTAL}`;
+	const framing = chunked ? 'Transfer-Encoding: chunked' : `Content-Length: ${length}`;
 	return `${lines.join('\r\n')}\r\n${framing}\r\n\r\n`;
 }
 
@@ -242,5 +250,121 @@ describe('a request body that is refused without being read', () => {
 		expect(result.status).toBe('HTTP/1.1 404 Not Found');
 		expect(result.next).toBe('HTTP/1.1 200 OK');
 		expect(daemon.rawLines.some((line) => line.includes('kept arriving'))).toBe(false);
+	});
+});
+
+describe('a body that drips in to a request that was answered at once', () => {
+	/** How long the daemon is given to close, past BODY_TIMEOUT_MS, on a machine that is busy. */
+	const MARGIN_MS = 2000;
+	const BODY_TIMEOUT_MS = 500;
+
+	interface Drip {
+		/** The status line of the answer, or undefined if none arrived. */
+		status: string | undefined;
+		/** Milliseconds from the connection to its end. */
+		ms: number;
+		/** Whether the daemon ended the connection, rather than the test giving up. */
+		closedByDaemon: boolean;
+		/** Bytes of the body sent when the connection ended. */
+		sent: number;
+	}
+
+	/** Send `head` and then one byte of the body every 50 ms, until the connection ends or `giveUpMs` pass. */
+	function drip(port: number, head: string, giveUpMs: number): Promise<Drip> {
+		return new Promise((resolve) => {
+			const socket = net.connect(port, '127.0.0.1');
+			const startedAt = Date.now();
+			let text = '';
+			let sent = 0;
+			let closedByDaemon = true;
+			const giveUp = setTimeout(() => {
+				closedByDaemon = false;
+				socket.destroy();
+			}, giveUpMs);
+			const timer = setInterval(() => {
+				if (!socket.destroyed) {
+					sent++;
+					socket.write('a');
+				}
+			}, 50);
+			socket.on('error', () => undefined);
+			socket.on('data', (chunk) => {
+				text += chunk.toString('latin1');
+			});
+			socket.on('close', () => {
+				clearTimeout(giveUp);
+				clearInterval(timer);
+				resolve({ status: text.split('\r\n')[0] || undefined, ms: Date.now() - startedAt, closedByDaemon, sent });
+			});
+			socket.on('connect', () => socket.write(head));
+		});
+	}
+
+	// The body promises 4000 bytes, far inside the body limit, so only the deadline can end the connection:
+	// at a byte every 50 ms the body would take 200 seconds.
+	const requests: [string, string, string][] = [
+		['a 404 for an unknown path', 'HTTP/1.1 404 Not Found', head('POST', '/v1/nothing', JSON_TYPE, false, 4000)],
+		[
+			'a 415 for an unsupported media type',
+			'HTTP/1.1 415 Unsupported Media Type',
+			head('POST', '/v1/validate', { 'Content-Type': 'text/plain' }, false, 4000),
+		],
+		['a 200 for health with a body', 'HTTP/1.1 200 OK', head('GET', '/v1/health', {}, false, 4000)],
+	];
+
+	it.each(requests)(
+		'cuts the connection within BODY_TIMEOUT_MS of %s, and logs it once',
+		async (_label, statusLine, request) => {
+			const daemon = await start({ HED_LSP_BODY_TIMEOUT_MS: String(BODY_TIMEOUT_MS) });
+
+			const result = await drip(portOf(daemon), request, 15_000);
+
+			expect(result.status).toBe(statusLine);
+			expect(result.closedByDaemon, 'the daemon ended the connection').toBe(true);
+			expect(result.ms).toBeGreaterThanOrEqual(0.9 * BODY_TIMEOUT_MS);
+			expect(result.ms).toBeLessThan(BODY_TIMEOUT_MS + MARGIN_MS);
+			expect(result.sent).toBeLessThan(4000);
+			await waitFor(
+				() => daemon.rawLines.some((line) => line.includes('did not finish in time')),
+				5000,
+				'the cut-off to be logged',
+			);
+			expect(daemon.rawLines.filter((line) => line.includes('did not finish in time'))).toHaveLength(1);
+			// The byte bound did not do it, and the daemon still answers.
+			expect(daemon.rawLines.some((line) => line.includes('kept arriving'))).toBe(false);
+			expect((await call(daemon.url, '/v1/health')).status).toBe(200);
+		},
+		30_000,
+	);
+
+	it('leaves a body alone that finishes before the deadline, and reuses the connection', async () => {
+		const daemon = await start({ HED_LSP_BODY_TIMEOUT_MS: '2000' });
+		const result = await new Promise<{ first: string; second: string }>((resolve, reject) => {
+			const socket = net.connect(portOf(daemon), '127.0.0.1');
+			let received = '';
+			socket.on('data', (chunk) => {
+				received += chunk.toString('latin1');
+				if ((received.match(/HTTP\/1\.1 /g) ?? []).length === 2 && received.endsWith('}')) {
+					socket.destroy();
+					const [first, second] = received.split(/(?=HTTP\/1\.1 )/);
+					resolve({ first: first.split('\r\n')[0], second: second.split('\r\n')[0] });
+				}
+			});
+			socket.on('error', reject);
+			socket.on('connect', async () => {
+				socket.write(
+					'POST /v1/nothing HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 20\r\n\r\n',
+				);
+				for (let i = 0; i < 4; i++) {
+					await sleep(100);
+					socket.write('aaaaa');
+				}
+				socket.write('GET /v1/health HTTP/1.1\r\nHost: localhost\r\n\r\n');
+			});
+		});
+
+		expect(result.first).toBe('HTTP/1.1 404 Not Found');
+		expect(result.second).toBe('HTTP/1.1 200 OK');
+		expect(daemon.rawLines.some((line) => line.includes('did not finish in time'))).toBe(false);
 	});
 });

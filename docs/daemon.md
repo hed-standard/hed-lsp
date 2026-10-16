@@ -347,6 +347,7 @@ Node's own request timer is set 5 seconds past the daemon's, so the daemon alway
 A request that is refused before its body is read, for whatever reason, does not leave the client free to keep sending.
 The daemon reads and drops up to four times `MAX_BODY_BYTES` of the body, counted from its first byte (2 MiB by default), so a client that sends a little more than the limit still reads the answer, and it closes the connection past that.
 The same holds for a body that nobody reads on a request that is answered, such as a GET with a body.
+The discard has a deadline too: a body that is not complete `BODY_TIMEOUT_MS` after the answer ends the connection, so a body dripped in a byte at a time cannot hold it open.
 
 A response that is being written is bounded by `WRITE_STALL_MS` (10 seconds).
 The daemon writes the body in pieces of 64 KiB, each after the socket has taken the one before, and when the write makes no progress for that long it resets the connection.

@@ -382,7 +382,8 @@ function checkContentType(header: string | undefined): void {
  * How much of a body that is not read is still read and thrown away, as a multiple of the body
  * limit, so the client can finish sending and read the answer. Closing a socket that holds unread
  * data resets the connection, and the client may then never see the response. A client whose body
- * keeps arriving past the bound is cut off. The bound follows the configuration: 2 MiB by default.
+ * keeps arriving past the bound is cut off, and so is one whose body is not complete BODY_TIMEOUT_MS
+ * after the answer. The bound follows the configuration: 2 MiB by default.
  */
 export const DISCARD_FACTOR = 4;
 
@@ -396,18 +397,42 @@ interface BodyProgress {
 	bytes: number;
 }
 
+/** Why the connection of a discarded body was cut: it kept arriving past the bound, or it was not done in time. */
+type DiscardCutoff = 'bytes' | 'deadline';
+
+/** What bounds the discard of a request body that no handler will read. */
+interface DiscardLimits {
+	/** The bytes of the whole body that are read and dropped, counting what was consumed before. */
+	limitBytes: number;
+	/** The bytes consumed before the discard began. */
+	alreadyRead: number;
+	/** How long the discard may last, from now, which is when the answer is written. */
+	deadlineMs: number;
+}
+
 /**
- * Read and drop the rest of a request body that no handler will read. `alreadyRead` counts the
- * bytes consumed before this call, so `discardLimit` bounds the whole body, not only what comes
- * after. Past the bound the connection is cut.
+ * Read and drop the rest of a request body that no handler will read. The discard is bounded twice:
+ * `limitBytes` bounds the whole body, not only what comes after `alreadyRead`, and `deadlineMs` bounds the
+ * time, because the timers that cover a request are over once it is answered, so a body dripped in a
+ * byte at a time would otherwise hold the connection for as long as the client likes. Past either
+ * bound the connection is cut and `onCutoff` says which.
  */
-function discardRest(req: http.IncomingMessage, discardLimit: number, alreadyRead: number, onCutoff: () => void): void {
-	let discarded = alreadyRead;
+function discardRest(req: http.IncomingMessage, limits: DiscardLimits, onCutoff: (why: DiscardCutoff) => void): void {
+	let discarded = limits.alreadyRead;
+	const cut = (why: DiscardCutoff): void => {
+		if (!req.destroyed) {
+			onCutoff(why);
+			req.destroy();
+		}
+	};
+	const timer = setTimeout(() => cut('deadline'), limits.deadlineMs);
+	// The body ended, or the connection did: nothing is left to bound.
+	req.once('end', () => clearTimeout(timer));
+	req.once('close', () => clearTimeout(timer));
 	req.on('data', (chunk: Buffer) => {
 		discarded += chunk.length;
-		if (discarded > discardLimit && !req.destroyed) {
-			onCutoff();
-			req.destroy();
+		if (discarded > limits.limitBytes) {
+			cut('bytes');
 		}
 	});
 	req.resume();
@@ -1079,16 +1104,27 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 	/**
 	 * Whatever the answer is, a body that is still arriving and that nobody will read is read and
 	 * dropped so the client can finish sending and see the answer, up to DISCARD_FACTOR times
-	 * MAX_BODY_BYTES counted from the start of the body; past that the connection is cut. This
-	 * covers every refusal that is decided before the body is read, such as an unsupported media
-	 * type, an unknown path, a wrong method, a rate limit, or a daemon that is busy or starting.
+	 * MAX_BODY_BYTES counted from the start of the body, and for at most BODY_TIMEOUT_MS from the
+	 * answer; past either the connection is cut. This covers every refusal that is decided before the
+	 * body is read, such as an unsupported media type, an unknown path, a wrong method, a rate limit,
+	 * or a daemon that is busy or starting, and a request that is answered without reading its body.
 	 */
 	function discardUnreadBody(req: http.IncomingMessage, ctx: RequestContext): void {
 		if (req.complete || req.destroyed) {
 			return;
 		}
-		discardRest(req, discardLimitBytes(config.maxBodyBytes), ctx.body.bytes, () =>
-			logger.warn('connection closed because a refused body kept arriving', { requestId: ctx.id }),
+		const limits: DiscardLimits = {
+			limitBytes: discardLimitBytes(config.maxBodyBytes),
+			alreadyRead: ctx.body.bytes,
+			deadlineMs: config.bodyTimeoutMs,
+		};
+		discardRest(req, limits, (why) =>
+			logger.warn(
+				why === 'bytes'
+					? 'connection closed because a refused body kept arriving'
+					: 'connection closed because an unread body did not finish in time',
+				{ requestId: ctx.id },
+			),
 		);
 	}
 
