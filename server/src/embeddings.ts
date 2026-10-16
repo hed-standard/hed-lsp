@@ -607,8 +607,8 @@ class EmbeddingsManager {
 	 * Check if the model is cached locally.
 	 */
 	isModelCached(): boolean {
-		const cacheDir = this.getCacheDir();
-		const modelDir = path.join(cacheDir, `models--${this.config.modelId.replace('/', '--')}`);
+		// transformers.js caches under <cacheDir>/<org>/<name>, not the Hub's models--org--name layout.
+		const modelDir = path.join(this.getCacheDir(), ...this.config.modelId.split('/'));
 		return fs.existsSync(modelDir);
 	}
 
