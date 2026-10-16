@@ -23,10 +23,22 @@ export interface SuggestionOptions {
 	queryFormat?: QueryFormat;
 }
 
+/**
+ * What the semantic step did for one query. `ran`: the step was attempted and every embedding it
+ * needed was computed. `skipped`: the caller did not ask for it, or the keyword and schema steps
+ * already filled `top`. `failed`: the caller asked for it and it was needed, but it did not run to
+ * completion, because the embeddings are not available or an embedding could not be computed. The
+ * step never throws, so this is how a caller learns that a missing semantic result is a failure and
+ * not an empty answer.
+ */
+export type SemanticStep = 'ran' | 'skipped' | 'failed';
+
 export interface SuggestionResult {
 	query: string;
 	suggestions: string[];
 	source: 'keyword' | 'schema' | 'semantic';
+	/** Whether the semantic step ran, was skipped, or failed. */
+	semanticStep: SemanticStep;
 }
 
 const DEFAULT_OPTIONS: SuggestionOptions = {
@@ -61,7 +73,8 @@ function withDefaults(options: Partial<SuggestionOptions> | null | undefined): S
  *
  * The caller is responsible for loading the schema and warming the
  * embedding model. For multi-query workloads prefer `suggestBatch` which
- * does both once per batch.
+ * does both once per batch. The result's `semanticStep` says whether the
+ * semantic step ran, was skipped, or failed.
  */
 export async function findSuggestions(
 	query: string,
@@ -94,15 +107,27 @@ export async function findSuggestions(
 		}
 	}
 
+	let semanticStep: SemanticStep = 'skipped';
 	if (opts.semantic && suggestions.length < opts.top) {
+		// Needed and asked for: it stays failed unless the step runs to completion.
+		semanticStep = 'failed';
 		try {
 			if (embeddingsManager.isAvailable()) {
+				// findSimilar reports a failed embedding by returning no matches, which looks like an empty
+				// answer, so a rise in the manager's failure count across the call is how a failure is told
+				// apart. A failure of another semantic call running at the same time is counted here too, so a
+				// caller that needs exact attribution runs one semantic call at a time, as the daemon does
+				// by default.
+				const failuresBefore = embeddingsManager.embedFailureCount();
 				const semanticResults = await embeddingsManager.findSimilar(normalizedQuery, opts.top, opts.queryFormat);
 				for (const result of semanticResults) {
 					if (!suggestions.includes(result.tag)) {
 						suggestions.push(result.tag);
 						source = 'semantic';
 					}
+				}
+				if (embeddingsManager.embedFailureCount() === failuresBefore) {
+					semanticStep = 'ran';
 				}
 			}
 		} catch (error) {
@@ -114,6 +139,7 @@ export async function findSuggestions(
 		query,
 		suggestions: [...new Set(suggestions)].slice(0, opts.top),
 		source,
+		semanticStep,
 	};
 }
 

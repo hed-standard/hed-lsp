@@ -219,3 +219,14 @@ export async function waitFor(
 		await new Promise((resolve) => setTimeout(resolve, 10));
 	}
 }
+
+/** Whether any object nested in `value` has a property named `key`. */
+export function hasKey(value: unknown, key: string): boolean {
+	if (Array.isArray(value)) {
+		return value.some((item) => hasKey(item, key));
+	}
+	if (typeof value === 'object' && value !== null) {
+		return Object.keys(value).some((name) => name === key || hasKey((value as Record<string, unknown>)[name], key));
+	}
+	return false;
+}

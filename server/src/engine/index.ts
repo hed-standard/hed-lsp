@@ -16,7 +16,13 @@ export { embeddingsManager } from './embeddings.js';
 export { type LogSink, setLogger } from './log.js';
 export { schemaManager } from './schemaManager.js';
 export { DEFAULT_HED_SCHEMA, EMBEDDING_SCHEMA_VERSION, FALLBACK_HED_SCHEMA } from './schemaVersion.js';
-export { findSuggestions, type SuggestionOptions, type SuggestionResult, suggestBatch } from './suggestionEngine.js';
+export {
+	findSuggestions,
+	type SemanticStep,
+	type SuggestionOptions,
+	type SuggestionResult,
+	suggestBatch,
+} from './suggestionEngine.js';
 export type { HedTag, HedTagAttributes, ValidationIssue } from './types.js';
 export { hasValidationErrors, validateHedString } from './validation.js';
 

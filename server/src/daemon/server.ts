@@ -8,7 +8,7 @@
 import * as crypto from 'node:crypto';
 import * as http from 'node:http';
 import { TextDecoder } from 'node:util';
-import { setLogger, type ValidationIssue, validate } from '../engine/index.js';
+import { findSuggestions, type SemanticStep, setLogger, type ValidationIssue, validate } from '../engine/index.js';
 import { type DaemonConfig, MIN_ISSUE_MESSAGE_CHARS, readPackageVersion } from './config.js';
 import { createLogger, engineSink, errorDetail, type LineWriter, type Logger } from './log.js';
 import {
@@ -21,13 +21,18 @@ import {
 	type HealthStatus,
 	isPlainObject,
 	type SchemasResponse,
+	type SuggestResponse,
+	type SuggestResult,
+	TOP_DEFAULT,
+	TOP_MAX,
+	TOP_MIN,
 	type ValidateIssue,
 	type ValidateItem,
 	type ValidateResponse,
 	type ValidateResult,
 } from './protocol.js';
 import { SchemaRegistry } from './schemas.js';
-import { SemanticService } from './semantic.js';
+import { type SemanticBackoff, SemanticService, semanticStatusOf } from './semantic.js';
 
 export interface DaemonOptions {
 	/** Receives each JSON log line. Defaults to stderr. */
@@ -42,6 +47,8 @@ export interface DaemonOptions {
 	now?: () => number;
 	/** The version shown in health. Defaults to the nearest package.json. */
 	version?: string;
+	/** Retry timing for a failed semantic warm-up. Defaults to 30 seconds doubling to 15 minutes. */
+	semanticBackoff?: SemanticBackoff;
 }
 
 export interface Daemon {
@@ -129,6 +136,11 @@ export interface ItemFailureText {
 export const VALIDATION_FAILED: ItemFailureText = {
 	log: 'validation failed for one string',
 	message: 'validation failed',
+};
+
+export const SUGGESTIONS_FAILED: ItemFailureText = {
+	log: 'suggestions failed for one query',
+	message: 'suggestions failed',
 };
 
 /**
@@ -298,6 +310,28 @@ async function readJsonObject(
 	return value;
 }
 
+/** `top` for suggestions: an integer from 1 to 50, ten when absent. Null is not absent. */
+function parseTop(value: unknown): number {
+	if (value === undefined) {
+		return TOP_DEFAULT;
+	}
+	if (typeof value !== 'number' || !Number.isInteger(value) || value < TOP_MIN || value > TOP_MAX) {
+		throw new ApiError('INVALID_REQUEST', `top must be an integer from ${TOP_MIN} to ${TOP_MAX}`);
+	}
+	return value;
+}
+
+/** `semantic` for suggestions: a boolean, false when absent. Null is not absent. */
+function parseSemantic(value: unknown): boolean {
+	if (value === undefined) {
+		return false;
+	}
+	if (typeof value !== 'boolean') {
+		throw new ApiError('INVALID_REQUEST', 'semantic must be true or false');
+	}
+	return value;
+}
+
 /** Ends a message that was cut. */
 const CUT_MARK = '...';
 
@@ -382,7 +416,7 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 	const startedAt = Date.now();
 	const version = options.version ?? readPackageVersion(__dirname);
 	const registry = new SchemaRegistry(config, { now: options.now, logger });
-	const semantic = new SemanticService();
+	const semantic = new SemanticService(config, { logger, backoff: options.semanticBackoff });
 	let closing = false;
 
 	// Preload runs in the background; every failure is recorded in the registry and the log.
@@ -468,10 +502,77 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		return { status: 200, body: response };
 	}
 
+	async function suggest(req: http.IncomingMessage, ctx: RequestContext): Promise<Reply> {
+		const body = await readBodyOf(req, ctx);
+		assertKnownFields(body, ['queries', 'top', 'schema', 'semantic']);
+		const { queries } = body;
+		if (!Array.isArray(queries)) {
+			throw new ApiError('INVALID_REQUEST', 'queries must be an array');
+		}
+		ctx.items = queries.length;
+		const top = parseTop(body.top);
+		const wantsSemantic = parseSemantic(body.semantic);
+		if (queries.length > config.maxQueries) {
+			throw new ApiError('BATCH_TOO_LARGE', `queries holds at most ${config.maxQueries} items`, {
+				details: { field: 'queries', max: config.maxQueries },
+			});
+		}
+		// The semantic limit applies whenever a request asks for semantic search, whatever the server's
+		// state, so whether a request is valid never depends on whether the model has loaded.
+		if (wantsSemantic && queries.length > config.maxSemanticQueries) {
+			throw new ApiError(
+				'BATCH_TOO_LARGE',
+				`queries holds at most ${config.maxSemanticQueries} items when semantic is true`,
+				{ details: { field: 'queries', max: config.maxSemanticQueries, semantic: true } },
+			);
+		}
+		const spec = registry.resolve(body.schema);
+		const used = await registry.ensure(spec);
+		ctx.schemaUsed = used;
+		// The state is read once, so a warm-up that finishes mid-request changes nothing for this one.
+		const semanticStatus = semantic.statusForRequest();
+		const runSemantic = wantsSemantic && semantic.ready;
+		if (wantsSemantic) {
+			ctx.semanticStatus = semanticStatus;
+		}
+
+		const results: SuggestResult[] = [];
+		const steps: SemanticStep[] = [];
+		for (const [index, query] of queries.entries()) {
+			if (index > 0) {
+				await yieldToEventLoop();
+			}
+			if (typeof query !== 'string' || query.trim() === '' || query.length > config.maxQueryChars) {
+				const error = {
+					code: 'INVALID_QUERY' as const,
+					message: `must be a non-empty string of at most ${config.maxQueryChars} characters`,
+				};
+				results.push(typeof query === 'string' ? { index, query, error } : { index, error });
+				continue;
+			}
+			try {
+				const found = await findSuggestions(query, { schema: spec, top, semantic: runSemantic });
+				steps.push(found.semanticStep);
+				results.push({ index, query, suggestions: found.suggestions.map((tag) => ({ tag })) });
+			} catch (error) {
+				results.push({ index, query, error: itemFailure(logger, ctx.id, index, error, SUGGESTIONS_FAILED) });
+			}
+		}
+		const response: SuggestResponse = { apiVersion: API_VERSION, schema: { requested: spec, used }, results };
+		if (wantsSemantic) {
+			// The model was ready when the request started; the status says whether it held up.
+			const status = runSemantic ? semanticStatusOf(steps) : semanticStatus;
+			ctx.semanticStatus = status;
+			response.semantic = { requested: true, status };
+		}
+		return { status: 200, body: response };
+	}
+
 	const routes = new Map<string, Route>([
 		['/v1/health', { methods: ['GET'], gated: false, handler: health }],
 		['/v1/schemas', { methods: ['GET'], gated: true, handler: schemas }],
 		['/v1/validate', { methods: ['POST'], gated: true, handler: validateStrings }],
+		['/v1/suggest', { methods: ['POST'], gated: true, handler: suggest }],
 	]);
 
 	function allowHeader(route: Route): string {
