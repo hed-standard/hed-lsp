@@ -188,7 +188,7 @@ Embeddings are pre-generated to avoid runtime model loading:
 server/data/tag-embeddings.compact.json (~20MB)
 ├── version: "3.0"
 ├── modelId: "onnx-community/Qwen3-Embedding-0.6B-ONNX"
-├── schemaVersion: "8.4.0,sc:score_2.1.0,la:lang_1.1.0"
+├── schemaVersion: "8.5.0,sc:score_2.1.0,la:lang_1.1.0"
 ├── dimensions: 1024
 ├── tags: [
 │   { tag: "Animal", longForm: "Item/...", vector: [...] },
@@ -257,7 +257,7 @@ flowchart TD
 
 ## Evaluation
 
-The eval set (`server/eval/hed-examples-pairs.json`) pairs 206 BIDS sidecar level descriptions with their HED strings from `hed-examples`. The expected tags are the leaf tags of each string, resolved with schema 8.4.0. The builder skips strings that fail validation under that schema, and skips strings with no leaf tags (for example, definition-only or label-only strings). Dev and test are split by dataset, so no dataset appears in both.
+The eval set (`server/eval/hed-examples-pairs.json`) pairs 206 BIDS sidecar level descriptions with their HED strings from `hed-examples`. The expected tags are the leaf tags of each string, resolved with the default HED schema. The builder skips strings that fail validation under that schema, and skips strings with no leaf tags (for example, definition-only or label-only strings). Dev and test are split by dataset, so no dataset appears in both.
 
 Run it with `bun run compile`, then:
 

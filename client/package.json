@@ -43,7 +43,7 @@
 			"properties": {
 				"hed.schemaVersion": {
 					"type": "string",
-					"default": "8.4.0",
+					"default": "8.5.0",
 					"description": "HED schema version to use for validation"
 				},
 				"hed.maxNumberOfProblems": {

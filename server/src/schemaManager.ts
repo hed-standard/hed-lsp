@@ -9,13 +9,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { Schemas } from 'hed-validator';
 import { buildSchemasFromVersion } from 'hed-validator';
+import { DEFAULT_HED_SCHEMA } from './schemaVersion.js';
 import type { HedTag, HedTagAttributes } from './types.js';
 
 /**
  * Default schema version including all library schemas.
  * This ensures autocomplete works for all HED tags out of the box.
  */
-const DEFAULT_BASE_VERSION = '8.4.0';
+const DEFAULT_BASE_VERSION = DEFAULT_HED_SCHEMA;
 const LIBRARY_SCHEMAS = ['sc:score_2.1.0', 'la:lang_1.1.0'];
 const DEFAULT_FULL_VERSION = [DEFAULT_BASE_VERSION, ...LIBRARY_SCHEMAS].join(',');
 

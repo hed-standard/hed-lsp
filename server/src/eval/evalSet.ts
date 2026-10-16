@@ -6,9 +6,10 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { DEFAULT_HED_SCHEMA } from '../schemaVersion.js';
 
 /** Schema version used to resolve the expected tags. */
-export const EVAL_SCHEMA_VERSION = '8.4.0';
+export const EVAL_SCHEMA_VERSION = DEFAULT_HED_SCHEMA;
 
 /** Default location of the committed eval set (server/eval). */
 export const EVAL_SET_PATH = path.join(__dirname, '..', '..', 'eval', 'hed-examples-pairs.json');

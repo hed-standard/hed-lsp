@@ -3,7 +3,7 @@
  *
  * Every BIDS sidecar level description paired with its HED string is one query.
  * The expected tags are the short names of the leaf tags in that HED string,
- * resolved with schema 8.4.0. Strings that do not parse cleanly under that
+ * resolved with the default HED schema. Strings that do not parse cleanly under that
  * schema are skipped and counted.
  *
  * Usage (after `bun run compile`):

@@ -174,7 +174,7 @@ To support additional HED schemas or library schemas:
 
 In `server/src/schemaManager.ts`:
 ```typescript
-const SCHEMA_VERSION = '8.4.0,sc:score_2.1.0,la:lang_1.1.0,my:mylib_1.0.0';
+const SCHEMA_VERSION = '8.5.0,sc:score_2.1.0,la:lang_1.1.0,my:mylib_1.0.0';
 ```
 
 ### Step 2: Regenerate Embeddings

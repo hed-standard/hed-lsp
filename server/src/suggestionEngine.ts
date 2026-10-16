@@ -10,6 +10,7 @@
 import { embeddingsManager } from './embeddings.js';
 import { lookupOwn } from './keywordLookup.js';
 import { schemaManager } from './schemaManager.js';
+import { DEFAULT_HED_SCHEMA } from './schemaVersion.js';
 import { SEMANTIC_MAPPINGS } from './semanticMappings.js';
 
 export interface SuggestionOptions {
@@ -25,7 +26,7 @@ export interface SuggestionResult {
 }
 
 const DEFAULT_OPTIONS: SuggestionOptions = {
-	schema: '8.4.0',
+	schema: DEFAULT_HED_SCHEMA,
 	top: 10,
 	semantic: false,
 };
