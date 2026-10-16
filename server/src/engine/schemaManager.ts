@@ -7,7 +7,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { Schemas } from 'hed-validator';
+import type { Schema, Schemas } from 'hed-validator';
 import { buildSchemasFromVersion } from 'hed-validator';
 import { log } from './log.js';
 import { DEFAULT_HED_SCHEMA, FALLBACK_HED_SCHEMA } from './schemaVersion.js';
@@ -60,6 +60,15 @@ function parseHedVersion(datasetDescription: any): string | null {
 }
 
 /**
+ * Write one loaded schema in the notation of a version spec: `8.4.0` for the standard schema,
+ * `score_2.1.0` for a library, and `sc:score_2.1.0` when the schema has a prefix.
+ */
+function describeSchema(schema: Schema): string {
+	const name = schema.library ? `${schema.library}_${schema.version}` : schema.version;
+	return schema.prefix ? `${schema.prefix}:${name}` : name;
+}
+
+/**
  * Schema Manager for HED schemas.
  * Provides caching and tag lookup functionality.
  */
@@ -89,6 +98,17 @@ export class SchemaManager {
 			}
 		});
 		return pending;
+	}
+
+	/**
+	 * The version actually loaded for a spec, written like a spec and including partnered library
+	 * schemas: `8.4.0`, or `8.4.0,sc:score_2.1.0,la:lang_1.1.0`. It differs from the spec only when
+	 * the bundled fallback stands in for the default, so a caller can report the version that ran.
+	 * Loads the schema when it is not cached yet.
+	 */
+	async schemaVersionUsed(version?: string): Promise<string> {
+		const schemas = await this.getSchema(version);
+		return [...schemas.schemas.values()].map(describeSchema).join(',');
 	}
 
 	/**

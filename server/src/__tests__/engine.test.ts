@@ -208,3 +208,54 @@ describe('schema loading', () => {
 		expect(loads).toEqual(['[HED] Loading schema: 9.9.9', '[HED] Loading schema: 9.9.9']);
 	});
 });
+
+describe('engine.schemaVersionUsed', () => {
+	// Real loads. The bundled 8.4.0 fallback for 8.5.0 is checked by the container smoke test with
+	// the network off, because forcing it here would need a fake network.
+	it('returns the requested version for a standard schema', async () => {
+		expect(await engine.schemaVersionUsed('8.4.0')).toBe('8.4.0');
+	});
+
+	it('returns the requested version for a standard schema with partnered libraries', async () => {
+		const spec = '8.4.0,sc:score_2.1.0,la:lang_1.1.0';
+
+		expect(await engine.schemaVersionUsed(spec)).toBe(spec);
+	});
+
+	it('accepts a schema given as an array of parts', async () => {
+		expect(await engine.schemaVersionUsed(['8.4.0', 'sc:score_2.1.0'])).toBe('8.4.0,sc:score_2.1.0');
+	});
+
+	it('reports the default, or the bundled fallback when the default cannot load, for a blank spec', async () => {
+		const used = await engine.schemaVersionUsed('   ');
+
+		expect([engine.DEFAULT_HED_SCHEMA, engine.FALLBACK_HED_SCHEMA]).toContain(used);
+		expect(used).toBe(await engine.schemaVersionUsed(engine.DEFAULT_HED_SCHEMA));
+	});
+
+	it('rejects a version that cannot be loaded', async () => {
+		const previous = setLogger({ info: () => {}, error: () => {} });
+		try {
+			await expect(engine.schemaVersionUsed('9.9.9')).rejects.toThrow();
+		} finally {
+			setLogger(previous);
+		}
+	});
+});
+
+describe('engine logging surface', () => {
+	it('re-exports the logger hook and the sink type from the facade', () => {
+		const lines: string[] = [];
+		const sink: engine.LogSink = { info: (message) => lines.push(message), error: (message) => lines.push(message) };
+
+		expect(engine.setLogger).toBe(setLogger);
+		const previous = engine.setLogger(sink);
+		try {
+			log.info('facade', 'sink');
+		} finally {
+			engine.setLogger(previous);
+		}
+
+		expect(lines).toEqual(['facade sink']);
+	});
+});
