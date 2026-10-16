@@ -50,6 +50,11 @@ export interface RunningDaemon {
 	logLines(): Record<string, unknown>[];
 	/** The raw lines, for tests that check what a line contains. */
 	rawLines: string[];
+	/**
+	 * Close the daemon: stop accepting, give the requests in flight two seconds, then stop the work that is
+	 * left and wait for it. Nothing of this daemon is running when it returns, so the work of one test cannot
+	 * delay the next.
+	 */
 	stop(): Promise<void>;
 }
 

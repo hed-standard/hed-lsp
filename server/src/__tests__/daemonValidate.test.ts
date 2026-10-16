@@ -413,47 +413,54 @@ describe('POST /v1/validate bounded output', () => {
 		expect(cut).toBeGreaterThan(0);
 	});
 
-	it('bounds 100 strings of 4096 open parentheses to MAX_ISSUE_TEXT_CHARS of message text and under 1.2 MB, with a true issueCount on every item', async () => {
+	it('bounds a batch of strings of 4096 open parentheses to MAX_ISSUE_TEXT_CHARS of message text and a proportional response, with a true issueCount on every item', async () => {
+		// The property does not depend on the size of the budget, so the budget is a quarter of the default,
+		// 262,144 characters, and six strings are enough to spend it: two whole items, one that crosses the
+		// budget, and three empty ones. The response is bounded in proportion, 1.2 MB for the default budget
+		// and 300 KB for this one. The batch of a hundred strings that this test first used took a container
+		// over 30 seconds; this one takes a small fraction of that, and the explicit limit is for a host
+		// that is slower still, since the validator needs about 12 ms a string on a fast desktop computer.
 		const hed = parens(4096);
 		const expected = await validate(hed, { schema: BUNDLED });
 		expect(expected.length).toBeGreaterThan(4000);
-		const budget = shared.config.maxIssueTextChars;
-		expect(budget).toBe(1_048_576);
+		const budget = 1_048_576 / 4;
+		const bound = (1_200_000 / 1_048_576) * budget;
 
-		const reply = await postJson(shared.url, '/v1/validate', {
-			strings: Array.from({ length: 100 }, () => hed),
-			schema: BUNDLED,
-		});
-		const single = await postJson(shared.url, '/v1/validate', { strings: [hed], schema: BUNDLED });
+		await withDaemon({ HED_LSP_MAX_ISSUE_TEXT_CHARS: String(budget) }, async (daemon) => {
+			const reply = await postJson(daemon.url, '/v1/validate', {
+				strings: Array.from({ length: 6 }, () => hed),
+				schema: BUNDLED,
+			});
+			const single = await postJson(daemon.url, '/v1/validate', { strings: [hed], schema: BUNDLED });
 
-		expect(reply.status).toBe(200);
-		expect(Buffer.byteLength(reply.text)).toBeLessThan(1_200_000);
-		const results: ValidateItemWire[] = reply.json.results;
-		expect(results).toHaveLength(100);
-		// The budget is spent by message text only, and it is spent: the response holds all of it.
-		const messageChars = results.flatMap((item) => item.issues).reduce((sum, issue) => sum + issue.message.length, 0);
-		expect(messageChars).toBeLessThanOrEqual(budget);
-		expect(budget - messageChars).toBeLessThan(MIN_ISSUE_MESSAGE_CHARS);
-		// Items fill in order: whole ones, then the one that crossed the budget, then empty ones.
-		const firstEmpty = results.findIndex((item) => item.issues.length === 0);
-		expect(firstEmpty).toBeGreaterThan(1);
-		expect(firstEmpty).toBeLessThan(100);
-		for (const [i, item] of results.entries()) {
-			expect(item.index).toBe(i);
-			expect(item.issueCount).toBe(expected.length);
-			expect(item.valid).toBe(!expected.some((issue) => issue.level === 'error'));
-			expect(item.truncated).toBe(true);
-			if (i < firstEmpty - 1) {
-				expect({ ...item, index: 0 }, `item ${i} is whole`).toEqual(single.json.results[0]);
-			} else if (i === firstEmpty - 1) {
-				expect(item.issues.length).toBeGreaterThan(0);
-				expect(item.issues.length).toBeLessThanOrEqual(100);
-			} else {
-				expect(item.issues, `item ${i} comes after the budget was spent`).toEqual([]);
+			expect(reply.status).toBe(200);
+			expect(Buffer.byteLength(reply.text)).toBeLessThan(bound);
+			const results: ValidateItemWire[] = reply.json.results;
+			expect(results).toHaveLength(6);
+			// The budget is spent by message text only, and it is spent: the response holds all of it.
+			const messageChars = results.flatMap((item) => item.issues).reduce((sum, issue) => sum + issue.message.length, 0);
+			expect(messageChars).toBeLessThanOrEqual(budget);
+			expect(budget - messageChars).toBeLessThan(MIN_ISSUE_MESSAGE_CHARS);
+			// Items fill in order: whole ones, then the one that crossed the budget, then empty ones.
+			const firstEmpty = results.findIndex((item) => item.issues.length === 0);
+			expect(firstEmpty).toBeGreaterThan(1);
+			expect(firstEmpty).toBeLessThan(6);
+			for (const [i, item] of results.entries()) {
+				expect(item.index).toBe(i);
+				expect(item.issueCount).toBe(expected.length);
+				expect(item.valid).toBe(!expected.some((issue) => issue.level === 'error'));
+				expect(item.truncated).toBe(true);
+				if (i < firstEmpty - 1) {
+					expect({ ...item, index: 0 }, `item ${i} is whole`).toEqual(single.json.results[0]);
+				} else if (i === firstEmpty - 1) {
+					expect(item.issues.length).toBeGreaterThan(0);
+					expect(item.issues.length).toBeLessThanOrEqual(100);
+				} else {
+					expect(item.issues, `item ${i} comes after the budget was spent`).toEqual([]);
+				}
 			}
-		}
-	}, 30_000);
-
+		});
+	}, 60_000);
 	it('spends the message budget on the first items in order, cuts the issue that crosses it, and never spends it on a clean string', async () => {
 		const expected = await validate(INVALID, { schema: BUNDLED });
 		expect(expected).toHaveLength(1);

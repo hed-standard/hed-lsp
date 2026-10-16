@@ -892,6 +892,9 @@ describe('pending bodies', () => {
 	});
 });
 
+// The tests below keep a daemon busy with real validation work, 30 to 80 strings of 4096 open parentheses, so that a slot is
+// held for as long as the test needs. That is about 12 ms a string on a fast desktop computer and several times that in a
+// container, which put whole seconds on a test there, so each of them has an explicit limit of 60 seconds.
 describe('requests in flight', () => {
 	it('takes no slot while a body is still arriving, so a slow sender blocks nobody', async () => {
 		// One slot in all. The client has one pending-body slot, which shows when its body is counted.
@@ -937,7 +940,7 @@ describe('requests in flight', () => {
 		const statuses = (await Promise.all(works)).map((reply) => reply.status).sort();
 		expect(statuses).toEqual([200, 503]);
 		await waitFor(async () => (await call(url, '/v1/schemas')).status === 200, 5000, 'the slot to be free');
-	});
+	}, 60_000);
 
 	it('caps the requests in flight for one client, and still serves another client', async () => {
 		const { url } = await start({ HED_LSP_MAX_IN_FLIGHT: '8', HED_LSP_MAX_IN_FLIGHT_PER_CLIENT: '2' });
@@ -963,7 +966,7 @@ describe('requests in flight', () => {
 			5000,
 			'the slots to be free',
 		);
-	});
+	}, 60_000);
 
 	it('counts the shared cap over all clients, and gives a client its own slot back when the shared cap refuses it', async () => {
 		const { url } = await start({ HED_LSP_MAX_IN_FLIGHT: '2', HED_LSP_MAX_IN_FLIGHT_PER_CLIENT: '2' });
@@ -991,7 +994,7 @@ describe('requests in flight', () => {
 		expect(third.status).toBe(503);
 		expect(again.status).toBe(200);
 		expect((await workFirst).status).toBe(200);
-	});
+	}, 60_000);
 
 	it('does not count a refused OVERLOADED request, a 404, or a preflight against the cap', async () => {
 		const { url } = await start({ HED_LSP_MAX_IN_FLIGHT: '1' });
@@ -1005,7 +1008,7 @@ describe('requests in flight', () => {
 
 		await Promise.all(works);
 		await waitFor(async () => (await call(url, '/v1/schemas')).status === 200, 5000, 'the slot to be free');
-	});
+	}, 60_000);
 });
 
 describe('the request timeout', () => {
@@ -1346,6 +1349,8 @@ describe('close', () => {
 		expect(Date.now() - startedAt).toBeLessThan(1000);
 	});
 
+	// Explicit limit: the request carries 100 strings of 4096 open parentheses, over a second of work on a fast desktop computer
+	// and much more in a container, and the test waits for the work to start and for the process to go quiet.
 	it('stops the work of a request whose client has gone, so that nothing runs after close returns', async () => {
 		const daemon = await startDaemon({ HED_LSP_MAX_IN_FLIGHT: '1' });
 		// A client that sends a complete body for more than a second of work and then goes away. Nobody reads
