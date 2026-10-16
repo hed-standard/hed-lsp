@@ -64,25 +64,40 @@ function parseHedVersion(datasetDescription: any): string | null {
  * Provides caching and tag lookup functionality.
  */
 export class SchemaManager {
-	private schemaCache: Map<string, Schemas> = new Map();
+	private schemaCache: Map<string, Promise<Schemas>> = new Map();
 	private currentVersion: string = DEFAULT_FULL_VERSION;
 	private workspaceVersionCache: Map<string, string> = new Map();
 
 	/**
-	 * Get or load a schema for a given version.
+	 * Get or load a schema for a given version. Concurrent callers share one load, so a version that
+	 * is not cached yet is fetched once even when several requests need it at the same time.
 	 */
 	async getSchema(version: string = this.currentVersion): Promise<Schemas> {
 		const normalizedVersion = normalizeVersion(version) || this.currentVersion;
 
-		if (this.schemaCache.has(normalizedVersion)) {
-			return this.schemaCache.get(normalizedVersion)!;
+		const cached = this.schemaCache.get(normalizedVersion);
+		if (cached) {
+			return cached;
 		}
 
+		const pending = this.loadSchema(normalizedVersion);
+		this.schemaCache.set(normalizedVersion, pending);
+		// A failed load is not kept, so the next call tries again.
+		pending.catch(() => {
+			if (this.schemaCache.get(normalizedVersion) === pending) {
+				this.schemaCache.delete(normalizedVersion);
+			}
+		});
+		return pending;
+	}
+
+	/**
+	 * Load a schema that is not cached. When the default cannot be fetched, the bundled schema is used.
+	 */
+	private async loadSchema(normalizedVersion: string): Promise<Schemas> {
 		try {
 			log.error(`[HED] Loading schema: ${normalizedVersion}`);
-			const schemas = await buildSchemasFromVersion(normalizedVersion);
-			this.schemaCache.set(normalizedVersion, schemas);
-			return schemas;
+			return await buildSchemasFromVersion(normalizedVersion);
 		} catch (error) {
 			if (normalizedVersion === DEFAULT_HED_SCHEMA) {
 				// The default is fetched from GitHub. Fall back to the schema bundled with hed-validator so
@@ -91,9 +106,7 @@ export class SchemaManager {
 				log.error(
 					`[HED] Could not load HED ${DEFAULT_HED_SCHEMA} (${reason}); using bundled ${FALLBACK_HED_SCHEMA}. Tags added in ${DEFAULT_HED_SCHEMA} are unavailable until it loads.`,
 				);
-				const fallback = await buildSchemasFromVersion(FALLBACK_HED_SCHEMA);
-				this.schemaCache.set(normalizedVersion, fallback);
-				return fallback;
+				return buildSchemasFromVersion(FALLBACK_HED_SCHEMA);
 			}
 			log.error(`Failed to load HED schema ${normalizedVersion}:`, error);
 			throw error;

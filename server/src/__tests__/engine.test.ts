@@ -130,3 +130,45 @@ describe('engine logging', () => {
 		}
 	});
 });
+
+describe('schema loading', () => {
+	it('loads a cold version once for concurrent callers', async () => {
+		schemaManager.clearCache();
+		const loads: string[] = [];
+		const previous = setLogger({
+			info: () => {},
+			error: (...args) => {
+				if (String(args[0]).startsWith('[HED] Loading schema')) {
+					loads.push(String(args[0]));
+				}
+			},
+		});
+		try {
+			await Promise.all([1, 2, 3, 4].map(() => schemaManager.getSchema('8.3.0')));
+		} finally {
+			setLogger(previous);
+		}
+
+		expect(loads).toEqual(['[HED] Loading schema: 8.3.0']);
+	});
+
+	it('does not keep a failed load, so a later call tries again', async () => {
+		const loads: string[] = [];
+		const previous = setLogger({
+			info: () => {},
+			error: (...args) => {
+				if (String(args[0]).startsWith('[HED] Loading schema')) {
+					loads.push(String(args[0]));
+				}
+			},
+		});
+		try {
+			await expect(schemaManager.getSchema('9.9.9')).rejects.toThrow();
+			await expect(schemaManager.getSchema('9.9.9')).rejects.toThrow();
+		} finally {
+			setLogger(previous);
+		}
+
+		expect(loads).toEqual(['[HED] Loading schema: 9.9.9', '[HED] Loading schema: 9.9.9']);
+	});
+});
