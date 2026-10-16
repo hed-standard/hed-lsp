@@ -113,25 +113,40 @@ jobs:
     if: ${{ github.actor != 'nektos/act' && ((github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
     permissions:
       contents: read
+    env:
+      # The commit the image is built from and labeled with. On a pull request GITHUB_SHA names the
+      # synthetic merge commit, which is in no history, so the image would carry a label that a person
+      # cannot look up; the head of the pull request is a real commit. On a push it is GITHUB_SHA.
+      IMAGE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
 
     steps:
+      # The head commit itself, not the merge with the base, so that the tree built is the tree of the label.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.IMAGE_COMMIT }}
 
       - name: Build the image for linux/amd64
-        run: docker build --platform linux/amd64 --build-arg HED_LSP_COMMIT="${GITHUB_SHA::7}" --tag hed-lsp-daemon:ci .
+        run: docker build --platform linux/amd64 --build-arg HED_LSP_COMMIT="${IMAGE_COMMIT::7}" --tag hed-lsp-daemon:ci .
+
+      # The ID is what a host that loads the saved image compares: docker load keeps it.
+      - name: Print the image ID
+        run: |
+          id="$(docker image inspect --format '{{.Id}}' hed-lsp-daemon:ci)"
+          echo "Image ID $id, built from commit $IMAGE_COMMIT"
+          { echo '### Daemon image'; echo; echo "Image ID: \`$id\`"; echo; echo "Commit: \`$IMAGE_COMMIT\`"; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Smoke test with a published port
         run: |
           docker run --detach --name hed-lsp-smoke --publish 127.0.0.1:38530:38530 hed-lsp-daemon:ci
           HED_LSP_DAEMON_URL=http://127.0.0.1:38530 HED_LSP_DAEMON_CONTAINER=hed-lsp-smoke \
-            HED_LSP_EXPECTED_COMMIT="${GITHUB_SHA::7}" scripts/daemon-smoke.sh
+            HED_LSP_EXPECTED_COMMIT="${IMAGE_COMMIT::7}" scripts/daemon-smoke.sh
 
       # With no network the container publishes no port, so the script runs inside it.
       - name: Smoke test with no network
         run: |
           docker run --detach --name hed-lsp-offline --network none hed-lsp-daemon:ci
           docker cp scripts/daemon-smoke.sh hed-lsp-offline:/tmp/daemon-smoke.sh
-          docker exec --env HED_LSP_DAEMON_URL=http://127.0.0.1:38530 --env HED_LSP_EXPECTED_COMMIT="${GITHUB_SHA::7}" \
+          docker exec --env HED_LSP_DAEMON_URL=http://127.0.0.1:38530 --env HED_LSP_EXPECTED_COMMIT="${IMAGE_COMMIT::7}" \
             hed-lsp-offline bash /tmp/daemon-smoke.sh --offline
 
       - name: Wait for the Docker health check to pass in both containers
@@ -148,17 +163,16 @@ jobs:
           docker logs hed-lsp-offline || true
 
       - name: Save the image that was tested
-        if: github.event_name == 'push'
         run: docker save --output hed-lsp-daemon.tar hed-lsp-daemon:ci
 
-      # The publish job pushes this image, not a rebuild of it. A week covers a slow approval.
+      # The publish job pushes this image, not a rebuild of it, and a pull request keeps it too, so a
+      # host can load the image that passed the smoke tests before the merge. Two weeks cover a slow approval.
       - name: Upload the image
-        if: github.event_name == 'push'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: hed-lsp-daemon-image
           path: hed-lsp-daemon.tar
-          retention-days: 7
+          retention-days: 14
 
   publish-image:
     name: Publish daemon image (ghcr.io)
