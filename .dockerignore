@@ -1,0 +1,10 @@
+# Rebuilt inside the image
+**/node_modules
+**/out
+**/*.tsbuildinfo
+
+# Not needed to build or run the daemon. server/data is kept: the engine reads its embeddings.
+.git
+.github
+docs
+scripts
