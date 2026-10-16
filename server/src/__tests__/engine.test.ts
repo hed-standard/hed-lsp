@@ -77,6 +77,48 @@ describe('engine.validate', () => {
 	});
 });
 
+describe('engine.validate when the validator throws', () => {
+	/** `depth` nested pairs of parentheses around a tag. The validator recurses once per level. */
+	const nested = (depth: number): string => `${'('.repeat(depth)}Event${')'.repeat(depth)}`;
+
+	it('reports a repeated tag with the validator code and message, not as an internal error', async () => {
+		// hed-validator throws an IssueError for a repeated tag, where it returns the issues of most other mistakes.
+		const issues = await engine.validate('Sensory-event, Red, Red', { schema: '8.4.0' });
+
+		expect(issues).toHaveLength(1);
+		const [issue] = issues;
+		expect(issue.hedCode).toBe('TAG_EXPRESSION_REPEATED');
+		expect(issue.hedCode).not.toBe('INTERNAL_ERROR');
+		expect(issue.internalCode).toBe('duplicateTag');
+		expect(issue.level).toBe('error');
+		expect(issue.message.startsWith('Validation error:')).toBe(false);
+		expect(issue.message).toContain('[TAG_EXPRESSION_REPEATED]');
+		expect(issue.message).toContain('Duplicate tags');
+	});
+
+	it('reports a repeated tag inside a group the same way', async () => {
+		const issues = await engine.validate('Sensory-event, (Red, Red)', { schema: '8.4.0' });
+
+		expect(issues.map((issue) => issue.hedCode)).toEqual(['TAG_EXPRESSION_REPEATED']);
+	});
+
+	it('returns no issues for the same string without the repeat', async () => {
+		expect(await engine.validate('Sensory-event, Red', { schema: '8.4.0' })).toEqual([]);
+	});
+
+	it('still reports an exception that is not a validator issue as an internal error', async () => {
+		// The validator recurses once per level of nesting and runs out of stack on a string this deep.
+		const issues = await engine.validate(nested(4000), { schema: '8.4.0' });
+
+		expect(issues).toHaveLength(1);
+		const [issue] = issues;
+		expect(issue.hedCode).toBe('INTERNAL_ERROR');
+		expect(issue.internalCode).toBe('internalError');
+		expect(issue.level).toBe('error');
+		expect(issue.message).toMatch(/^Validation error: .*call stack/);
+	});
+});
+
 describe('suggestion options', () => {
 	it('treats undefined, null, and blank options as absent', async () => {
 		const queries = ['red square', 'modulator'];

@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contract test fails when the shipped keyword embeddings drift from it.
 
 ### Fixed
+- A repeated tag, such as `Sensory-event, Red, Red`, is reported with the validator's code (`TAG_EXPRESSION_REPEATED`) and message, not as an internal error.
+  The validator throws this issue instead of returning it, and the engine used to label every thrown exception `INTERNAL_ERROR` with the text `Validation error: ...`.
+  The engine now keeps the issue the validator threw, and other exceptions, such as a stack overflow, are still internal errors.
+  This changes the diagnostics the language server shows for such strings, and the daemon's answer for them.
 - A suggestion query that fails no longer empties the whole batch (#60). `suggestBatch`, and so `hed/suggest` and `hed-suggest`, log the failure and leave that query out, so the other queries return. An absent key means the query failed, and an empty list means it found no matches.
 - Keyword anchors point only at HED schema tags. Anchor targets that were extension words (48 names) are removed, which drops 71 keywords that had no other target. A contract test enforces this.
 - The harness counts embedding failures directly and refuses to score a run where any query failed. It no longer infers failures from empty results.

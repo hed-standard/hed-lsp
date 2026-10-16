@@ -317,32 +317,40 @@ describe('POST /v1/validate with a string that makes the validator throw', () =>
 		});
 	});
 
-	it('reports a string with a repeated tag the same way, because the validator throws for it', async () => {
-		// The validator does not return an issue for a repeated tag, it throws, and the engine catches the
-		// exception and returns its message as an issue coded INTERNAL_ERROR. The message is not returned.
+	it('reports a string with a repeated tag as the validator issue it is, not as a failure', async () => {
+		// The validator throws an issue for a repeated tag instead of returning it, and the engine reports it
+		// with the validator's code and message, so the daemon returns it as it does any other issue.
 		const engine = await validate('Red, Red', { schema: BUNDLED });
 		expect(engine).toHaveLength(1);
-		expect(engine[0].message).toMatch(/^Validation error: .*TAG_EXPRESSION_REPEATED/);
-		expect(isEngineException(engine[0])).toBe(true);
+		expect(engine[0].hedCode).toBe('TAG_EXPRESSION_REPEATED');
+		expect(isEngineException(engine[0])).toBe(false);
 
 		const reply = await postJson(shared.url, '/v1/validate', { strings: ['Red, Red', 'Red, Blue'], schema: BUNDLED });
 
 		expect(reply.status).toBe(200);
 		expect(reply.json.results[0]).toEqual({
 			index: 0,
-			error: { code: 'INTERNAL_ERROR', message: 'validation failed' },
+			valid: false,
+			issues: [wire(engine[0])],
+			issueCount: 1,
+			truncated: false,
 		});
+		expect(reply.json.results[0].issues[0].code).toBe('TAG_EXPRESSION_REPEATED');
+		expect(reply.json.results[0].issues[0].message).toContain('Duplicate tags');
 		expect(reply.json.results[1]).toEqual(clean(1));
 		expect(reply.text).not.toContain('Validation error');
-		expect(reply.text).not.toContain('TAG_EXPRESSION_REPEATED');
+		expect(reply.text).not.toContain('validation failed');
+		expect(reply.text).not.toContain('INTERNAL_ERROR');
 	});
 
-	it('tells an exception from the issues of a string that is only invalid', async () => {
+	it('tells an exception from the issues of a string that is only invalid or repeats a tag', async () => {
 		const ordinary = await validate('(Red, Blue', { schema: BUNDLED });
+		const repeated = await validate('Red, Red', { schema: BUNDLED });
 		const crashed = await validate(nested(DEPTH), { schema: BUNDLED });
 
 		expect(ordinary.length).toBeGreaterThan(0);
 		expect(ordinary.some(isEngineException)).toBe(false);
+		expect(repeated.some(isEngineException)).toBe(false);
 		expect(crashed.every(isEngineException)).toBe(true);
 	});
 

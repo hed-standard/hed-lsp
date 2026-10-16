@@ -174,8 +174,10 @@ More strings than the limit get 400 `BATCH_TOO_LARGE`.
 - `issueCount` is the number of issues found, and `valid` counts all of them, even those left out of `issues`.
 - `truncated` is true when an issue was left out or a message was cut.
   A string with no issues is never truncated.
-- A string that makes the validator throw gets an item error, `INTERNAL_ERROR` with the message `validation failed`, and nothing of the exception is returned or logged.
-  A string nested thousands of levels deep runs the validator out of stack (2045 levels, or 4095 characters, did on Node 26, and the depth varies with the Node version), and a string with a repeated tag, such as `Red, Red`, makes it throw an error for the repeat.
+- A string with a repeated tag, such as `Red, Red`, gets the issue `TAG_EXPRESSION_REPEATED` with the validator's own message, like any other issue.
+  The validator throws this issue instead of returning it, and the engine reports it with its code and message, not as an internal error.
+- A string that makes the validator fail in any other way gets an item error, `INTERNAL_ERROR` with the message `validation failed`, and nothing of the exception is returned or logged.
+  A string nested thousands of levels deep runs the validator out of stack (2045 levels, or 4095 characters, did on Node 26, and the depth varies with the Node version).
 
 The answer is bounded because a string of n open parentheses gives about n + 2 issues, and each message quotes the string, so the output grows with the square of its length.
 Three limits apply, and none of them changes `valid` or `issueCount`:
