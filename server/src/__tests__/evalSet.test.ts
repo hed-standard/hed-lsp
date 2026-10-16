@@ -11,7 +11,7 @@ const evalSet = loadEvalSet();
 
 describe('committed semantic eval set', () => {
 	it('targets the eval schema version', () => {
-		expect(evalSet.version).toBe(1);
+		expect(evalSet.version).toBe(2);
 		expect(evalSet.schema).toBe(EVAL_SCHEMA_VERSION);
 	});
 

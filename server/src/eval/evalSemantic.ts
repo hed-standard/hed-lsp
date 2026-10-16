@@ -32,7 +32,7 @@ interface Summary {
 	mrr: number;
 }
 
-interface ConfigRun {
+export interface ConfigRun {
 	config: string;
 	format: QueryFormat;
 	semantic: RankScore[];
@@ -70,15 +70,11 @@ function parseArgs(argv: string[]): { split: EvalSplit; configs: string[]; out?:
 
 async function runConfig(config: string, pairs: readonly EvalPair[]): Promise<ConfigRun> {
 	const format = FORMATS[config];
-	embeddingsManager.setQueryFormat(format);
 	const semantic: RankScore[] = [];
 	const endToEnd: RankScore[] = [];
-	let emptySemantic = 0;
+	const failuresBefore = embeddingsManager.embedFailureCount();
 	for (const pair of pairs) {
-		const matches = await embeddingsManager.findSimilar(pair.query, K);
-		if (matches.length === 0) {
-			emptySemantic++;
-		}
+		const matches = await embeddingsManager.findSimilar(pair.query, K, format);
 		semantic.push(
 			scoreRanking(
 				pair.expected,
@@ -86,57 +82,90 @@ async function runConfig(config: string, pairs: readonly EvalPair[]): Promise<Co
 				K,
 			),
 		);
-		const result = await findSuggestions(pair.query, { schema: EVAL_SCHEMA_VERSION, top: K, semantic: true });
+		const result = await findSuggestions(pair.query, {
+			schema: EVAL_SCHEMA_VERSION,
+			top: K,
+			semantic: true,
+			queryFormat: format,
+		});
 		endToEnd.push(scoreRanking(pair.expected, result.suggestions, K));
 	}
-	// embed() returns null on failure, which findSimilar reports as no matches. Refuse to score a silent failure.
-	if (emptySemantic > pairs.length / 2) {
-		throw new Error(
-			`${config}: ${emptySemantic}/${pairs.length} queries returned no semantic matches; embedding failed`,
-		);
+	// findSimilar turns a failed embed() into "no matches", so count the failures rather than the empty results.
+	const failed = embeddingsManager.embedFailureCount() - failuresBefore;
+	if (failed > 0) {
+		throw new Error(`${config}: ${failed} query embedding(s) failed; refusing to score this run`);
 	}
 	return { config, format, semantic, endToEnd };
 }
 
-function report(split: EvalSplit, runs: ConfigRun[]): object {
+export interface ReportRow {
+	config: string;
+	format: QueryFormat;
+	semantic: Summary;
+	endToEnd: Summary;
+	/** Paired difference against E0; null for the baseline itself. */
+	recallVsBaseline: Interval | null;
+	hitVsBaseline: Interval | null;
+	/** Pre-registered gate verdict; null for the baseline itself. */
+	gate: { devRecallMarginMet: boolean } | { testRecallNotLower: boolean; testHitNotLower: boolean } | null;
+}
+
+export interface Report {
+	split: EvalSplit;
+	k: number;
+	pairs: number;
+	resamples: number;
+	seed: number;
+	rows: ReportRow[];
+}
+
+/** Summarizes each run and compares it with the baseline using paired bootstrap intervals and the gate. */
+export function report(split: EvalSplit, runs: readonly ConfigRun[]): Report {
 	const baseline = runs.find((r) => r.config === BASELINE);
 	if (!baseline) {
 		throw new Error('baseline run missing');
 	}
-	const rows = runs.map((run) => {
+	const rows = runs.map((run): ReportRow => {
+		if (run.config === BASELINE) {
+			return {
+				config: run.config,
+				format: run.format,
+				semantic: summarize(run.semantic),
+				endToEnd: summarize(run.endToEnd),
+				recallVsBaseline: null,
+				hitVsBaseline: null,
+				gate: null,
+			};
+		}
 		const diff = (pick: (r: ConfigRun) => number[]): Interval =>
 			bootstrapMeanDifference(pick(baseline), pick(run), RESAMPLES, SEED);
 		const recallVsBaseline = diff((r) => r.semantic.map((s) => s.recall));
 		const hitVsBaseline = diff((r) => r.semantic.map((s) => s.hit));
-		const summary = summarize(run.semantic);
 		return {
 			config: run.config,
 			format: run.format,
-			semantic: summary,
+			semantic: summarize(run.semantic),
 			endToEnd: summarize(run.endToEnd),
 			recallVsBaseline,
 			hitVsBaseline,
 			gate:
 				split === 'dev'
 					? { devRecallMarginMet: recallVsBaseline.mean >= DEV_RECALL_MARGIN }
-					: {
-							testRecallNotLower: recallVsBaseline.mean >= 0,
-							testHitNotLower: hitVsBaseline.mean >= 0,
-						},
+					: { testRecallNotLower: recallVsBaseline.mean >= 0, testHitNotLower: hitVsBaseline.mean >= 0 },
 		};
 	});
 	return { split, k: K, pairs: baseline.semantic.length, resamples: RESAMPLES, seed: SEED, rows };
 }
 
-function printTable(result: { rows: Record<string, unknown>[] } & Record<string, unknown>): void {
-	const pct = (x: number) => `${(x * 100).toFixed(1)}`;
-	const ci = (i: Interval) =>
-		`${(i.mean * 100).toFixed(1)} [${(i.low * 100).toFixed(1)}, ${(i.high * 100).toFixed(1)}]`;
+function printTable(result: Report): void {
+	const pct = (x: number) => (x * 100).toFixed(1);
+	const ci = (i: Interval | null) =>
+		i === null ? '-' : `${(i.mean * 100).toFixed(1)} [${(i.low * 100).toFixed(1)}, ${(i.high * 100).toFixed(1)}]`;
 	console.log(`split=${result.split} k=${result.k} pairs=${result.pairs}`);
 	console.log(
 		'config  format  sem.hit  sem.recall  sem.mrr  e2e.hit  e2e.recall  dRecall(pts, 95% CI)  dHit(pts, 95% CI)',
 	);
-	for (const row of result.rows as any[]) {
+	for (const row of result.rows) {
 		console.log(
 			[
 				row.config.padEnd(7),
@@ -170,9 +199,8 @@ async function main(): Promise<void> {
 		console.error(`running ${config} (${FORMATS[config]}) over ${pairs.length} ${split} pairs`);
 		runs.push(await runConfig(config, pairs));
 	}
-	embeddingsManager.setQueryFormat('raw');
 
-	const result = report(split, runs) as { rows: Record<string, unknown>[] } & Record<string, unknown>;
+	const result = report(split, runs);
 	printTable(result);
 	if (out) {
 		fs.writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);

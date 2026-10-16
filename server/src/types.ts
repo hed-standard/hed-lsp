@@ -3,6 +3,7 @@
  */
 
 import type { Position, Range } from 'vscode-languageserver';
+import { DEFAULT_HED_SCHEMA } from './schemaVersion.js';
 
 /**
  * Represents a HED string region within a document.
@@ -81,7 +82,7 @@ export interface HedTagAttributes {
  * Configuration for the HED language server.
  */
 export interface HedLspSettings {
-	/** HED schema version to use (e.g., "8.4.0") */
+	/** HED schema version to use (e.g., "8.5.0") */
 	schemaVersion: string;
 	/** Maximum number of diagnostics to report */
 	maxNumberOfProblems: number;
@@ -97,7 +98,7 @@ export interface HedLspSettings {
  * Default settings for the language server.
  */
 export const defaultSettings: HedLspSettings = {
-	schemaVersion: '8.4.0',
+	schemaVersion: DEFAULT_HED_SCHEMA,
 	maxNumberOfProblems: 100,
 	validateOnChange: true,
 	debounceMs: 300,

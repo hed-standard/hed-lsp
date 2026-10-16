@@ -11,6 +11,8 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ANCHOR_KEYWORDS } from '../anchorKeywords.js';
+import { schemaManager } from '../schemaManager.js';
+import { EMBEDDING_SCHEMA_VERSION } from '../schemaVersion.js';
 
 interface ShippedKeyword {
 	keyword: string;
@@ -41,5 +43,40 @@ describe('shipped keyword embeddings', () => {
 		);
 
 		expect(mismatches, REGENERATE_HINT).toEqual([]);
+	});
+});
+
+describe('anchor targets are HED schema tags', () => {
+	it('all resolve in the embedding schema set, so extension words cannot become suggestions', async () => {
+		const extensions: string[] = [];
+		for (const target of new Set(Object.values(ANCHOR_KEYWORDS).flat())) {
+			if ((await schemaManager.findTag(target, EMBEDDING_SCHEMA_VERSION)) === null) {
+				extensions.push(target);
+			}
+		}
+
+		expect(extensions, 'Anchor targets must be HED schema tags; extensions are unbounded words.').toEqual([]);
+	});
+});
+
+describe('anchor targets have shipped vectors to vote with', () => {
+	it('every target is a shipped tag key, so a vote cannot be dropped silently', () => {
+		const db: { tags: { prefix: string; tag: string }[]; schemaVersion: string } = JSON.parse(
+			readFileSync(path.join(__dirname, '..', '..', 'data', 'tag-embeddings.compact.json'), 'utf-8'),
+		);
+		const shippedKeys = new Set(db.tags.map((t) => `${t.prefix}${t.tag}`.toLowerCase()));
+		const missing = [...new Set(Object.values(ANCHOR_KEYWORDS).flat())].filter(
+			(target) => !shippedKeys.has(target.toLowerCase()),
+		);
+
+		expect(missing, 'Anchor targets must match a shipped tag key (library prefix included).').toEqual([]);
+	});
+
+	it('the shipped data records the embedding schema version', () => {
+		const db: { schemaVersion: string } = JSON.parse(
+			readFileSync(path.join(__dirname, '..', '..', 'data', 'tag-embeddings.compact.json'), 'utf-8'),
+		);
+
+		expect(db.schemaVersion).toBe(EMBEDDING_SCHEMA_VERSION);
 	});
 });

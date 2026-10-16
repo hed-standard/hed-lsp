@@ -19,7 +19,7 @@ const PROTOTYPE_NAMED_QUERIES = ['constructor', 'toString', 'valueOf', '__proto_
 
 describe('findSuggestions with prototype-named queries', () => {
 	it.each(PROTOTYPE_NAMED_QUERIES)('returns an array of suggestions for %s', async (query) => {
-		const result = await findSuggestions(query, { schema: '8.4.0', top: 10 });
+		const result = await findSuggestions(query, { schema: '8.5.0', top: 10 });
 
 		expect(result.query).toBe(query);
 		expect(Array.isArray(result.suggestions)).toBe(true);
@@ -28,14 +28,14 @@ describe('findSuggestions with prototype-named queries', () => {
 
 describe('suggestBatch with prototype-named queries', () => {
 	it.each(PROTOTYPE_NAMED_QUERIES)('keeps an own key for %s', async (query) => {
-		const output = await suggestBatch([query], { schema: '8.4.0', top: 10 });
+		const output = await suggestBatch([query], { schema: '8.5.0', top: 10 });
 
 		expect(Object.hasOwn(output, query)).toBe(true);
 		expect(Array.isArray(output[query])).toBe(true);
 	});
 
 	it('keeps every prototype-named query through a JSON round trip', async () => {
-		const output = await suggestBatch(PROTOTYPE_NAMED_QUERIES, { schema: '8.4.0', top: 5 });
+		const output = await suggestBatch(PROTOTYPE_NAMED_QUERIES, { schema: '8.5.0', top: 5 });
 		const roundTripped = JSON.parse(JSON.stringify(output));
 
 		expect(Object.keys(roundTripped).sort()).toEqual([...PROTOTYPE_NAMED_QUERIES].sort());

@@ -15,10 +15,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildSchemasFromVersion } from 'hed-validator';
 import { ANCHOR_KEYWORDS } from '../src/anchorKeywords.js';
-import { DTYPE, MODEL_ID, NORMALIZE, POOLING } from '../src/embeddingConfig.js';
+import { DTYPE, MODEL_ID, modelCacheDir, NORMALIZE, POOLING } from '../src/embeddingConfig.js';
+import { EMBEDDING_SCHEMA_VERSION } from '../src/schemaVersion.js';
 
 // Configuration
-const SCHEMA_VERSION = '8.4.0,sc:score_2.1.0,la:lang_1.1.0';
+const SCHEMA_VERSION = EMBEDDING_SCHEMA_VERSION;
 const BATCH_SIZE = 32;
 const OUTPUT_PATH = path.join(__dirname, '..', 'data', 'tag-embeddings.json');
 
@@ -112,7 +113,11 @@ async function generateEmbeddings(
 	console.log(`\nLoading embedding model: ${MODEL_ID}`);
 	console.log('(This may take a few minutes on first run to download the model)');
 
-	const { pipeline } = await import('@huggingface/transformers');
+	const transformers = await import('@huggingface/transformers');
+	if (transformers.env) {
+		transformers.env.cacheDir = modelCacheDir();
+	}
+	const { pipeline } = transformers;
 
 	const extractor = await pipeline('feature-extraction', MODEL_ID, {
 		dtype: DTYPE,

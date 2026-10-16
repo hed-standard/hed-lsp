@@ -14,6 +14,7 @@ import {
 	DTYPE,
 	formatQuery,
 	MODEL_ID,
+	modelCacheDir,
 	NORMALIZE,
 	POOLING,
 	type QueryFormat,
@@ -110,9 +111,9 @@ class EmbeddingsManager {
 	private tagEmbeddings: Map<string, TagEmbedding> = new Map();
 	private keywordEmbeddings: KeywordEmbedding[] = [];
 	private config: EmbeddingConfig = DEFAULT_CONFIG;
-	private queryFormat: QueryFormat = DEFAULT_QUERY_FORMAT;
 	private modelLoaded = false;
 	private embeddingsLoaded = false;
+	private embedFailures = 0;
 	private dimensions = 1024; // Qwen3-Embedding-0.6B output dimension
 	private loading: Promise<boolean> | null = null;
 	private progressCallback: ProgressCallback | null = null;
@@ -284,7 +285,10 @@ class EmbeddingsManager {
 	async embed(text: string): Promise<number[] | null> {
 		if (!this.modelLoaded) {
 			const loaded = await this.initializeModel();
-			if (!loaded) return null;
+			if (!loaded) {
+				this.embedFailures++;
+				return null;
+			}
 		}
 
 		try {
@@ -297,9 +301,18 @@ class EmbeddingsManager {
 			const embedding = Array.from(output.data as Float32Array);
 			return embedding.slice(0, this.dimensions);
 		} catch (error) {
+			this.embedFailures++;
 			console.error('[HED Embeddings] Embedding failed:', error);
 			return null;
 		}
+	}
+
+	/**
+	 * Number of embed calls that failed since startup. Callers that must not score a
+	 * silent failure (the eval harness) compare this before and after a run.
+	 */
+	embedFailureCount(): number {
+		return this.embedFailures;
 	}
 
 	/**
@@ -388,7 +401,11 @@ class EmbeddingsManager {
 	 * - Tag search finds "bird" close to "Animal" directly
 	 * - Animal gets evidence from both sources → high confidence
 	 */
-	async findSimilar(query: string, topK: number = 10): Promise<SemanticMatch[]> {
+	async findSimilar(
+		query: string,
+		topK: number = 10,
+		format: QueryFormat = DEFAULT_QUERY_FORMAT,
+	): Promise<SemanticMatch[]> {
 		// Try to load pre-computed embeddings first
 		await this.loadEmbeddings();
 
@@ -405,7 +422,7 @@ class EmbeddingsManager {
 		}
 
 		// Generate query embedding for semantic search (lowercase)
-		const queryEmbedding = await this.embed(formatQuery(query.toLowerCase(), this.queryFormat));
+		const queryEmbedding = await this.embed(formatQuery(query.toLowerCase(), format));
 		if (!queryEmbedding) {
 			return [];
 		}
@@ -556,29 +573,20 @@ class EmbeddingsManager {
 	}
 
 	/**
-	 * Select how queries are wrapped before embedding. Used by the eval harness;
-	 * documents (tags and anchors) are always embedded bare.
-	 */
-	setQueryFormat(format: QueryFormat): void {
-		this.queryFormat = format;
-	}
-
-	/**
 	 * Get the cache directory path for the model.
 	 */
 	getCacheDir(): string {
-		const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-		return path.join(homeDir, '.cache', 'huggingface', 'hub');
+		return modelCacheDir();
 	}
 
 	/**
 	 * Delete the cached model to free up disk space.
 	 * Returns true if deletion was successful.
 	 */
-	async deleteCache(): Promise<boolean> {
+	async deleteCache(cacheDir: string = this.getCacheDir()): Promise<boolean> {
 		try {
-			const cacheDir = this.getCacheDir();
-			const modelDir = path.join(cacheDir, `models--${this.config.modelId.replace('/', '--')}`);
+			// Same layout isModelCached checks: <cacheDir>/<org>/<name>.
+			const modelDir = path.join(cacheDir, ...this.config.modelId.split('/'));
 
 			if (fs.existsSync(modelDir)) {
 				fs.rmSync(modelDir, { recursive: true, force: true });
@@ -588,7 +596,7 @@ class EmbeddingsManager {
 				return true;
 			}
 			console.log('[HED Embeddings] No cache to delete');
-			return true;
+			return false;
 		} catch (error) {
 			console.error('[HED Embeddings] Failed to delete cache:', error);
 			return false;
@@ -599,8 +607,8 @@ class EmbeddingsManager {
 	 * Check if the model is cached locally.
 	 */
 	isModelCached(): boolean {
-		const cacheDir = this.getCacheDir();
-		const modelDir = path.join(cacheDir, `models--${this.config.modelId.replace('/', '--')}`);
+		// transformers.js caches under <cacheDir>/<org>/<name>, not the Hub's models--org--name layout.
+		const modelDir = path.join(this.getCacheDir(), ...this.config.modelId.split('/'));
 		return fs.existsSync(modelDir);
 	}
 

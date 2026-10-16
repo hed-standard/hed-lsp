@@ -10,7 +10,7 @@ import { findSuggestions, suggestBatch } from '../suggestionEngine.js';
 
 describe('findSuggestions', () => {
 	it('returns a non-empty list for a canonical color query', async () => {
-		const result = await findSuggestions('red square', { schema: '8.4.0', top: 10 });
+		const result = await findSuggestions('red square', { schema: '8.5.0', top: 10 });
 
 		expect(result.query).toBe('red square');
 		expect(result.suggestions.length).toBeGreaterThan(0);
@@ -18,13 +18,13 @@ describe('findSuggestions', () => {
 	});
 
 	it('respects the top option', async () => {
-		const result = await findSuggestions('button', { schema: '8.4.0', top: 3 });
+		const result = await findSuggestions('button', { schema: '8.5.0', top: 3 });
 
 		expect(result.suggestions.length).toBeLessThanOrEqual(3);
 	});
 
 	it('returns deduplicated suggestions', async () => {
-		const result = await findSuggestions('red square', { schema: '8.4.0', top: 20 });
+		const result = await findSuggestions('red square', { schema: '8.5.0', top: 20 });
 
 		const unique = new Set(result.suggestions);
 		expect(unique.size).toBe(result.suggestions.length);
@@ -34,7 +34,7 @@ describe('findSuggestions', () => {
 describe('suggestBatch', () => {
 	it('returns a map keyed by each query', async () => {
 		const output = await suggestBatch(['red square', 'button press'], {
-			schema: '8.4.0',
+			schema: '8.5.0',
 			top: 5,
 		});
 
@@ -44,12 +44,12 @@ describe('suggestBatch', () => {
 	});
 
 	it('returns an empty object for an empty query list', async () => {
-		const output = await suggestBatch([], { schema: '8.4.0' });
+		const output = await suggestBatch([], { schema: '8.5.0' });
 		expect(output).toEqual({});
 	});
 
 	it('produces the same shape as the CLI --json output', async () => {
-		const output = await suggestBatch(['red'], { schema: '8.4.0', top: 5 });
+		const output = await suggestBatch(['red'], { schema: '8.5.0', top: 5 });
 
 		expect(typeof output).toBe('object');
 		expect(Array.isArray(output.red)).toBe(true);
@@ -96,7 +96,7 @@ describe('characterization of suggestion output', () => {
 	];
 
 	it.each(expected)('keeps the suggestions for %s', async (query, tags) => {
-		const output = await suggestBatch([query], { schema: '8.4.0', top: 10 });
+		const output = await suggestBatch([query], { schema: '8.5.0', top: 10 });
 		expect(output[query]).toEqual(tags);
 	});
 });

@@ -6,9 +6,10 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { DEFAULT_HED_SCHEMA } from '../schemaVersion.js';
 
 /** Schema version used to resolve the expected tags. */
-export const EVAL_SCHEMA_VERSION = '8.4.0';
+export const EVAL_SCHEMA_VERSION = DEFAULT_HED_SCHEMA;
 
 /** Default location of the committed eval set (server/eval). */
 export const EVAL_SET_PATH = path.join(__dirname, '..', '..', 'eval', 'hed-examples-pairs.json');
@@ -16,7 +17,10 @@ export const EVAL_SET_PATH = path.join(__dirname, '..', '..', 'eval', 'hed-examp
 export type EvalSplit = 'dev' | 'test';
 
 export interface EvalPair {
-	/** Stable identifier, assigned after sorting, e.g. "pair-0001". */
+	/**
+	 * Position in the sorted set, e.g. "pair-0001". Ids renumber when the set is
+	 * rebuilt from different data, so compare pairs by query and hed, not by id.
+	 */
 	id: string;
 	/** Source dataset directory, e.g. "datasets/eeg_ds004106s_hed". */
 	dataset: string;
@@ -30,9 +34,14 @@ export interface EvalPair {
 }
 
 export interface EvalSet {
-	version: 1;
+	version: 2;
+	/** The HED schema the expected tags were resolved against. */
 	schema: string;
-	source: string;
+	/** Where the pairs came from: the checkout's name and commit. */
+	/** `dirty` is true when the checkout had uncommitted changes, so `commit` does not pin the content. */
+	source: { name: string; commit: string; dirty: boolean; description: string };
+	/** Pairs dropped from the source, by reason. */
+	skipped: { parseErrors: number; noLeafTags: number };
 	pairs: EvalPair[];
 }
 
