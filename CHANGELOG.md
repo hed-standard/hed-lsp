@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The embedding model settings (model id, quantization, pooling, normalization) live in one module shared by the runtime and the generator, and a contract test records which model repositories publish the same weights.
 
 ### Fixed
+- Keyword anchors point only at HED schema tags. Anchor targets that were extension words (48 names) are removed, which drops 71 keywords that had no other target. A contract test enforces this.
+- The harness counts embedding failures directly and refuses to score a run where any query failed. It no longer infers failures from empty results.
+- `isModelCached` checks the transformers.js cache layout, where it previously checked the Hub layout.
 - Suggestion lookups no longer throw for the queries `constructor` or `__proto__`.
   Completion on a HED value with either name and `hed-suggest` or `hed/suggest`
   with either name as a query now return normally.
