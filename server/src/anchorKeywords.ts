@@ -486,7 +486,7 @@ export const ANCHOR_KEYWORDS: Record<string, string[]> = {
 	sentences: ['Sentence'],
 	text: ['Character'],
 	letters: ['Character'],
-	morpheme: ['Morpheme'],
+	morpheme: ['la:Morpheme'],
 	reading: ['Read'],
 	writing: ['Write'],
 	naming: ['Communicate-vocally'],

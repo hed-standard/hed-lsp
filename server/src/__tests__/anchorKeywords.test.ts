@@ -58,3 +58,25 @@ describe('anchor targets are HED schema tags', () => {
 		expect(extensions, 'Anchor targets must be HED schema tags; extensions are unbounded words.').toEqual([]);
 	});
 });
+
+describe('anchor targets have shipped vectors to vote with', () => {
+	it('every target is a shipped tag key, so a vote cannot be dropped silently', () => {
+		const db: { tags: { prefix: string; tag: string }[]; schemaVersion: string } = JSON.parse(
+			readFileSync(path.join(__dirname, '..', '..', 'data', 'tag-embeddings.compact.json'), 'utf-8'),
+		);
+		const shippedKeys = new Set(db.tags.map((t) => `${t.prefix}${t.tag}`.toLowerCase()));
+		const missing = [...new Set(Object.values(ANCHOR_KEYWORDS).flat())].filter(
+			(target) => !shippedKeys.has(target.toLowerCase()),
+		);
+
+		expect(missing, 'Anchor targets must match a shipped tag key (library prefix included).').toEqual([]);
+	});
+
+	it('the shipped data records the embedding schema version', () => {
+		const db: { schemaVersion: string } = JSON.parse(
+			readFileSync(path.join(__dirname, '..', '..', 'data', 'tag-embeddings.compact.json'), 'utf-8'),
+		);
+
+		expect(db.schemaVersion).toBe(EMBEDDING_SCHEMA_VERSION);
+	});
+});
