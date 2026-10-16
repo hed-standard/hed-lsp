@@ -28,6 +28,8 @@ server/out/*.js
 server/out/__tests__/**
 server/out/eval/**
 server/eval/**
+# transformers.js writes model downloads here when no cache directory is set; never ship them
+server/node_modules/@huggingface/transformers/.cache/**
 client/out/*.js
 !client/out/extension.js
 

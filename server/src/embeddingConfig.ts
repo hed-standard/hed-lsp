@@ -1,8 +1,20 @@
+import * as os from 'node:os';
+import * as path from 'node:path';
+
 /**
  * Embedding model settings shared by the runtime (embeddings.ts) and the
  * generator (scripts/generateEmbeddings.ts), so the vectors that were stored
  * and the query vectors computed at runtime come from the same configuration.
  */
+
+/**
+ * Directory where transformers.js caches model files. The runtime and the generator must
+ * share it; otherwise the generator downloads a second copy into the package directory.
+ */
+export function modelCacheDir(): string {
+	const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
+	return path.join(homeDir, '.cache', 'huggingface', 'hub');
+}
 
 /** Model repository used at runtime and by the generator. */
 export const MODEL_ID = 'neuromechanist/Qwen3-Embedding-0.6B-ONNX-Q8';

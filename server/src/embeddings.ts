@@ -14,6 +14,7 @@ import {
 	DTYPE,
 	formatQuery,
 	MODEL_ID,
+	modelCacheDir,
 	NORMALIZE,
 	POOLING,
 	type QueryFormat,
@@ -575,8 +576,7 @@ class EmbeddingsManager {
 	 * Get the cache directory path for the model.
 	 */
 	getCacheDir(): string {
-		const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-		return path.join(homeDir, '.cache', 'huggingface', 'hub');
+		return modelCacheDir();
 	}
 
 	/**
