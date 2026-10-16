@@ -318,6 +318,7 @@ Each client has a bucket of units that refills at `RATE_ITEMS_PER_SEC` up to `RA
   A charge is for the request and not for its result, so a request that is refused for its rate, its schema, a full queue, a timeout, or a daemon that is busy or starting keeps what it paid, the door included.
   A client that is over its rate gets 429 `RATE_LIMITED` with `Retry-After`, the whole seconds after which the same request would pass, counting the door that the next attempt pays again.
 - The buckets read a monotonic clock, so a change of the system clock does not stop a bucket from refilling or end a schema backoff early.
+  The uptime in health and the time of each request read it too, so neither jumps or goes negative when the system clock is set.
 
 ### Who a client is
 

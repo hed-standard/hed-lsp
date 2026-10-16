@@ -12,11 +12,12 @@
  * quotes a name right after the word from, such as differs from `spec`, reads as an import and is
  * reworded.
  *
- * A second check, in the same style, keeps the wall clock out of the modules that enforce limits: the
- * rate buckets, the schema backoff, and the semantic backoff take their time as a parameter or from a
- * monotonic clock, so a step of the system clock cannot change a limit. It reads their source for a
- * use of `Date.now`, call or reference, comments included, so a comment names the wall clock in
- * other words.
+ * A second check, in the same style, keeps the wall clock out of the modules that enforce limits and
+ * out of the server: the rate buckets, the schema backoff, the semantic backoff, and the server, with
+ * its clock default and its uptime, take their time as a parameter or from a monotonic clock, so a
+ * step of the system clock cannot change a limit or an uptime. It reads their source for a use of
+ * `Date.now`, call or reference, comments included, so a comment names the wall clock in other
+ * words. Log timestamps use `new Date()`, which it does not flag.
  */
 
 import * as fs from 'node:fs';
@@ -323,11 +324,12 @@ describe('daemon boundary', () => {
 });
 
 /**
- * The daemon modules whose limits depend on time: the rate buckets and the client table, the schema
- * backoff, and the semantic backoff. Uptime and log timestamps are not limits and may read the wall
- * clock, so `server.ts` and `log.ts` are not in this list.
+ * The daemon modules whose time must not come from the wall clock: the rate buckets and the client
+ * table, the schema backoff, the semantic backoff, and the server, which picks the default clock of
+ * the limits and reads the start time and the uptime. A log timestamp is a date and not a duration,
+ * so `log.ts` reads `new Date()` and is not in this list.
  */
-const limitModules = ['limits.ts', 'schemas.ts', 'semantic.ts'];
+const limitModules = ['limits.ts', 'schemas.ts', 'semantic.ts', 'server.ts'];
 
 /** A use of the wall clock through `Date.now`: a call, or a reference such as `options.now ?? Date.now`. */
 const WALL_CLOCK_PATTERN = /\bDate\s*\.\s*now\b/g;
@@ -352,6 +354,24 @@ describe('daemon limit clocks', () => {
 	});
 
 	describe('rule', () => {
+		it('catches a Date.now written into the source of server.ts, in each place a clock is read', () => {
+			const source = fs.readFileSync(path.join(daemonDir, 'server.ts'), 'utf-8');
+			const mutants = [
+				source.replace('const startedAt = performance.now();', 'const startedAt = Date.now();'),
+				source.replace('options.now ?? monotonicNow', 'options.now ?? Date.now'),
+				source.replace(
+					'Math.floor((performance.now() - startedAt) / 1000)',
+					'Math.floor((Date.now() - startedAt) / 1000)',
+				),
+			];
+
+			expect(wallClockReadsIn(source)).toEqual([]);
+			for (const mutant of mutants) {
+				expect(mutant).not.toBe(source);
+				expect(wallClockReadsIn(mutant)).toHaveLength(1);
+			}
+		});
+
 		it.each([
 			'const now = Date.now();',
 			'const started = Date.now()',

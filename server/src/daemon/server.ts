@@ -623,7 +623,7 @@ export function validateItem(
 export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}): Daemon {
 	const logger = createLogger(options.write);
 	const previousSink = setLogger(engineSink(logger));
-	const startedAt = Date.now();
+	const startedAt = performance.now();
 	const version = options.version ?? readPackageVersion(__dirname);
 	const registry = new SchemaRegistry(config, { now: options.now, logger });
 	const semantic = new SemanticService(config, { logger, backoff: options.semanticBackoff });
@@ -666,7 +666,7 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 			commit: config.commit,
 			schemas: { default: registry.defaultSpec, degraded },
 			semantic: semantic.snapshot(),
-			uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
+			uptimeSeconds: Math.floor((performance.now() - startedAt) / 1000),
 		};
 		return starting ? { status: 503, body, headers: { 'Retry-After': '1' } } : { status: 200, body };
 	}

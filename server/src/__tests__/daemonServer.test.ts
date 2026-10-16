@@ -60,6 +60,19 @@ describe('GET /v1/health', () => {
 		});
 	});
 
+	it('counts the uptime in whole seconds from the start of the daemon', async () => {
+		const { url } = await start();
+		const early = (await call(url, '/v1/health')).json.uptimeSeconds;
+		await sleep(1100);
+		const later = (await call(url, '/v1/health')).json.uptimeSeconds;
+
+		expect(Number.isInteger(early)).toBe(true);
+		expect(early).toBeGreaterThanOrEqual(0);
+		expect(early).toBeLessThan(3);
+		expect(later).toBeGreaterThanOrEqual(early + 1);
+		expect(later).toBeLessThan(early + 4);
+	});
+
 	it('reports a commit of unknown when none is configured', async () => {
 		const { url } = await start();
 
