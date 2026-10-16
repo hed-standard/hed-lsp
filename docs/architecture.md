@@ -58,7 +58,9 @@ sequenceDiagram
 
 ### Server Components
 
-The server is split into an engine and adapters. The engine (`server/src/engine/`) is pure: it has no language-server imports, and a boundary test enforces that. Adapters translate between the engine and an editor or a command line. A daemon adapter over the same engine is planned.
+The server is split into an engine and adapters. The engine (`server/src/engine/`) is pure: it has no language-server imports, and a boundary test enforces that. Adapters translate between the engine and an editor, a command line, or an HTTP client.
+There are three: the language server, the `hed-suggest` command line tool, and the HTTP daemon in `server/src/daemon/`, which is described in [HTTP Daemon](./daemon.md).
+The daemon may import its own modules, the engine facade `engine/index.ts`, and node built-ins, and nothing else; the boundary test enforces that too.
 
 ```mermaid
 graph TB
@@ -67,6 +69,7 @@ graph TB
         A --> C[completion.ts]
         A --> D[hover.ts]
         E[cli.ts: hed-suggest]
+        N[daemon/: HTTP v1 API]
     end
 
     subgraph "Engine (server/src/engine)"
@@ -93,11 +96,51 @@ graph TB
     C --> J
     D --> J
     E --> H
+    N --> F
     F --> I
     F --> J
 ```
 
 Engine log lines go to stderr by default, so the CLI JSON on stdout stays clean. The language server sends them to its console, one string per message. Under `--stdio` the client receives them as log messages; under IPC, info lines go to stdout and error lines go to stderr.
+
+### Daemon Request Lifecycle
+
+Every request to the daemon follows the same path.
+Limits are checked in the order that is cheapest first, so a refused request costs the least work.
+
+```mermaid
+flowchart TD
+    A[Request arrives] --> B[Assign request ID, CORS headers, client key, start timeout timer]
+    B --> C{GET /v1/health?}
+    C -->|Yes| H[Answer health, no limits]
+    C -->|No| D[Pay the door unit]
+    D -->|Bucket empty| X1[429 RATE_LIMITED]
+    D --> E{Route and method known?}
+    E -->|No| X2[404, 405, or 204 for OPTIONS]
+    E -->|Yes| F{Default schema loaded?}
+    F -->|No| X3[503 STARTING]
+    F -->|Yes| G{In-flight slot free?}
+    G -->|No| X4[503 OVERLOADED]
+    G -->|Yes| I[Read body: media type, size, JSON, fields]
+    I -->|Refused| X5[415, 413, or 400]
+    I --> J[Check batch and item limits, choose schema]
+    J -->|Refused| X6[400 BATCH_TOO_LARGE or UNKNOWN_SCHEMA]
+    J --> K[Charge the units for the text, by length]
+    K -->|Over the rate| X1
+    K --> L[Ensure the schema is loaded]
+    L -->|In backoff| X7[503 SCHEMA_UNAVAILABLE]
+    L --> M{Semantic search runs?}
+    M -->|Yes| N[Wait for the semantic slot or queue]
+    N -->|Queue full| X8[503 SEMANTIC_BUSY]
+    M -->|No| O[Run each item through the engine]
+    N --> O
+    O --> P[Bound the answer, build the response]
+    P --> Q[Send JSON and write one log line]
+```
+
+Two timers surround this path.
+The request timer, `REQUEST_TIMEOUT_MS`, starts when the headers arrive and answers 503 `TIMEOUT` if the whole path, queue wait included, has not finished; the work stops at its next item.
+The in-flight slot is held from the moment the headers arrive until the work has stopped, so the cap counts work that is still running after a timeout.
 
 ### Data Flow for Validation
 
@@ -172,6 +215,13 @@ hed-lsp/
 │   │   │   ├── embeddings.ts # Semantic search
 │   │   │   └── log.ts      # Engine logging (stderr by default)
 │   │   ├── server.ts       # LSP connection & routing
+│   │   ├── daemon/         # HTTP adapter: v1 API, limits, entry point, load harness
+│   │   │   ├── server.ts   # Routing, envelope, endpoints, limits
+│   │   │   ├── config.ts   # HED_LSP_* settings
+│   │   │   ├── limits.ts   # Buckets, client table, slots
+│   │   │   ├── schemas.ts  # Schema allowlist and backoff
+│   │   │   ├── semantic.ts # Semantic state, slot, queue
+│   │   │   └── main.ts     # Entry point
 │   │   ├── completion.ts   # Autocomplete logic (adapter)
 │   │   ├── diagnostics.ts  # Validation to LSP diagnostics (adapter)
 │   │   ├── hover.ts        # Hover information (adapter)
@@ -185,6 +235,9 @@ hed-lsp/
 │   └── tsconfig.json
 │
 ├── docs/                   # Documentation
+├── Dockerfile              # Daemon image (linux/amd64)
+├── scripts/
+│   └── daemon-smoke.sh     # Smoke test for a running daemon or image
 ├── package.json            # Root workspace
 └── tsconfig.json           # Root TypeScript config
 ```

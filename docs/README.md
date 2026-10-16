@@ -18,6 +18,7 @@ HED-LSP provides intelligent editing support for [HED (Hierarchical Event Descri
 | [Architecture](./architecture.md) | Overall system design and component interaction |
 | [Completion System](./completion.md) | How autocomplete works, including trigger logic |
 | [Semantic Search](./semantic-search.md) | Dual-embedding architecture for intelligent suggestions |
+| [HTTP Daemon](./daemon.md) | The v1 API, limits and settings, logging, and the container image |
 | [Extending](./extending.md) | How to add new keywords and customize behavior |
 
 ## Quick Start
@@ -83,6 +84,18 @@ graph TB
 | `embeddings.ts` | Semantic search with dual-embedding |
 | `suggestionEngine.ts` | Suggestion cascade shared by the server, CLI, and eval tooling |
 | `log.ts` | Engine logger, stderr by default |
+
+### Daemon (`server/src/daemon/`)
+
+| File | Purpose |
+|------|---------|
+| `server.ts` | HTTP routing, the v1 envelope, the endpoints, and the limits |
+| `config.ts` | `HED_LSP_*` settings, validated at startup |
+| `limits.ts` | Token buckets, the bounded client table, and in-flight slots |
+| `schemas.ts` | Schema allowlist, load state, and backoff |
+| `semantic.ts` | Semantic state machine, slot, and queue |
+| `main.ts` | Entry point |
+| `loadTest.ts` | Load harness |
 
 ### Client (`client/src/`)
 

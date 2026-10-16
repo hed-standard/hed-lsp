@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- HTTP daemon, the third adapter over the engine (`server/src/daemon/`, run with `node out/daemon/main.js` or the `hed-lsp-daemon` command). Version 1 of the API has `GET /v1/health`, `GET /v1/schemas`, `POST /v1/validate`, and `POST /v1/suggest`, with one error envelope, CORS, and a request ID on every response. Every limit is a `HED_LSP_*` variable with a documented default: body size, batch sizes, string and query lengths, bounded validate output (issues per string, message length, and message text per response), per-client rates charged by the length of text, requests in flight, timeouts, and a schema allowlist. Semantic search is off by default and is loaded in the background when enabled. The daemon logs no request text and no IP addresses. See `docs/daemon.md`.
+- Container image for the daemon (`Dockerfile`): Bun build stage and Node 22 slim runtime, both pinned by digest, for `linux/amd64`, with a health check. A new `image` CI job builds it and runs `scripts/daemon-smoke.sh` for pull requests into `main` and pushes to `main`, once normally and once with no network. A `publish-image` job pushes the tested image to `ghcr.io/hed-standard/hed-lsp-daemon` from `main`, behind the `ghcr-publish` environment, tagged with the package version and `sha-<short commit>`.
+- Load harness for the daemon (`node out/daemon/loadTest.js`): a weighted mix of suggest, validate, and semantic requests built from the evaluation set, with latency percentiles, error rate, 429 and 503 counts by error code, throughput, and health before and after.
+- `schemaVersionUsed(spec)` in the engine facade reports the schema version that actually loaded, including when the bundled 8.4.0 stood in for 8.5.0, and `embeddingsManager.setRuntimeOptions` sets the embedding threads and whether the model may be downloaded. Defaults leave the language server and the CLI unchanged.
 - Engine facade (`server/src/engine/index.ts`) with `validate(hed, { schema })`, which validates against an explicit schema version without changing global state. Engine modules have no language-server imports, enforced by a boundary test.
 - Transport tests: the language server runs as a child process over JSON-RPC on stdio, and the CLI is checked for JSON-only stdout.
 - Semantic-search eval set of 206 description-to-HED pairs from `hed-examples`, with a harness that reports hit@10, recall@10, and MRR against the raw baseline. The query-instruction experiment ran on the dev split and was negative under fixed thresholds. The verdict is unchanged, but this release regenerates the index and cuts anchor targets, so search results change. See `docs/semantic-search.md`.
@@ -21,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contract test fails when the shipped keyword embeddings drift from it.
 
 ### Fixed
+- A suggestion query that fails no longer empties the whole batch (#60). `suggestBatch`, and so `hed/suggest` and `hed-suggest`, log the failure and leave that query out, so the other queries return. An absent key means the query failed, and an empty list means it found no matches.
 - Keyword anchors point only at HED schema tags. Anchor targets that were extension words (48 names) are removed, which drops 71 keywords that had no other target. A contract test enforces this.
 - The harness counts embedding failures directly and refuses to score a run where any query failed. It no longer infers failures from empty results.
 - `isModelCached` checks the transformers.js cache layout, where it previously checked the Hub layout.
