@@ -26,6 +26,8 @@ tsconfig.json
 server/out/*.js
 !server/out/server.js
 server/out/__tests__/**
+server/out/eval/**
+server/eval/**
 client/out/*.js
 !client/out/extension.js
 

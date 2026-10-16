@@ -9,7 +9,15 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ANCHOR_KEYWORDS } from './anchorKeywords.js';
-import { DTYPE, MODEL_ID, NORMALIZE, POOLING } from './embeddingConfig.js';
+import {
+	DEFAULT_QUERY_FORMAT,
+	DTYPE,
+	formatQuery,
+	MODEL_ID,
+	NORMALIZE,
+	POOLING,
+	type QueryFormat,
+} from './embeddingConfig.js';
 import { lookupOwn } from './keywordLookup.js';
 
 // Dynamic import for transformers.js (ES module)
@@ -102,6 +110,7 @@ class EmbeddingsManager {
 	private tagEmbeddings: Map<string, TagEmbedding> = new Map();
 	private keywordEmbeddings: KeywordEmbedding[] = [];
 	private config: EmbeddingConfig = DEFAULT_CONFIG;
+	private queryFormat: QueryFormat = DEFAULT_QUERY_FORMAT;
 	private modelLoaded = false;
 	private embeddingsLoaded = false;
 	private dimensions = 1024; // Qwen3-Embedding-0.6B output dimension
@@ -396,7 +405,7 @@ class EmbeddingsManager {
 		}
 
 		// Generate query embedding for semantic search (lowercase)
-		const queryEmbedding = await this.embed(query.toLowerCase());
+		const queryEmbedding = await this.embed(formatQuery(query.toLowerCase(), this.queryFormat));
 		if (!queryEmbedding) {
 			return [];
 		}
@@ -544,6 +553,14 @@ class EmbeddingsManager {
 	 */
 	setEnabled(enabled: boolean): void {
 		this.config.enabled = enabled;
+	}
+
+	/**
+	 * Select how queries are wrapped before embedding. Used by the eval harness;
+	 * documents (tags and anchors) are always embedded bare.
+	 */
+	setQueryFormat(format: QueryFormat): void {
+		this.queryFormat = format;
 	}
 
 	/**

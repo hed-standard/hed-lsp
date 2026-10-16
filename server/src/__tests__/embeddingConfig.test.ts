@@ -8,7 +8,15 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { DTYPE, EQUIVALENT_MODEL_IDS, MODEL_ID, NORMALIZE, POOLING } from '../embeddingConfig.js';
+import {
+	DEFAULT_QUERY_FORMAT,
+	DTYPE,
+	EQUIVALENT_MODEL_IDS,
+	formatQuery,
+	MODEL_ID,
+	NORMALIZE,
+	POOLING,
+} from '../embeddingConfig.js';
 
 function loadShippedModelId(): string {
 	const dataPath = path.join(__dirname, '..', '..', 'data', 'tag-embeddings.compact.json');
@@ -34,5 +42,24 @@ describe('embedding model configuration', () => {
 			normalize: true,
 			dtype: 'uint8',
 		});
+	});
+});
+
+describe('formatQuery', () => {
+	it('leaves the query unchanged in the default (raw) format', () => {
+		expect(DEFAULT_QUERY_FORMAT).toBe('raw');
+		expect(formatQuery('pupil dilation')).toBe('pupil dilation');
+	});
+
+	it('wraps the query with the Qwen retrieval instruction', () => {
+		expect(formatQuery('pupil dilation', 'qwen')).toBe(
+			'Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:pupil dilation',
+		);
+	});
+
+	it('wraps the query with the HED-specific instruction', () => {
+		expect(formatQuery('pupil dilation', 'hed')).toBe(
+			'Instruct: Given a description of an experimental event, retrieve the matching HED tag\nQuery:pupil dilation',
+		);
 	});
 });
