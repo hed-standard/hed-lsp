@@ -43,7 +43,7 @@ interface Flood {
  * Send `head`, then a body of `total` bytes in pieces that honor back pressure, until the connection
  * ends or the whole body is sent. A connection still open after the whole body is the test giving up.
  */
-function flood(port: number, head: string, total = TOTAL): Promise<Flood> {
+function flood(port: number, head: string, chunked: boolean, total = TOTAL): Promise<Flood> {
 	return new Promise((resolve) => {
 		const socket = net.connect(port, '127.0.0.1');
 		const piece = Buffer.alloc(64 * 1024, 0x61);
@@ -64,7 +64,14 @@ function flood(port: number, head: string, total = TOTAL): Promise<Flood> {
 			while (sent < total && !socket.destroyed) {
 				const size = Math.min(piece.length, total - sent);
 				sent += size;
-				if (!socket.write(size === piece.length ? piece : piece.subarray(0, size))) {
+				if (chunked) {
+					socket.write(`${size.toString(16)}\r\n`);
+				}
+				const wrote = socket.write(size === piece.length ? piece : piece.subarray(0, size));
+				if (chunked) {
+					socket.write('\r\n');
+				}
+				if (!wrote) {
 					socket.once('drain', pump);
 					return;
 				}
@@ -81,14 +88,15 @@ function flood(port: number, head: string, total = TOTAL): Promise<Flood> {
 	});
 }
 
-/** The request line and headers of a request that promises `TOTAL` bytes of body. */
-function head(method: string, path: string, headers: Record<string, string> = {}): string {
+/** The request line and headers of a request that promises `TOTAL` bytes of body, or sends it chunked. */
+function head(method: string, path: string, headers: Record<string, string> = {}, chunked = false): string {
 	const lines = [
 		`${method} ${path} HTTP/1.1`,
 		'Host: localhost',
 		...Object.entries(headers).map(([k, v]) => `${k}: ${v}`),
 	];
-	return `${lines.join('\r\n')}\r\nContent-Length: ${TOTAL}\r\n\r\n`;
+	const framing = chunked ? 'Transfer-Encoding: chunked' : `Content-Length: ${TOTAL}`;
+	return `${lines.join('\r\n')}\r\n${framing}\r\n\r\n`;
 }
 
 const JSON_TYPE = { 'Content-Type': 'application/json' };
@@ -105,6 +113,8 @@ interface Refusal {
 	/** Bring the daemon into the state the refusal needs; returns what to do afterward. */
 	prepare?: (daemon: RunningDaemon) => Promise<() => Promise<void>>;
 	request: string;
+	/** Whether the body of the request is sent chunked, as the request line promises. */
+	chunked?: boolean;
 	/** The error code the request log line carries, when the request is an error. */
 	code?: string;
 }
@@ -119,6 +129,12 @@ const REFUSALS: Refusal[] = [
 		label: 'an unsupported media type (415)',
 		request: head('POST', '/v1/validate', { 'Content-Type': 'text/plain' }),
 		code: 'UNSUPPORTED_MEDIA_TYPE',
+	},
+	{
+		label: 'a body of unknown length (411)',
+		request: head('POST', '/v1/validate', JSON_TYPE, true),
+		chunked: true,
+		code: 'LENGTH_REQUIRED',
 	},
 	{ label: 'an unknown path (404)', request: head('POST', '/v1/nothing', JSON_TYPE), code: 'NOT_FOUND' },
 	{
@@ -165,7 +181,7 @@ describe('a request body that is refused without being read', () => {
 			const daemon = await start({ HED_LSP_MAX_BODY_BYTES: LIMIT, ...refusal.overrides }, refusal.options);
 			const after = await refusal.prepare?.(daemon);
 
-			const result = await flood(portOf(daemon), refusal.request);
+			const result = await flood(portOf(daemon), refusal.request, refusal.chunked ?? false);
 
 			expect(result.cutByDaemon, 'the daemon ended the connection').toBe(true);
 			expect(result.sent).toBeLessThan(TOTAL);

@@ -9,6 +9,7 @@
 
 import * as net from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
+import { doorCost } from '../daemon/server.js';
 import {
 	BUNDLED,
 	call,
@@ -32,6 +33,9 @@ async function start(...args: Parameters<typeof startDaemon>): Promise<RunningDa
 afterEach(async () => {
 	await Promise.all(running.splice(0).map((daemon) => daemon.stop()));
 });
+
+/** A spec that does not exist, so loading it fails for real. */
+const MISSING = '8.4.0,sc:score_9.9.9';
 
 const VALID = 'Sensory-event, Visual-presentation';
 
@@ -67,16 +71,18 @@ describe('rate limits charged by item', () => {
 
 		const first = await postJson(url, '/v1/validate', strings(3));
 		const second = await postJson(url, '/v1/validate', strings(3));
-		const third = await postJson(url, '/v1/validate', strings(2));
+		const third = await postJson(url, '/v1/validate', strings(1));
 		const fourth = await postJson(url, '/v1/validate', strings(1));
 
 		expect(first.status).toBe(200);
 		expect(second.status).toBe(429);
 		expect(second.json.error.code).toBe('RATE_LIMITED');
 		expect(second.json.requestId).toBe(second.headers['x-request-id']);
-		expect(second.headers['retry-after']).toBe('1');
+		// Two units were left and the refused request kept its door unit, so one is left, and the same
+		// request would need the door again and two more: three units, with one on hand.
+		expect(second.headers['retry-after']).toBe('2');
 		expect(second.headers['access-control-allow-origin']).toBe('*');
-		// The refused request took nothing, so the two items left were still there.
+		// A charge is for the request, not its result: the refusal kept the unit it paid at the door.
 		expect(third.status).toBe(200);
 		expect(fourth.status).toBe(429);
 	});
@@ -99,17 +105,20 @@ describe('rate limits charged by item', () => {
 		const { url } = await start({ HED_LSP_RATE_ITEMS_PER_SEC: '1', HED_LSP_RATE_ITEMS_BURST: '4' }, { now: clock.now });
 		expect((await postJson(url, '/v1/validate', strings(3))).status).toBe(200);
 
-		// One unit is left, and three are needed.
+		// One unit is left. The refusal keeps the door unit, which leaves none, and the request would
+		// pay the door again and two more, so it needs three units.
 		const refused = await postJson(url, '/v1/validate', strings(3));
 		expect(refused.status).toBe(429);
-		expect(refused.headers['retry-after']).toBe('2');
+		expect(refused.headers['retry-after']).toBe('3');
 
-		clock.advance(1999);
+		// A moment short of the wait is refused again, and that attempt pays its door once more.
+		clock.advance(2999);
 		const almost = await postJson(url, '/v1/validate', strings(3));
 		expect(almost.status).toBe(429);
-		expect(almost.headers['retry-after']).toBe('1');
+		expect(almost.headers['retry-after']).toBe('2');
 
-		clock.advance(1000);
+		// Waiting exactly as long as the answer said lets the request through.
+		clock.advance(2000);
 		expect((await postJson(url, '/v1/validate', strings(3))).status).toBe(200);
 	});
 
@@ -291,6 +300,107 @@ describe('rate limits charged by item', () => {
 	});
 });
 
+describe('the door charged by body length, and refusals that keep their charge', () => {
+	/** A request that is refused as UNKNOWN_FIELD after its body is read, with a body of about `bytes` bytes. */
+	function padded(bytes: number): string {
+		const overhead = '{"strings":[],"pad":""}'.length;
+		return `{"strings":[],"pad":"${'a'.repeat(bytes - overhead)}"}`;
+	}
+
+	it('charges a POST one unit for each 4096 bytes it declares, rounded up, before it is read', async () => {
+		const clock = manualClock();
+		const { url } = await start(
+			{ HED_LSP_RATE_ITEMS_PER_SEC: '1', HED_LSP_RATE_ITEMS_BURST: '10' },
+			{ now: clock.now },
+		);
+		const body = padded(2 * 4096 + 1);
+		expect(doorCost('POST', String(Buffer.byteLength(body)))).toBe(3);
+
+		// The body is refused for its unknown field, and the door took 3 of the 10 units.
+		const refused = await postJson(url, '/v1/validate', body);
+		// Seven units are left: a request of seven strings takes them all, and the next finds none.
+		const seven = await postJson(url, '/v1/validate', strings(7));
+		const none = await postJson(url, '/v1/validate', strings(1));
+
+		expect(refused.status).toBe(400);
+		expect(refused.json.error.code).toBe('UNKNOWN_FIELD');
+		expect([seven.status, none.status]).toEqual([200, 429]);
+	});
+
+	it('charges a body of exactly 4096 bytes one unit and one byte more two', () => {
+		expect([0, 1, 4096].map((bytes) => doorCost('POST', String(bytes)))).toEqual([1, 1, 1]);
+		expect([4097, 8192].map((bytes) => doorCost('POST', String(bytes)))).toEqual([2, 2]);
+		expect(doorCost('POST', String(8193))).toBe(3);
+	});
+
+	it.each(['GET', 'OPTIONS', 'PUT', 'DELETE'])('charges a %s one unit whatever it declares', (method) => {
+		expect(doorCost(method, String(10_000_000))).toBe(1);
+	});
+
+	it('charges a POST without a usable length one unit', () => {
+		expect([undefined, '', '-5', '1.5', 'abc'].map((length) => doorCost('POST', length))).toEqual([1, 1, 1, 1, 1]);
+	});
+
+	it('charges a declared length past the burst as the whole burst, even when the body is refused unread', async () => {
+		const clock = manualClock();
+		const { url } = await start(
+			{ HED_LSP_RATE_ITEMS_PER_SEC: '1', HED_LSP_RATE_ITEMS_BURST: '50' },
+			{ now: clock.now },
+		);
+		const held = holdRequest(url, '/v1/validate', { length: 100 * 1024 * 1024, first: '{"strings"' });
+
+		const tooLarge = await held.response;
+		held.abandon();
+		const next = await postJson(url, '/v1/validate', strings(1));
+
+		expect(tooLarge.status).toBe(413);
+		expect(next.status).toBe(429);
+	});
+
+	it('refuses a second large POST once the first has used most of the burst, and keeps refusing', async () => {
+		const clock = manualClock();
+		const { url } = await start({ HED_LSP_RATE_ITEMS_PER_SEC: '1', HED_LSP_RATE_ITEMS_BURST: '5' }, { now: clock.now });
+		const body = padded(3 * 4096);
+		expect(doorCost('POST', String(Buffer.byteLength(body)))).toBe(3);
+
+		const statuses = [];
+		for (let i = 0; i < 3; i++) {
+			statuses.push((await postJson(url, '/v1/validate', body)).status);
+		}
+
+		// Five units pay for one door of three, and the second finds two.
+		expect(statuses).toEqual([400, 429, 429]);
+	});
+
+	it('keeps the charge of a request that is refused because its schema is unavailable', async () => {
+		const clock = manualClock();
+		const { url } = await start(
+			{ ...FIVE_ITEMS, HED_LSP_SCHEMAS: `${BUNDLED};${MISSING}`, HED_LSP_DEFAULT_SCHEMA: BUNDLED },
+			{ now: clock.now },
+		);
+		await waitFor(
+			async () => {
+				clock.advance(1000);
+				return (await call(url, '/v1/schemas')).json.schemas[1].status === 'failed';
+			},
+			5000,
+			'the spec to fail',
+		);
+		// Five seconds refill the bucket, and stay well inside the 30 second backoff of the failed schema.
+		clock.advance(5000);
+
+		const unavailable = await postJson(url, '/v1/validate', { ...strings(3), schema: MISSING });
+		// A full bucket held five units, and the refused request spent three of them.
+		const next = await postJson(url, '/v1/validate', strings(3));
+		// The refusal of the second request kept its door unit, so one unit is left.
+		const last = await postJson(url, '/v1/validate', strings(1));
+
+		expect(unavailable.status).toBe(503);
+		expect(unavailable.json.error.code).toBe('SCHEMA_UNAVAILABLE');
+		expect([next.status, last.status]).toEqual([429, 200]);
+	});
+});
+
 describe('rate limits charged by length of text', () => {
 	const config = testConfig();
 	const perUnit = config.chargeCharsPerUnit;
@@ -318,8 +428,10 @@ describe('rate limits charged by length of text', () => {
 		expect(long.status).toBe(expectedStatus);
 		if (expectedStatus === 429) {
 			expect(long.json.error.code).toBe('RATE_LIMITED');
-			expect(long.headers['retry-after']).toBe('1');
-			// The refusal took nothing, so the units left still serve ordinary strings.
+			// The body of about 4 KB paid 2 units at the door, which the refusal kept, so 13 are left and
+			// the same request needs all 16 again: three more units, so three seconds.
+			expect(long.headers['retry-after']).toBe('3');
+			// What the refusal left still serves ordinary strings.
 			expect((await postJson(url, '/v1/validate', strings(1))).status).toBe(200);
 		}
 	});
@@ -330,13 +442,18 @@ describe('rate limits charged by length of text', () => {
 		const exact = 'a'.repeat(perUnit);
 		const oneMore = 'a'.repeat(perUnit + 1);
 
-		const twoCostly = await postJson(url, '/v1/validate', { strings: [oneMore, oneMore] });
-		const tooCostly = await postJson(url, '/v1/validate', { strings: [oneMore] });
-		const ordinary = await postJson(url, '/v1/validate', { strings: [exact] });
-		const empty = await postJson(url, '/v1/validate', { strings: ['a'] });
+		// Each client has its own bucket of five, and spends four of them on two long strings.
+		const send = (client: string, strings: string[]): Promise<number> =>
+			postJson(url, '/v1/validate', { strings }, { 'X-Forwarded-For': client }).then((reply) => reply.status);
 
-		// Four units, then two wanted with one left, then the last unit, then none.
-		expect([twoCostly.status, tooCostly.status, ordinary.status, empty.status]).toEqual([200, 429, 200, 429]);
+		const spent = [await send('203.0.113.1', [oneMore, oneMore]), await send('203.0.113.2', [oneMore, oneMore])];
+		// One unit is left. A string of exactly the unit costs it, and one character more costs two.
+		const exactFits = await send('203.0.113.1', [exact]);
+		const nothingLeft = await send('203.0.113.1', ['a']);
+		const oneMoreRefused = await send('203.0.113.2', [oneMore]);
+
+		expect(spent).toEqual([200, 200]);
+		expect([exactFits, nothingLeft, oneMoreRefused]).toEqual([200, 429, 429]);
 	});
 
 	it('charges an ordinary string one unit, so a request of short strings costs what it did by count', async () => {
@@ -358,11 +475,17 @@ describe('rate limits charged by length of text', () => {
 		const long = 'a'.repeat(perUnit + 1);
 		expect(long.length).toBeLessThanOrEqual(config.maxQueryChars);
 
-		const twoCostly = await postJson(url, '/v1/suggest', { queries: [long, long] });
-		const tooCostly = await postJson(url, '/v1/suggest', { queries: [long] });
-		const ordinary = await postJson(url, '/v1/suggest', { queries: ['a'] });
+		// Each client has its own bucket of five, and spends four of them on two long queries.
+		const send = (client: string, queries: string[]): Promise<number> =>
+			postJson(url, '/v1/suggest', { queries }, { 'X-Forwarded-For': client }).then((reply) => reply.status);
 
-		expect([twoCostly.status, tooCostly.status, ordinary.status]).toEqual([200, 429, 200]);
+		const spent = [await send('203.0.113.1', [long, long]), await send('203.0.113.2', [long, long])];
+		// One unit is left: an ordinary query fits, and a query of one character over the unit does not.
+		const ordinaryFits = await send('203.0.113.1', ['a']);
+		const longRefused = await send('203.0.113.2', [long]);
+
+		expect(spent).toEqual([200, 200]);
+		expect([ordinaryFits, longRefused]).toEqual([200, 429]);
 	});
 
 	it('charges an item that is not a string one unit', async () => {

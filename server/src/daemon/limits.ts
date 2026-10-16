@@ -54,12 +54,6 @@ export class TokenBucket {
 		return result;
 	}
 
-	/** Give back `cost` tokens at time `now` (milliseconds), up to the burst: the undo of a `take`. */
-	refund(cost: number, now: number): void {
-		this.refill(now);
-		this.tokens = Math.min(this.burst, this.tokens + cost);
-	}
-
 	private refill(now: number): void {
 		// A clock that steps backwards adds nothing.
 		const elapsedSeconds = Math.max(0, now - this.last) / 1000;

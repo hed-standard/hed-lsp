@@ -97,21 +97,6 @@ describe('TokenBucket', () => {
 		expect(bucket.take(2, 1000)).toEqual({ allowed: true });
 		expect(bucket.check(1, 1000).allowed).toBe(false);
 	});
-
-	it('gives tokens back with a refund, never above the burst', () => {
-		const bucket = new TokenBucket(1, 5, 0);
-		bucket.take(5, 0);
-		expect(bucket.check(1, 0).allowed).toBe(false);
-
-		bucket.refund(2, 0);
-
-		expect(bucket.take(2, 0)).toEqual({ allowed: true });
-		expect(bucket.check(1, 0).allowed).toBe(false);
-		// A refund that would pass the burst stops at it.
-		bucket.refund(100, 0);
-		expect(bucket.take(5, 0)).toEqual({ allowed: true });
-		expect(bucket.check(1, 0).allowed).toBe(false);
-	});
 });
 
 describe('SlotLimiter', () => {

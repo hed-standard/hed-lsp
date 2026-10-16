@@ -2,12 +2,14 @@
  * The HTTP adapter for the HED engine: routing, the v1 envelope, the endpoints, and the limits. A
  * request gets a fresh ID, CORS headers, and exactly one JSON response; a failure is an ApiError
  * that becomes the error envelope, and anything else becomes a generic 500 with the detail in the
- * log. Every request except a GET of health pays at least one unit against its client's rate bucket
- * before anything else happens, so refusals, unknown paths, and OPTIONS requests are limited like
- * other traffic, and then pays for what it asks, by the length of its text. Every request that reaches a handler except
- * health also holds an in-flight slot from the moment its headers arrive until its work stops, and
- * is answered with a 503 TIMEOUT when it runs past REQUEST_TIMEOUT_MS; its work looks for that
- * between items. Nothing logged or returned carries request text.
+ * log. Every request except a GET of health pays at the door against its client's rate bucket
+ * before anything else happens: one unit, or for a POST one unit for each 4096 bytes of body it
+ * declares, so refusals, unknown paths, and OPTIONS requests are limited like other traffic. A POST
+ * must declare its length, and a request then pays for what it asks, by the length of its text. A
+ * charge is for the request, not its result, and nothing is ever refunded. Every request that
+ * reaches a handler except health also holds an in-flight slot from the moment its headers arrive
+ * until its work stops, and is answered with a 503 TIMEOUT when it runs past REQUEST_TIMEOUT_MS; its
+ * work looks for that between items. Nothing logged or returned carries request text.
  */
 
 import * as crypto from 'node:crypto';
@@ -109,6 +111,8 @@ interface RequestContext {
 	signal: AbortSignal;
 	/** The bytes of the request body read so far; the discard of an unread body counts on from here. */
 	body: BodyProgress;
+	/** The units the door took from the client's general bucket, which count toward the request's charge. */
+	doorUnits: number;
 	items?: number;
 	schemaUsed?: string;
 	semanticStatus?: string;
@@ -194,8 +198,22 @@ export function itemFailure(
 
 const MAX_LOGGED_PATH = 120;
 
-/** Units every request except a GET of health pays at the door, before its items are known. */
-const DOOR_COST = 1;
+/** Bytes of declared body that cost one unit at the door. */
+export const DOOR_BYTES_PER_UNIT = 4096;
+
+/**
+ * The units a request pays at the door, before anything about it is known but its headers. A POST
+ * pays by the body it declares, one unit for each DOOR_BYTES_PER_UNIT bytes rounded up and at least
+ * one, so a client cannot make the daemon read or discard large bodies for a unit each. Anything
+ * else pays one unit. A POST without a usable Content-Length pays one unit and is refused.
+ */
+export function doorCost(method: string, contentLength: string | undefined): number {
+	if (method !== 'POST') {
+		return 1;
+	}
+	const bytes = contentLength !== undefined && /^\d+$/.test(contentLength) ? Number(contentLength) : 0;
+	return Math.max(1, Math.ceil(bytes / DOOR_BYTES_PER_UNIT));
+}
 
 /** The client closed the connection before the request was complete; there is nobody to answer. */
 class ClientAborted extends Error {
@@ -517,43 +535,49 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 	}
 
 	/**
-	 * The door: every request except a GET of health pays one unit against its client's general
-	 * bucket before anything else is done with it, so a flood of refusals, unknown paths, and OPTIONS
-	 * requests is limited like any other traffic. Whatever happens to the request afterward, it has
-	 * paid at least this, which is also what a request refused for its body or shape costs. An empty
-	 * bucket answers 429 with the wait, and takes nothing.
+	 * The door: every request except a GET of health pays against its client's general bucket before
+	 * anything else is done with it, so a flood of refusals, unknown paths, and OPTIONS requests is
+	 * limited like any other traffic. A POST pays by the length it declares (see `doorCost`), the
+	 * rest one unit, and a charge over the burst is the whole burst. The door is never refunded:
+	 * whatever happens to the request afterward, it has paid at least this. A bucket too empty for it
+	 * answers 429 with the wait, and takes nothing.
 	 */
-	function admit(ctx: RequestContext): void {
+	function admit(ctx: RequestContext, req: http.IncomingMessage): void {
 		const now = clock();
-		const taken = clients.get(ctx.client, now).items.take(DOOR_COST, now);
+		const bucket = clients.get(ctx.client, now).items;
+		const cost = doorCost(ctx.method, req.headers['content-length']);
+		const taken = bucket.take(cost, now);
 		if (!taken.allowed) {
 			throw rateLimited(taken.retryAfterSeconds);
 		}
+		ctx.doorUnits = Math.min(cost, bucket.burst);
 	}
 
 	/**
 	 * Charge a request for its items once they are known, in `units`: what its strings or queries cost
 	 * together, one unit for each CHARGE_CHARS_PER_UNIT characters of each, and at least one unit for
-	 * each. The door has taken one unit, which counts toward this charge, so the general bucket pays
-	 * the rest of `units`, up to its burst, and a request costs at least one unit, so an empty batch
-	 * is not free. When the request will run semantic search, the same number is charged against the
-	 * semantic bucket. Both buckets are checked before either is charged. A refusal gives the door
-	 * unit back, so a request refused for its rate costs nothing, and throws RATE_LIMITED with the
-	 * longer wait.
+	 * each. The request costs the larger of that and what the door took, never more than the burst,
+	 * so the general bucket pays only what is left after the door, and an empty batch is not free.
+	 * When the request will run semantic search, the full number of units is charged against the
+	 * semantic bucket as well. Both buckets are checked before either is charged. A charge is for the
+	 * request, not for its result: a refusal keeps everything the request has paid, the door
+	 * included, and throws RATE_LIMITED. Its wait is the time after which the same request would pass,
+	 * which counts the door that an attempt pays again.
 	 */
 	function charge(ctx: RequestContext, units: number, semanticSearch: boolean): void {
 		const now = clock();
 		const bucket = clients.get(ctx.client, now);
 		const cost = Math.max(1, units);
-		const rest = Math.min(cost, bucket.items.burst) - DOOR_COST;
-		const general = bucket.items.check(rest, now);
+		const total = Math.min(cost, bucket.items.burst);
+		const extra = Math.max(0, total - ctx.doorUnits);
+		const general = bucket.items.check(extra, now);
 		const semanticCheck: TakeResult = semanticSearch ? bucket.semantic.check(cost, now) : { allowed: true };
 		if (!general.allowed || !semanticCheck.allowed) {
-			bucket.items.refund(DOOR_COST, now);
-			const waits = [general, semanticCheck].map((result) => (result.allowed ? 0 : result.retryAfterSeconds));
+			const nextAttempt = bucket.items.check(total, now);
+			const waits = [nextAttempt, semanticCheck].map((result) => (result.allowed ? 0 : result.retryAfterSeconds));
 			throw rateLimited(Math.max(...waits));
 		}
-		bucket.items.take(rest, now);
+		bucket.items.take(extra, now);
 		if (semanticSearch) {
 			bucket.semantic.take(cost, now);
 		}
@@ -716,7 +740,7 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		const route = routes.get(ctx.path);
 		// Health is the one exemption: a GET of it pays nothing, and any other request pays at the door.
 		if (!(route && !route.limited && ctx.method === 'GET')) {
-			admit(ctx);
+			admit(ctx, req);
 		}
 		if (!route) {
 			throw new ApiError('NOT_FOUND', 'no such route');
@@ -726,6 +750,11 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		}
 		if (!route.methods.includes(ctx.method)) {
 			throw new ApiError('METHOD_NOT_ALLOWED', 'method not allowed', { allow: [...route.methods, 'OPTIONS'] });
+		}
+		// A POST says how long its body is, so the daemon knows the cost before it reads a byte, and a
+		// body of unknown length (chunked) is refused without being read.
+		if (ctx.method === 'POST' && req.headers['content-length'] === undefined) {
+			throw new ApiError('LENGTH_REQUIRED', 'a POST needs a Content-Length header; chunked bodies are not accepted');
 		}
 		if (route.gated && !registry.defaultReady) {
 			throw new ApiError('STARTING', 'the daemon is starting; try again shortly', { retryAfterSeconds: 1 });
@@ -784,6 +813,7 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 			),
 			signal: work.signal,
 			body: { bytes: 0 },
+			doorUnits: 0,
 		};
 		res.setHeader('X-Request-Id', ctx.id);
 		for (const [name, value] of Object.entries(CORS_HEADERS)) {

@@ -7,6 +7,7 @@
  */
 
 import * as http from 'node:http';
+import * as net from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MIN_ISSUE_MESSAGE_CHARS } from '../daemon/config.js';
 import { createLogger } from '../daemon/log.js';
@@ -887,48 +888,89 @@ describe('POST /v1/validate body size', () => {
 		});
 	});
 
-	it('answers 413 for a chunked stream once it passes the limit', async () => {
+	it('answers 411 LENGTH_REQUIRED for a chunked POST, whatever its size, without reading it', async () => {
 		await withDaemon({ HED_LSP_MAX_BODY_BYTES: '1000' }, async (daemon) => {
-			const chunks = Array.from({ length: 5 }, () => 'a'.repeat(300));
+			const small = JSON.stringify({ strings: [VALID] });
 
-			const reply = await call(daemon.url, '/v1/validate', {
-				agent,
-				method: 'POST',
-				headers: { ...JSON_TYPE, 'Transfer-Encoding': 'chunked' },
-				body: chunks,
-			});
+			for (const path of ['/v1/validate', '/v1/suggest']) {
+				const tiny = await call(daemon.url, path, {
+					agent,
+					method: 'POST',
+					headers: { ...JSON_TYPE, 'Transfer-Encoding': 'chunked' },
+					body: [small.slice(0, 5), small.slice(5)],
+				});
+				const large = await call(daemon.url, path, {
+					agent,
+					method: 'POST',
+					headers: { ...JSON_TYPE, 'Transfer-Encoding': 'chunked' },
+					body: Array.from({ length: 5 }, () => 'a'.repeat(300)),
+				});
 
-			expect(reply.status).toBe(413);
-			expect(reply.json.error.code).toBe('PAYLOAD_TOO_LARGE');
+				for (const reply of [tiny, large]) {
+					expect(reply.status, path).toBe(411);
+					expect(reply.json.error.code).toBe('LENGTH_REQUIRED');
+					expect(reply.json.requestId).toBe(reply.headers['x-request-id']);
+					expect(reply.headers['access-control-allow-origin']).toBe('*');
+				}
+			}
+			const line = daemon.logLines().find((entry) => entry.msg === 'request' && entry.status === 411);
+			expect(line).toMatchObject({ method: 'POST', path: '/v1/validate', error: 'LENGTH_REQUIRED' });
 		});
 	});
 
-	it('accepts a body of exactly the limit, by length and by stream, and refuses one byte more', async () => {
+	it('answers 411 for a POST that sends no body and no Content-Length, and accepts Content-Length: 0 as an empty body', async () => {
+		const socket = (headers: string): Promise<string> =>
+			new Promise((resolve, reject) => {
+				const connection = net.connect(Number(new URL(shared.url).port), '127.0.0.1', () => {
+					connection.write(`POST /v1/validate HTTP/1.1\r\nHost: localhost\r\n${headers}Connection: close\r\n\r\n`);
+				});
+				let text = '';
+				connection.on('data', (chunk) => {
+					text += chunk.toString('latin1');
+				});
+				connection.on('close', () => resolve(text));
+				connection.on('error', reject);
+			});
+
+		const missing = await socket('Content-Type: application/json\r\n');
+		const empty = await socket('Content-Type: application/json\r\nContent-Length: 0\r\n');
+
+		expect(missing.split('\r\n')[0]).toBe('HTTP/1.1 411 Length Required');
+		expect(empty.split('\r\n')[0]).toBe('HTTP/1.1 400 Bad Request');
+		expect(empty).toContain('INVALID_JSON');
+	});
+
+	it('does not ask a GET, an OPTIONS, or a POST to a route that is not POST for a length', async () => {
+		const get = await call(shared.url, '/v1/health');
+		const options = await call(shared.url, '/v1/validate', { method: 'OPTIONS' });
+		const wrongMethod = await call(shared.url, '/v1/schemas', {
+			method: 'POST',
+			headers: { 'Transfer-Encoding': 'chunked' },
+			body: ['x'],
+		});
+		const missing = await call(shared.url, '/v1/nothing', {
+			method: 'POST',
+			headers: { 'Transfer-Encoding': 'chunked' },
+			body: ['x'],
+		});
+
+		expect([get.status, options.status, wrongMethod.status, missing.status]).toEqual([200, 204, 405, 404]);
+	});
+
+	it('accepts a body of exactly the limit and refuses one byte more', async () => {
 		await withDaemon({ HED_LSP_MAX_BODY_BYTES: '1000' }, async (daemon) => {
 			const exact = bodyOfSize(1000);
 			expect(Buffer.byteLength(exact)).toBe(1000);
 
-			const byLength = await call(daemon.url, '/v1/validate', {
-				agent,
-				method: 'POST',
-				headers: JSON_TYPE,
-				body: exact,
-			});
-			const byStream = await call(daemon.url, '/v1/validate', {
-				agent,
-				method: 'POST',
-				headers: { ...JSON_TYPE, 'Transfer-Encoding': 'chunked' },
-				body: [exact.slice(0, 400), exact.slice(400)],
-			});
+			const at = await call(daemon.url, '/v1/validate', { agent, method: 'POST', headers: JSON_TYPE, body: exact });
 			const over = await call(daemon.url, '/v1/validate', {
 				agent,
 				method: 'POST',
-				headers: { ...JSON_TYPE, 'Transfer-Encoding': 'chunked' },
-				body: [exact.slice(0, 400), `${exact.slice(400)} `],
+				headers: JSON_TYPE,
+				body: bodyOfSize(1001),
 			});
 
-			expect(byLength.status).toBe(200);
-			expect(byStream.status).toBe(200);
+			expect(at.status).toBe(200);
 			expect(over.status).toBe(413);
 		});
 	});
@@ -945,7 +987,7 @@ describe('POST /v1/validate body size', () => {
 		expect(reply.json.error.details).toEqual({ maxBytes: 524288 });
 	});
 
-	it('answers 413 for a chunked stream three times the default limit, within the discard bound', async () => {
+	it('answers 411 for a chunked stream three times the default limit, within the discard bound', async () => {
 		const chunk = 'a'.repeat(64 * 1024);
 
 		const reply = await call(shared.url, '/v1/validate', {
@@ -955,7 +997,7 @@ describe('POST /v1/validate body size', () => {
 			body: Array.from({ length: 24 }, () => chunk),
 		});
 
-		expect(reply.status).toBe(413);
+		expect(reply.status).toBe(411);
 	});
 
 	it('bounds the discard at four times the body limit, which is 2 MiB by default', () => {
@@ -978,7 +1020,7 @@ describe('POST /v1/validate body size', () => {
 				const next = await call(daemon.url, '/v1/validate', { ...options, body: JSON.stringify({ strings: [VALID] }) });
 
 				expect(refused.status).toBe(413);
-				expect(chunked.status).toBe(413);
+				expect(chunked.status).toBe(411);
 				expect(next.status).toBe(200);
 				expect(refused.localPort).toBeDefined();
 				expect(chunked.localPort).toBe(refused.localPort);
@@ -994,10 +1036,10 @@ describe('POST /v1/validate body size', () => {
 			// Five times the discard bound, sent in pieces over time, with no declared length.
 			const pieces = (5 * discardLimitBytes(1000)) / 500;
 
-			// The reset can reach the client before it has read the 413, so the client may see either.
+			// The reset can reach the client before it has read the 411, so the client may see either.
 			const flood = await trickle(daemon.url, '/v1/validate', pieces, 500);
 
-			expect([413, 'reset']).toContain(flood);
+			expect([411, 'reset']).toContain(flood);
 			await waitFor(
 				() => daemon.rawLines.some((line) => line.includes('connection closed because a refused body kept arriving')),
 				5000,
@@ -1013,7 +1055,7 @@ describe('POST /v1/validate body size', () => {
 			// 3500 bytes in all: past the limit of 1000, under the bound of 4000.
 			const reply = await trickle(daemon.url, '/v1/validate', 7, 500);
 
-			expect(reply).toBe(413);
+			expect(reply).toBe(411);
 			expect(daemon.rawLines.some((line) => line.includes('kept arriving'))).toBe(false);
 		});
 	});
