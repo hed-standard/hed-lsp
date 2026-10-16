@@ -294,11 +294,32 @@ function readCommit(env: Env): string {
 const MAX_INT = 2_147_483_647;
 
 /**
+ * How far Node's own request timer is set past `REQUEST_TIMEOUT_MS`. The daemon's timer answers a
+ * slow request with a 503 TIMEOUT, so Node's socket timer, which closes the connection without a
+ * response, must never fire first.
+ */
+export const NODE_REQUEST_TIMEOUT_MARGIN_MS = 5000;
+
+/** The two timeouts together: Node refuses a headers timeout longer than its request timeout. */
+function readTimeouts(env: Env): { requestTimeoutMs: number; headersTimeoutMs: number } {
+	const requestTimeoutMs = readInt(env, 'REQUEST_TIMEOUT_MS', 30_000, 1, MAX_INT - NODE_REQUEST_TIMEOUT_MARGIN_MS);
+	const headersTimeoutMs = readInt(env, 'HEADERS_TIMEOUT_MS', 10_000, 1, MAX_INT);
+	if (headersTimeoutMs > requestTimeoutMs + NODE_REQUEST_TIMEOUT_MARGIN_MS) {
+		return fail(
+			'HEADERS_TIMEOUT_MS',
+			`must not exceed HED_LSP_REQUEST_TIMEOUT_MS plus ${NODE_REQUEST_TIMEOUT_MARGIN_MS} (${requestTimeoutMs + NODE_REQUEST_TIMEOUT_MARGIN_MS}), got "${read(env, 'HEADERS_TIMEOUT_MS')}"`,
+		);
+	}
+	return { requestTimeoutMs, headersTimeoutMs };
+}
+
+/**
  * Parse the daemon configuration from an environment, by default the process environment. Throws a
  * ConfigError for the first bad variable.
  */
 export function loadConfig(env: Env = process.env): DaemonConfig {
 	const { schemas, defaultSchema } = readSchemas(env);
+	const { requestTimeoutMs, headersTimeoutMs } = readTimeouts(env);
 	return {
 		host: readHost(env),
 		port: readInt(env, 'PORT', 38530, 0, 65535),
@@ -326,8 +347,8 @@ export function loadConfig(env: Env = process.env): DaemonConfig {
 		maxInFlight: readInt(env, 'MAX_IN_FLIGHT', 32, 1, MAX_INT),
 		semanticConcurrency: readSemanticConcurrency(env),
 		semanticQueue: readInt(env, 'SEMANTIC_QUEUE', 8, 0, MAX_INT),
-		requestTimeoutMs: readInt(env, 'REQUEST_TIMEOUT_MS', 30_000, 1, MAX_INT),
-		headersTimeoutMs: readInt(env, 'HEADERS_TIMEOUT_MS', 10_000, 1, MAX_INT),
+		requestTimeoutMs,
+		headersTimeoutMs,
 		keepAliveTimeoutMs: readInt(env, 'KEEPALIVE_TIMEOUT_MS', 65_000, 1, MAX_INT),
 		maxConnections: readInt(env, 'MAX_CONNECTIONS', 256, 1, MAX_INT),
 		maxClients: readInt(env, 'MAX_CLIENTS', 10_000, 1, MAX_INT),

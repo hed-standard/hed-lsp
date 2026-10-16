@@ -1,15 +1,36 @@
 /**
- * The HTTP adapter for the HED engine: routing, the v1 envelope, and the endpoints. A request gets
- * a fresh ID, CORS headers, and exactly one JSON response; a failure is an ApiError that becomes
- * the error envelope, and anything else becomes a generic 500 with the detail in the log. Nothing
- * logged or returned carries request text.
+ * The HTTP adapter for the HED engine: routing, the v1 envelope, the endpoints, and the limits. A
+ * request gets a fresh ID, CORS headers, and exactly one JSON response; a failure is an ApiError
+ * that becomes the error envelope, and anything else becomes a generic 500 with the detail in the
+ * log. Every request except a GET of health pays at least one unit against its client's rate bucket
+ * before anything else happens, so refusals, unknown paths, and OPTIONS requests are limited like
+ * other traffic, and then pays for what it asks, by the length of its text. Every request that reaches a handler except
+ * health also holds an in-flight slot from the moment its headers arrive until its work stops, and
+ * is answered with a 503 TIMEOUT when it runs past REQUEST_TIMEOUT_MS; its work looks for that
+ * between items. Nothing logged or returned carries request text.
  */
 
 import * as crypto from 'node:crypto';
 import * as http from 'node:http';
 import { TextDecoder } from 'node:util';
 import { findSuggestions, type SemanticStep, setLogger, type ValidationIssue, validate } from '../engine/index.js';
-import { type DaemonConfig, MIN_ISSUE_MESSAGE_CHARS, readPackageVersion } from './config.js';
+import {
+	type DaemonConfig,
+	MIN_ISSUE_MESSAGE_CHARS,
+	NODE_REQUEST_TIMEOUT_MARGIN_MS,
+	readPackageVersion,
+} from './config.js';
+import {
+	abortable,
+	batchCost,
+	ClientTable,
+	clientKey,
+	SlotLimiter,
+	type TakeResult,
+	TokenBucket,
+	throwIfCancelled,
+	WorkCancelled,
+} from './limits.js';
 import { createLogger, engineSink, errorDetail, type LineWriter, type Logger } from './log.js';
 import {
 	API_VERSION,
@@ -21,6 +42,7 @@ import {
 	type HealthStatus,
 	isPlainObject,
 	type SchemasResponse,
+	type SemanticStatus,
 	type SuggestResponse,
 	type SuggestResult,
 	TOP_DEFAULT,
@@ -32,7 +54,7 @@ import {
 	type ValidateResult,
 } from './protocol.js';
 import { SchemaRegistry } from './schemas.js';
-import { type SemanticBackoff, SemanticService, semanticStatusOf } from './semantic.js';
+import { type SemanticBackoff, SemanticGate, SemanticService, semanticStatusOf } from './semantic.js';
 
 export interface DaemonOptions {
 	/** Receives each JSON log line. Defaults to stderr. */
@@ -43,7 +65,7 @@ export interface DaemonOptions {
 	 * answers as it does while starting.
 	 */
 	autoPreload?: boolean;
-	/** Clock in milliseconds, used for schema backoff. Defaults to Date.now. */
+	/** Clock in milliseconds, used for schema backoff and the rate buckets. Defaults to Date.now. */
 	now?: () => number;
 	/** The version shown in health. Defaults to the nearest package.json. */
 	version?: string;
@@ -75,12 +97,16 @@ interface Reply {
 	headers?: Record<string, string>;
 }
 
-/** What one request records for its log line. */
+/** What one request records for its log line, and what its work needs to be limited and cancelled. */
 interface RequestContext {
 	id: string;
 	method: string;
 	path: string;
 	startedAt: number;
+	/** The rate-limit key of the client: its address, or the one a trusted proxy forwarded. */
+	client: string;
+	/** Aborts when the request times out, so its work stops between items. */
+	signal: AbortSignal;
 	items?: number;
 	schemaUsed?: string;
 	semanticStatus?: string;
@@ -93,6 +119,11 @@ interface Route {
 	methods: readonly string[];
 	/** Whether the route waits for the default schema; health reports its own startup instead. */
 	gated: boolean;
+	/**
+	 * Whether the route is subject to the in-flight cap and the rate limits. A GET of a route that is
+	 * not, which is health alone, is exempt from every limit; any other request to it is charged.
+	 */
+	limited: boolean;
 	handler: Handler;
 }
 
@@ -160,6 +191,9 @@ export function itemFailure(
 }
 
 const MAX_LOGGED_PATH = 120;
+
+/** Units every request except a GET of health pays at the door, before its items are known. */
+const DOOR_COST = 1;
 
 /** The client closed the connection before the request was complete; there is nobody to answer. */
 class ClientAborted extends Error {
@@ -241,12 +275,16 @@ function readBody(
 	req: http.IncomingMessage,
 	limit: number,
 	discardLimit: number,
+	signal: AbortSignal,
 	onCutoff: () => void,
 ): Promise<Buffer> {
 	const tooLarge = (): ApiError =>
 		new ApiError('PAYLOAD_TOO_LARGE', `the request body is larger than ${limit} bytes`, {
 			details: { maxBytes: limit },
 		});
+	if (signal.aborted) {
+		return Promise.reject(new WorkCancelled());
+	}
 	const declared = req.headers['content-length'];
 	if (declared !== undefined && /^\d+$/.test(declared) && Number(declared) > limit) {
 		discardRest(req, discardLimit, 0, onCutoff);
@@ -265,6 +303,7 @@ function readBody(
 			req.off('end', onEnd);
 			req.off('error', onError);
 			req.off('close', onClose);
+			signal.removeEventListener('abort', onAbort);
 			action();
 		};
 		const onData = (chunk: Buffer): void => {
@@ -281,6 +320,9 @@ function readBody(
 		const onEnd = (): void => settle(() => resolve(Buffer.concat(chunks, size)));
 		const onError = (): void => settle(() => reject(new ClientAborted()));
 		const onClose = (): void => settle(() => reject(new ClientAborted()));
+		// A request that times out while its body is still arriving stops reading it.
+		const onAbort = (): void => settle(() => reject(new WorkCancelled()));
+		signal.addEventListener('abort', onAbort, { once: true });
 		req.on('data', onData);
 		req.on('end', onEnd);
 		req.on('error', onError);
@@ -293,10 +335,11 @@ async function readJsonObject(
 	req: http.IncomingMessage,
 	limit: number,
 	discardLimit: number,
+	signal: AbortSignal,
 	onCutoff: () => void,
 ): Promise<Record<string, unknown>> {
 	checkContentType(req.headers['content-type']);
-	const raw = await readBody(req, limit, discardLimit, onCutoff);
+	const raw = await readBody(req, limit, discardLimit, signal, onCutoff);
 	let value: unknown;
 	try {
 		value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw));
@@ -417,6 +460,20 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 	const version = options.version ?? readPackageVersion(__dirname);
 	const registry = new SchemaRegistry(config, { now: options.now, logger });
 	const semantic = new SemanticService(config, { logger, backoff: options.semanticBackoff });
+	const clock = options.now ?? Date.now;
+	// Per-client buckets, by unit of text: one for everything, one more for what runs semantic search.
+	const clients = new ClientTable({
+		maxClients: config.maxClients,
+		idleMs: config.clientIdleMs,
+		create: (now) => ({
+			items: new TokenBucket(config.rateItemsPerSec, config.rateItemsBurst, now),
+			semantic: new TokenBucket(config.semanticRatePerSec, config.semanticRateBurst, now),
+		}),
+	});
+	const inFlight = new SlotLimiter(config.maxInFlight);
+	const semanticGate = new SemanticGate(config.semanticConcurrency, config.semanticQueue);
+	// The abort controller of every request that is running, so a close past its grace can stop them.
+	const running = new Set<AbortController>();
 	let closing = false;
 
 	// Preload runs in the background; every failure is recorded in the registry and the log.
@@ -442,6 +499,7 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		return starting ? { status: 503, body, headers: { 'Retry-After': '1' } } : { status: 200, body };
 	}
 
+	/** A schemas request costs the one unit it paid at the door. */
 	function schemas(): Reply {
 		const body: SchemasResponse = {
 			apiVersion: API_VERSION,
@@ -451,9 +509,56 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		return { status: 200, body };
 	}
 
+	function rateLimited(retryAfterSeconds: number): ApiError {
+		return new ApiError('RATE_LIMITED', 'too many requests; slow down', { retryAfterSeconds });
+	}
+
+	/**
+	 * The door: every request except a GET of health pays one unit against its client's general
+	 * bucket before anything else is done with it, so a flood of refusals, unknown paths, and OPTIONS
+	 * requests is limited like any other traffic. Whatever happens to the request afterward, it has
+	 * paid at least this, which is also what a request refused for its body or shape costs. An empty
+	 * bucket answers 429 with the wait, and takes nothing.
+	 */
+	function admit(ctx: RequestContext): void {
+		const now = clock();
+		const taken = clients.get(ctx.client, now).items.take(DOOR_COST, now);
+		if (!taken.allowed) {
+			throw rateLimited(taken.retryAfterSeconds);
+		}
+	}
+
+	/**
+	 * Charge a request for its items once they are known, in `units`: what its strings or queries cost
+	 * together, one unit for each CHARGE_CHARS_PER_UNIT characters of each, and at least one unit for
+	 * each. The door has taken one unit, which counts toward this charge, so the general bucket pays
+	 * the rest of `units`, up to its burst, and a request costs at least one unit, so an empty batch
+	 * is not free. When the request will run semantic search, the same number is charged against the
+	 * semantic bucket. Both buckets are checked before either is charged. A refusal gives the door
+	 * unit back, so a request refused for its rate costs nothing, and throws RATE_LIMITED with the
+	 * longer wait.
+	 */
+	function charge(ctx: RequestContext, units: number, semanticSearch: boolean): void {
+		const now = clock();
+		const bucket = clients.get(ctx.client, now);
+		const cost = Math.max(1, units);
+		const rest = Math.min(cost, bucket.items.burst) - DOOR_COST;
+		const general = bucket.items.check(rest, now);
+		const semanticCheck: TakeResult = semanticSearch ? bucket.semantic.check(cost, now) : { allowed: true };
+		if (!general.allowed || !semanticCheck.allowed) {
+			bucket.items.refund(DOOR_COST, now);
+			const waits = [general, semanticCheck].map((result) => (result.allowed ? 0 : result.retryAfterSeconds));
+			throw rateLimited(Math.max(...waits));
+		}
+		bucket.items.take(rest, now);
+		if (semanticSearch) {
+			bucket.semantic.take(cost, now);
+		}
+	}
+
 	/** The JSON object body of a POST, within MAX_BODY_BYTES. */
 	function readBodyOf(req: http.IncomingMessage, ctx: RequestContext): Promise<Record<string, unknown>> {
-		return readJsonObject(req, config.maxBodyBytes, discardLimitBytes(config.maxBodyBytes), () =>
+		return readJsonObject(req, config.maxBodyBytes, discardLimitBytes(config.maxBodyBytes), ctx.signal, () =>
 			logger.warn('connection closed because a refused body kept arriving', { requestId: ctx.id }),
 		);
 	}
@@ -472,7 +577,8 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 			});
 		}
 		const spec = registry.resolve(body.schema);
-		const used = await registry.ensure(spec);
+		charge(ctx, batchCost(strings, config.chargeCharsPerUnit), false);
+		const used = await abortable(registry.ensure(spec), ctx.signal);
 		ctx.schemaUsed = used;
 
 		const results: ValidateResult[] = [];
@@ -482,6 +588,8 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 			if (index > 0) {
 				await yieldToEventLoop();
 			}
+			// A request that timed out stops here, between strings, and gives its slot back.
+			throwIfCancelled(ctx.signal);
 			if (typeof value !== 'string' || value.length > config.maxStringChars) {
 				results.push({
 					index,
@@ -527,21 +635,45 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 			);
 		}
 		const spec = registry.resolve(body.schema);
-		const used = await registry.ensure(spec);
-		ctx.schemaUsed = used;
 		// The state is read once, so a warm-up that finishes mid-request changes nothing for this one.
 		const semanticStatus = semantic.statusForRequest();
 		const runSemantic = wantsSemantic && semantic.ready;
 		if (wantsSemantic) {
 			ctx.semanticStatus = semanticStatus;
 		}
+		charge(ctx, batchCost(queries, config.chargeCharsPerUnit), runSemantic);
+		const used = await abortable(registry.ensure(spec), ctx.signal);
+		ctx.schemaUsed = used;
 
+		// Semantic requests take turns: one slot, a queue behind it, and the wait counts toward the timeout.
+		const releaseSlot = runSemantic ? await semanticGate.acquire(ctx.signal) : undefined;
+		try {
+			return await suggestEach(queries, ctx, { spec, used, top, runSemantic, wantsSemantic, semanticStatus });
+		} finally {
+			releaseSlot?.();
+		}
+	}
+
+	interface SuggestPlan {
+		spec: string;
+		used: string;
+		top: number;
+		runSemantic: boolean;
+		wantsSemantic: boolean;
+		semanticStatus: SemanticStatus;
+	}
+
+	/** Run the queries one at a time, so a timeout can stop the batch between two of them. */
+	async function suggestEach(queries: unknown[], ctx: RequestContext, plan: SuggestPlan): Promise<Reply> {
+		const { spec, used, top, runSemantic, wantsSemantic, semanticStatus } = plan;
 		const results: SuggestResult[] = [];
 		const steps: SemanticStep[] = [];
 		for (const [index, query] of queries.entries()) {
 			if (index > 0) {
 				await yieldToEventLoop();
 			}
+			// A request that timed out stops here, between queries, and gives its slots back.
+			throwIfCancelled(ctx.signal);
 			if (typeof query !== 'string' || query.trim() === '' || query.length > config.maxQueryChars) {
 				const error = {
 					code: 'INVALID_QUERY' as const,
@@ -569,10 +701,10 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 	}
 
 	const routes = new Map<string, Route>([
-		['/v1/health', { methods: ['GET'], gated: false, handler: health }],
-		['/v1/schemas', { methods: ['GET'], gated: true, handler: schemas }],
-		['/v1/validate', { methods: ['POST'], gated: true, handler: validateStrings }],
-		['/v1/suggest', { methods: ['POST'], gated: true, handler: suggest }],
+		['/v1/health', { methods: ['GET'], gated: false, limited: false, handler: health }],
+		['/v1/schemas', { methods: ['GET'], gated: true, limited: true, handler: schemas }],
+		['/v1/validate', { methods: ['POST'], gated: true, limited: true, handler: validateStrings }],
+		['/v1/suggest', { methods: ['POST'], gated: true, limited: true, handler: suggest }],
 	]);
 
 	function allowHeader(route: Route): string {
@@ -581,6 +713,10 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 
 	async function dispatch(req: http.IncomingMessage, ctx: RequestContext): Promise<Reply> {
 		const route = routes.get(ctx.path);
+		// Health is the one exemption: a GET of it pays nothing, and any other request pays at the door.
+		if (!(route && !route.limited && ctx.method === 'GET')) {
+			admit(ctx);
+		}
 		if (!route) {
 			throw new ApiError('NOT_FOUND', 'no such route');
 		}
@@ -593,7 +729,20 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		if (route.gated && !registry.defaultReady) {
 			throw new ApiError('STARTING', 'the daemon is starting; try again shortly', { retryAfterSeconds: 1 });
 		}
-		return route.handler(req, ctx);
+		if (!route.limited) {
+			return route.handler(req, ctx);
+		}
+		// The slot is held from here, when the headers have arrived, until the work has stopped, so a
+		// slow body holds it too, and so does a request that timed out until its work notices.
+		const release = inFlight.tryAcquire();
+		if (!release) {
+			throw new ApiError('OVERLOADED', 'the daemon is at its limit of requests in flight; try again shortly', {
+				retryAfterSeconds: 1,
+			});
+		}
+		const work = Promise.resolve().then(() => route.handler(req, ctx));
+		work.then(release, release);
+		return work;
 	}
 
 	/** The reply for a failure, with its code recorded for the request log. */
@@ -620,11 +769,19 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 	async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
 		const rawUrl = req.url ?? '/';
 		const query = rawUrl.indexOf('?');
+		const work = new AbortController();
+		const forwarded = req.headers['x-forwarded-for'];
 		const ctx: RequestContext = {
 			id: crypto.randomUUID(),
 			method: req.method ?? 'GET',
 			path: query === -1 ? rawUrl : rawUrl.slice(0, query),
 			startedAt: performance.now(),
+			client: clientKey(
+				req.socket.remoteAddress,
+				Array.isArray(forwarded) ? forwarded.join(',') : forwarded,
+				config.trustedProxies,
+			),
+			signal: work.signal,
 		};
 		res.setHeader('X-Request-Id', ctx.id);
 		for (const [name, value] of Object.entries(CORS_HEADERS)) {
@@ -645,15 +802,34 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 			});
 		});
 
+		// One timer for the whole request, from the headers to the last item, so time spent reading the
+		// body or waiting in the semantic queue counts. It answers first; the work stops at its next
+		// item and gives its slots back then.
+		let timer: NodeJS.Timeout | undefined;
+		const timedOut = new Promise<never>((_, reject) => {
+			timer = setTimeout(() => {
+				work.abort();
+				reject(new ApiError('TIMEOUT', 'the request took too long', { retryAfterSeconds: 1 }));
+			}, config.requestTimeoutMs);
+		});
+		running.add(work);
+
 		let reply: Reply;
 		try {
-			reply = await dispatch(req, ctx);
+			reply = await Promise.race([dispatch(req, ctx), timedOut]);
 		} catch (error) {
-			if (error instanceof ClientAborted) {
+			if (error instanceof ClientAborted || error instanceof WorkCancelled) {
 				// Nobody is left to answer; the close handler logs the request as aborted.
 				return;
 			}
 			reply = replyToFailure(error, ctx);
+			if (ctx.errorCode === 'TIMEOUT') {
+				// The body of a request that timed out may still be arriving, so the connection is not reused.
+				reply.headers = { ...reply.headers, Connection: 'close' };
+			}
+		} finally {
+			clearTimeout(timer);
+			running.delete(work);
 		}
 		if (res.destroyed || res.headersSent) {
 			return;
@@ -661,20 +837,38 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		send(res, reply);
 	}
 
-	const server = http.createServer((req, res) => {
-		handle(req, res).catch((error: unknown) => {
-			// handle() answers every failure itself; this guards the logging and response code.
-			logger.error('request handler crashed', errorDetail(error));
-			res.destroy();
-		});
-	});
+	const server = http.createServer(
+		{
+			headersTimeout: config.headersTimeoutMs,
+			// The daemon's timer answers a slow request first; Node's closes the socket without an answer.
+			requestTimeout: config.requestTimeoutMs + NODE_REQUEST_TIMEOUT_MARGIN_MS,
+			keepAliveTimeout: config.keepAliveTimeoutMs,
+			// Node checks these timeouts on an interval, 30 seconds by default, which would let a slow
+			// client hold a connection far past a short timeout; half the headers timeout keeps it close.
+			connectionsCheckingInterval: Math.max(100, Math.min(30_000, Math.floor(config.headersTimeoutMs / 2))),
+		},
+		(req, res) => {
+			handle(req, res).catch((error: unknown) => {
+				// handle() answers every failure itself; this guards the logging and response code.
+				logger.error('request handler crashed', errorDetail(error));
+				res.destroy();
+			});
+		},
+	);
+	server.maxConnections = config.maxConnections;
 	server.on('listening', () => semantic.start());
 
 	async function close(graceMs = 10_000): Promise<void> {
 		closing = true;
 		semantic.stop();
 		await new Promise<void>((resolve) => {
-			const timer = setTimeout(() => server.closeAllConnections(), graceMs);
+			const timer = setTimeout(() => {
+				// Past the grace, the work still running is told to stop, and its connections are closed.
+				for (const work of running) {
+					work.abort();
+				}
+				server.closeAllConnections();
+			}, graceMs);
 			server.close(() => {
 				clearTimeout(timer);
 				resolve();

@@ -15,6 +15,17 @@ import { createDaemon, type Daemon, type DaemonOptions } from '../daemon/server.
 export const BUNDLED = '8.4.0';
 export const BUNDLED_WITH_LIBRARIES = '8.4.0,sc:score_2.1.0,la:lang_1.1.0';
 
+/**
+ * The rate limits for tests that are not about limits: far above anything a test sends, so the
+ * limits never interfere. A test about limits overrides them.
+ */
+const GENEROUS_RATES = {
+	HED_LSP_RATE_ITEMS_PER_SEC: '1000000',
+	HED_LSP_RATE_ITEMS_BURST: '1000000',
+	HED_LSP_SEMANTIC_RATE_PER_SEC: '1000000',
+	HED_LSP_SEMANTIC_RATE_BURST: '1000000',
+};
+
 /** A configuration for tests: loopback, port 0, and the bundled schemas, with `overrides` on top. */
 export function testConfig(overrides: Record<string, string> = {}): DaemonConfig {
 	return loadConfig({
@@ -22,6 +33,7 @@ export function testConfig(overrides: Record<string, string> = {}): DaemonConfig
 		HED_LSP_PORT: '0',
 		HED_LSP_SCHEMAS: `${BUNDLED};${BUNDLED_WITH_LIBRARIES}`,
 		HED_LSP_DEFAULT_SCHEMA: BUNDLED,
+		...GENEROUS_RATES,
 		...overrides,
 	});
 }
@@ -189,6 +201,76 @@ export function call(base: string, path: string, options: CallOptions = {}): Pro
 			req.end(body);
 		}
 	});
+}
+
+export interface HeldRequest {
+	/** Send the rest of the body and end the request. */
+	complete(rest: string): void;
+	/** Give up on the request: close its connection. */
+	abandon(): void;
+	/** The response, once it has arrived. Rejects when the connection ends without one. */
+	response: Promise<Reply>;
+}
+
+/**
+ * Start a POST that promises `length` bytes of body and sends only `first` of them, so the daemon
+ * sees a request whose headers have arrived and whose body has not. The connection is not reused.
+ */
+export function holdRequest(
+	base: string,
+	path: string,
+	init: { length: number; first: string; headers?: Record<string, string> },
+): HeldRequest {
+	const chunks: Buffer[] = [];
+	let head: { status: number; headers: http.IncomingHttpHeaders } | undefined;
+	let settle!: (reply: Reply) => void;
+	let fail!: (error: Error) => void;
+	const response = new Promise<Reply>((resolve, reject) => {
+		settle = resolve;
+		fail = reject;
+	});
+	// A caller that never looks at the response must not see an unhandled rejection from it.
+	response.catch(() => undefined);
+	const finish = (): void => {
+		if (!head) {
+			return;
+		}
+		const text = Buffer.concat(chunks).toString('utf-8');
+		let json: unknown;
+		try {
+			json = JSON.parse(text);
+		} catch {
+			json = undefined;
+		}
+		settle({ status: head.status, headers: head.headers, localPort: undefined, text, json });
+	};
+	const req = http.request(
+		`${base}${path}`,
+		{
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', 'Content-Length': String(init.length), ...init.headers },
+			agent: false,
+		},
+		(res) => {
+			head = { status: res.statusCode ?? 0, headers: res.headers };
+			res.on('data', (chunk: Buffer) => chunks.push(chunk));
+			res.on('end', finish);
+			res.on('close', finish);
+			res.on('error', finish);
+		},
+	);
+	req.on('error', (error) => (head ? finish() : fail(error)));
+	req.write(init.first);
+	return {
+		complete: (rest) => req.end(rest),
+		abandon: () => req.destroy(),
+		response,
+	};
+}
+
+/** Wait `ms` milliseconds. */
+export function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** POST a JSON value (or a raw string) to a path. */

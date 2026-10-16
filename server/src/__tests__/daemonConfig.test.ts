@@ -14,6 +14,7 @@ import {
 	DEFAULT_SCHEMA,
 	DEFAULT_SCHEMAS,
 	loadConfig,
+	NODE_REQUEST_TIMEOUT_MARGIN_MS,
 	parseSchemaSpec,
 	readPackageVersion,
 } from '../daemon/config.js';
@@ -257,6 +258,20 @@ describe('loadConfig failures', () => {
 
 		expect(error.variable).toBe(`HED_LSP_${name}`);
 		expect(error.message).toContain(`HED_LSP_${name}`);
+	});
+
+	it("names HED_LSP_HEADERS_TIMEOUT_MS when it is longer than the request timeout plus Node's margin", () => {
+		const tooLong = failure({ HED_LSP_REQUEST_TIMEOUT_MS: '1000', HED_LSP_HEADERS_TIMEOUT_MS: '6001' });
+		// The default headers timeout is 10 s, which a request timeout under 5 s cannot cover.
+		const byDefault = failure({ HED_LSP_REQUEST_TIMEOUT_MS: '1000' });
+
+		expect(tooLong.variable).toBe('HED_LSP_HEADERS_TIMEOUT_MS');
+		expect(tooLong.message).toContain('HED_LSP_REQUEST_TIMEOUT_MS');
+		expect(byDefault.variable).toBe('HED_LSP_HEADERS_TIMEOUT_MS');
+		expect(NODE_REQUEST_TIMEOUT_MARGIN_MS).toBe(5000);
+		expect(
+			loadConfig({ HED_LSP_REQUEST_TIMEOUT_MS: '1000', HED_LSP_HEADERS_TIMEOUT_MS: '6000' }).headersTimeoutMs,
+		).toBe(6000);
 	});
 
 	it('names HED_LSP_DEFAULT_SCHEMA when the default is not in the allowlist', () => {

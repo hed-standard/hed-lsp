@@ -11,7 +11,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { embeddingsManager, suggestBatch } from '../engine/index.js';
-import { BUNDLED, call, hasKey, postJson, type RunningDaemon, startDaemon, waitFor } from './daemonHarness.js';
+import { BUNDLED, call, hasKey, postJson, type RunningDaemon, sleep, startDaemon, waitFor } from './daemonHarness.js';
 
 const suite = embeddingsManager.isModelCached() ? describe : describe.skip;
 
@@ -140,6 +140,161 @@ suite('semantic suggest (model cached)', () => {
 		expect(line).toMatchObject({ status: 200, items: 1, semantic: 'ok' });
 		expect(daemon.rawLines.join('\n').toLowerCase()).not.toContain(marker);
 	});
+
+	/**
+	 * A second daemon on the model that is already loaded, with its own limits, once it reports ready.
+	 * Batches of up to 50 queries are allowed, so one request can hold the semantic slot for a while.
+	 */
+	async function withSemanticDaemon(
+		overrides: Record<string, string>,
+		run: (extra: RunningDaemon) => Promise<void>,
+		options: Parameters<typeof startDaemon>[1] = {},
+	): Promise<void> {
+		const extra = await startDaemon(
+			{
+				HED_LSP_SEMANTIC: '1',
+				HED_LSP_MODEL_DOWNLOAD: '0',
+				HED_LSP_MAX_QUERIES: '50',
+				HED_LSP_MAX_SEMANTIC_QUERIES: '50',
+				...overrides,
+			},
+			options,
+		);
+		try {
+			await waitFor(async () => (await call(extra.url, '/v1/health')).json.semantic.state === 'ready', 60000, 'ready');
+			await run(extra);
+		} finally {
+			await extra.stop();
+		}
+	}
+
+	// Each of these needs an embedding, so a batch of them holds the slot for as long as the model takes.
+	const SLOW = Array.from({ length: 50 }, (_, i) => `xyzzy nonsense ${i}`);
+	const ONE = ['xyzzy nonsense single'];
+
+	it('refuses a semantic request with SEMANTIC_BUSY and Retry-After 5 when the slot is taken and the queue is 0', async () => {
+		await withSemanticDaemon({ HED_LSP_SEMANTIC_QUEUE: '0', HED_LSP_REQUEST_TIMEOUT_MS: '30000' }, async (extra) => {
+			const slow = postJson(extra.url, '/v1/suggest', { queries: SLOW, schema: BUNDLED, semantic: true });
+			let refused: Awaited<typeof slow> | undefined;
+			await waitFor(
+				async () => {
+					refused = await postJson(extra.url, '/v1/suggest', { queries: ONE, schema: BUNDLED, semantic: true });
+					return refused.status === 503;
+				},
+				10000,
+				'the semantic slot to be taken',
+			);
+
+			expect(refused?.json.error.code).toBe('SEMANTIC_BUSY');
+			expect(refused?.headers['retry-after']).toBe('5');
+			expect(refused?.headers['access-control-allow-origin']).toBe('*');
+			// A request that does not ask for semantic search is not held up by the slot or refused for it.
+			const plain = await postJson(extra.url, '/v1/suggest', { queries: ['house'], schema: BUNDLED });
+			expect(plain.status).toBe(200);
+			const finished = await slow;
+			expect(finished.status).toBe(200);
+			expect(finished.json.semantic).toEqual({ requested: true, status: 'ok' });
+			const line = extra.logLines().find((entry) => entry.msg === 'request' && entry.status === 503);
+			expect(line).toMatchObject({ error: 'SEMANTIC_BUSY', semantic: 'ok' });
+		});
+	}, 60000);
+
+	it('queues a semantic request behind the one that holds the slot, and answers both', async () => {
+		await withSemanticDaemon({}, async (extra) => {
+			const first = postJson(extra.url, '/v1/suggest', { queries: SLOW, schema: BUNDLED, semantic: true });
+			await sleep(40);
+
+			const queued = await postJson(extra.url, '/v1/suggest', { queries: ONE, schema: BUNDLED, semantic: true });
+
+			expect(queued.status).toBe(200);
+			expect(queued.json.semantic).toEqual({ requested: true, status: 'ok' });
+			expect((await first).status).toBe(200);
+			const line = extra
+				.logLines()
+				.find((entry) => entry.msg === 'request' && entry.requestId === queued.headers['x-request-id']);
+			// The single query takes a few milliseconds, so the rest of its time was spent waiting for the slot.
+			expect(line?.ms as number).toBeGreaterThan(150);
+		});
+	}, 60000);
+
+	it('answers 503 TIMEOUT for a semantic request that runs past the timeout, then frees the slot for the next', async () => {
+		await withSemanticDaemon(
+			{ HED_LSP_REQUEST_TIMEOUT_MS: '150', HED_LSP_HEADERS_TIMEOUT_MS: '1000' },
+			async (extra) => {
+				const startedAt = Date.now();
+
+				const timedOut = await postJson(extra.url, '/v1/suggest', { queries: SLOW, schema: BUNDLED, semantic: true });
+				const next = await postJson(extra.url, '/v1/suggest', { queries: ONE, schema: BUNDLED, semantic: true });
+
+				expect(timedOut.status).toBe(503);
+				expect(timedOut.json.error.code).toBe('TIMEOUT');
+				expect(timedOut.headers['retry-after']).toBe('1');
+				// The first batch stopped between queries, so the second was served long before 50 queries finished.
+				expect(next.status).toBe(200);
+				expect(next.json.semantic).toEqual({ requested: true, status: 'ok' });
+				expect(Date.now() - startedAt).toBeLessThan(5000);
+			},
+		);
+	}, 60000);
+
+	it('charges the semantic bucket for each query of a request that runs semantic search, apart from the general one', async () => {
+		let time = 5_000_000;
+		await withSemanticDaemon(
+			{ HED_LSP_SEMANTIC_RATE_PER_SEC: '1', HED_LSP_SEMANTIC_RATE_BURST: '3' },
+			async (extra) => {
+				const ask = (queries: string[], semantic: boolean, client = '198.51.100.1'): ReturnType<typeof postJson> =>
+					postJson(extra.url, '/v1/suggest', { queries, schema: BUNDLED, semantic }, { 'X-Forwarded-For': client });
+
+				const first = await ask(['xyzzy one', 'xyzzy two'], true);
+				const refused = await ask(['xyzzy three', 'xyzzy four'], true);
+				const plain = await ask(['xyzzy three', 'xyzzy four'], false);
+				const otherClient = await ask(['xyzzy three', 'xyzzy four'], true, '198.51.100.2');
+				time += 1000;
+				const refilled = await ask(['xyzzy five', 'xyzzy six'], true);
+
+				expect(first.status).toBe(200);
+				expect(first.json.semantic.status).toBe('ok');
+				expect(refused.status).toBe(429);
+				expect(refused.json.error.code).toBe('RATE_LIMITED');
+				expect(refused.headers['retry-after']).toBe('1');
+				expect(plain.status).toBe(200);
+				expect(otherClient.status).toBe(200);
+				expect(refilled.status).toBe(200);
+			},
+			{ now: () => time },
+		);
+	}, 60000);
+
+	it('charges the semantic bucket by the length of each query, as it charges the general one', async () => {
+		let time = 5_000_000;
+		await withSemanticDaemon(
+			{ HED_LSP_SEMANTIC_RATE_PER_SEC: '1', HED_LSP_SEMANTIC_RATE_BURST: '3' },
+			async (extra) => {
+				const perUnit = extra.config.chargeCharsPerUnit;
+				// One character over a unit, so by design it costs two units, though it is one query.
+				const long = 'xyzzy '.repeat(Math.ceil((perUnit + 1) / 6)).slice(0, perUnit + 1);
+				expect(Math.ceil(long.length / perUnit)).toBe(2);
+				const ask = (semantic: boolean): ReturnType<typeof postJson> =>
+					postJson(extra.url, '/v1/suggest', { queries: [long], schema: BUNDLED, semantic });
+
+				const first = await ask(true);
+				// Counted by query it would cost one of the unit left; by length it costs two.
+				const refused = await ask(true);
+				const plain = await ask(false);
+				time += 1000;
+				const refilled = await ask(true);
+
+				expect(first.status).toBe(200);
+				expect(first.json.semantic.status).toBe('ok');
+				expect(refused.status).toBe(429);
+				expect(refused.json.error.code).toBe('RATE_LIMITED');
+				expect(refused.headers['retry-after']).toBe('1');
+				expect(plain.status).toBe(200);
+				expect(refilled.status).toBe(200);
+			},
+			{ now: () => time },
+		);
+	}, 60000);
 
 	// Last, because it evicts the loaded model, and a model that is gone stays gone for the process.
 	it('answers a request whose semantic step fails with status unavailable and the other results', async () => {

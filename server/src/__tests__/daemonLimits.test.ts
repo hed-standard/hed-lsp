@@ -1,10 +1,22 @@
 /**
- * Tests for the daemon's rate-limit primitives. The clock is a parameter, so every case passes the
- * time it wants and the real token bucket, client table, and client key run unchanged. No mocks.
+ * Tests for the daemon's limit primitives. The clock is a parameter, so every case passes the time
+ * it wants and the real token bucket, client table, and client key run unchanged. The slot limiter
+ * and the cancellation helpers run on real promises and real abort signals. No mocks.
  */
 
 import { describe, expect, it } from 'vitest';
-import { ClientTable, clientKey, normalizeIp, TokenBucket } from '../daemon/limits.js';
+import {
+	abortable,
+	batchCost,
+	ClientTable,
+	clientKey,
+	itemCost,
+	normalizeIp,
+	SlotLimiter,
+	TokenBucket,
+	throwIfCancelled,
+	WorkCancelled,
+} from '../daemon/limits.js';
 
 describe('TokenBucket', () => {
 	it('allows up to the burst and then refuses with a whole-second wait', () => {
@@ -64,6 +76,120 @@ describe('TokenBucket', () => {
 	it('rejects a rate or burst that is not positive', () => {
 		expect(() => new TokenBucket(0, 5, 0)).toThrow(RangeError);
 		expect(() => new TokenBucket(1, 0, 0)).toThrow(RangeError);
+	});
+
+	it('checks without taking, so a check can be repeated and a later take still works', () => {
+		const bucket = new TokenBucket(1, 5, 0);
+
+		expect(bucket.check(5, 0)).toEqual({ allowed: true });
+		expect(bucket.check(5, 0)).toEqual({ allowed: true });
+		expect(bucket.take(5, 0)).toEqual({ allowed: true });
+		expect(bucket.check(1, 0)).toEqual({ allowed: false, retryAfterSeconds: 1 });
+		expect(bucket.check(3, 0)).toEqual({ allowed: false, retryAfterSeconds: 3 });
+	});
+
+	it('refills when it is checked, so a check at a later time sees the refilled tokens', () => {
+		const bucket = new TokenBucket(2, 4, 0);
+		bucket.take(4, 0);
+
+		expect(bucket.check(2, 1000)).toEqual({ allowed: true });
+		expect(bucket.check(3, 1000)).toEqual({ allowed: false, retryAfterSeconds: 1 });
+		expect(bucket.take(2, 1000)).toEqual({ allowed: true });
+		expect(bucket.check(1, 1000).allowed).toBe(false);
+	});
+
+	it('gives tokens back with a refund, never above the burst', () => {
+		const bucket = new TokenBucket(1, 5, 0);
+		bucket.take(5, 0);
+		expect(bucket.check(1, 0).allowed).toBe(false);
+
+		bucket.refund(2, 0);
+
+		expect(bucket.take(2, 0)).toEqual({ allowed: true });
+		expect(bucket.check(1, 0).allowed).toBe(false);
+		// A refund that would pass the burst stops at it.
+		bucket.refund(100, 0);
+		expect(bucket.take(5, 0)).toEqual({ allowed: true });
+		expect(bucket.check(1, 0).allowed).toBe(false);
+	});
+});
+
+describe('SlotLimiter', () => {
+	it('hands out its capacity and then refuses', () => {
+		const slots = new SlotLimiter(2);
+
+		const first = slots.tryAcquire();
+		const second = slots.tryAcquire();
+
+		expect(first).not.toBeNull();
+		expect(second).not.toBeNull();
+		expect(slots.tryAcquire()).toBeNull();
+		expect(slots.active).toBe(2);
+	});
+
+	it('takes a slot back when it is released, and ignores a second release of the same slot', () => {
+		const slots = new SlotLimiter(1);
+		const release = slots.tryAcquire();
+
+		release?.();
+		release?.();
+
+		expect(slots.active).toBe(0);
+		const again = slots.tryAcquire();
+		expect(again).not.toBeNull();
+		// The extra release above did not make a second slot appear.
+		expect(slots.tryAcquire()).toBeNull();
+		again?.();
+	});
+
+	it('rejects a capacity that is not a positive integer', () => {
+		expect(() => new SlotLimiter(0)).toThrow(RangeError);
+		expect(() => new SlotLimiter(1.5)).toThrow(RangeError);
+	});
+});
+
+describe('cancellation', () => {
+	it('throws WorkCancelled from throwIfCancelled only once the signal has aborted', () => {
+		const controller = new AbortController();
+
+		expect(() => throwIfCancelled(controller.signal)).not.toThrow();
+		controller.abort();
+		expect(() => throwIfCancelled(controller.signal)).toThrow(WorkCancelled);
+	});
+
+	it('gives the value of a promise that settles before the signal aborts', async () => {
+		const controller = new AbortController();
+
+		await expect(abortable(Promise.resolve(7), controller.signal)).resolves.toBe(7);
+		await expect(abortable(Promise.reject(new Error('own failure')), controller.signal)).rejects.toThrow('own failure');
+	});
+
+	it('stops waiting with WorkCancelled when the signal aborts, and leaves the promise running', async () => {
+		const controller = new AbortController();
+		let finish!: (value: string) => void;
+		const slow = new Promise<string>((resolve) => {
+			finish = resolve;
+		});
+
+		const waiting = abortable(slow, controller.signal);
+		controller.abort();
+
+		await expect(waiting).rejects.toBeInstanceOf(WorkCancelled);
+		finish('done');
+		await expect(slow).resolves.toBe('done');
+	});
+
+	it('rejects at once for a signal that has already aborted', async () => {
+		const controller = new AbortController();
+		controller.abort();
+
+		await expect(abortable(Promise.resolve(1), controller.signal)).rejects.toBeInstanceOf(WorkCancelled);
+	});
+
+	it('stops waiting when a real timer aborts the signal', async () => {
+		const never = new Promise<void>(() => undefined);
+
+		await expect(abortable(never, AbortSignal.timeout(30))).rejects.toBeInstanceOf(WorkCancelled);
 	});
 });
 
@@ -216,5 +342,44 @@ describe('clientKey', () => {
 	it('uses one shared key for a peer without a usable address', () => {
 		expect(clientKey(undefined, '198.51.100.7', trusted)).toBe('unknown');
 		expect(clientKey('garbage', undefined, trusted)).toBe('unknown');
+	});
+});
+
+describe('itemCost', () => {
+	it('costs one unit for each chars-per-unit characters, rounded up', () => {
+		expect(itemCost(1, 256)).toBe(1);
+		expect(itemCost(256, 256)).toBe(1);
+		expect(itemCost(257, 256)).toBe(2);
+		expect(itemCost(512, 256)).toBe(2);
+		expect(itemCost(513, 256)).toBe(3);
+		expect(itemCost(4096, 256)).toBe(16);
+		expect(itemCost(4097, 256)).toBe(17);
+	});
+
+	it('never costs less than one unit, even for the empty string', () => {
+		expect(itemCost(0, 256)).toBe(1);
+		expect(itemCost(0, 1)).toBe(1);
+	});
+
+	it('follows the chars-per-unit setting, down to one character a unit', () => {
+		expect(itemCost(10, 1)).toBe(10);
+		expect(itemCost(10, 3)).toBe(4);
+		expect(itemCost(10, 1_000_000)).toBe(1);
+	});
+});
+
+describe('batchCost', () => {
+	it('adds the cost of each string, so many short strings and few long ones can cost the same', () => {
+		const shortOnes = Array.from({ length: 16 }, () => 'Sensory-event');
+		const oneLong = ['a'.repeat(4096)];
+
+		expect(batchCost(shortOnes, 256)).toBe(16);
+		expect(batchCost(oneLong, 256)).toBe(16);
+		expect(batchCost([...shortOnes, ...oneLong], 256)).toBe(32);
+	});
+
+	it('costs one unit for an item that is not a string, and nothing for no items', () => {
+		expect(batchCost([42, null, undefined, { x: 1 }, ['a'], true], 256)).toBe(6);
+		expect(batchCost([], 256)).toBe(0);
 	});
 });

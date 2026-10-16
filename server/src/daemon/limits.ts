@@ -1,6 +1,7 @@
 /**
- * Rate-limit primitives for the daemon: a token bucket, a bounded table of clients with
- * least-recently-used eviction and idle expiry, and the client key.
+ * Limit primitives for the daemon: a token bucket, a bounded table of clients with
+ * least-recently-used eviction and idle expiry, the client key, a counter of requests in flight, and
+ * the cancellation of work that is waiting or running.
  *
  * Time is always a parameter (milliseconds, any monotonic origin), so the callers pass the clock
  * and the primitives stay deterministic. Nothing here touches the network or the filesystem, and
@@ -33,16 +34,30 @@ export class TokenBucket {
 		this.last = now;
 	}
 
-	/** Take `cost` tokens at time `now` (milliseconds). Nothing is taken when the answer is no. */
-	take(cost: number, now: number): TakeResult {
+	/** Whether `cost` tokens could be taken at time `now` (milliseconds), taking none. */
+	check(cost: number, now: number): TakeResult {
 		this.refill(now);
 		const charge = Math.min(cost, this.burst);
 		if (this.tokens >= charge) {
-			this.tokens -= charge;
 			return { allowed: true };
 		}
 		const seconds = (charge - this.tokens) / this.ratePerSec;
 		return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil(seconds)) };
+	}
+
+	/** Take `cost` tokens at time `now` (milliseconds). Nothing is taken when the answer is no. */
+	take(cost: number, now: number): TakeResult {
+		const result = this.check(cost, now);
+		if (result.allowed) {
+			this.tokens -= Math.min(cost, this.burst);
+		}
+		return result;
+	}
+
+	/** Give back `cost` tokens at time `now` (milliseconds), up to the burst: the undo of a `take`. */
+	refund(cost: number, now: number): void {
+		this.refill(now);
+		this.tokens = Math.min(this.burst, this.tokens + cost);
 	}
 
 	private refill(now: number): void {
@@ -51,6 +66,27 @@ export class TokenBucket {
 		this.tokens = Math.min(this.burst, this.tokens + elapsedSeconds * this.ratePerSec);
 		this.last = Math.max(this.last, now);
 	}
+}
+
+/**
+ * The units a string or query of `length` characters costs: one for each `charsPerUnit` characters,
+ * rounded up, and never less than one. Validation time grows with the length of the string, so a
+ * request of long strings pays more than one of short strings of the same number.
+ */
+export function itemCost(length: number, charsPerUnit: number): number {
+	return Math.max(1, Math.ceil(length / charsPerUnit));
+}
+
+/**
+ * The units a batch of strings or queries costs together. An item that is not a string is refused
+ * without any work, and costs the least, one unit.
+ */
+export function batchCost(items: readonly unknown[], charsPerUnit: number): number {
+	let units = 0;
+	for (const item of items) {
+		units += itemCost(typeof item === 'string' ? item.length : 0, charsPerUnit);
+	}
+	return units;
 }
 
 export interface ClientTableOptions<T> {
@@ -214,4 +250,77 @@ export function clientKey(
 		return address;
 	}
 	return `${address.split(':').slice(0, 4).join(':')}::/64`;
+}
+
+/**
+ * A fixed number of slots. A slot is taken when work starts and handed back by calling the function
+ * `tryAcquire` returned, which does nothing the second time, so a slot cannot be released twice.
+ */
+export class SlotLimiter {
+	private used = 0;
+
+	constructor(readonly capacity: number) {
+		if (!Number.isInteger(capacity) || capacity < 1) {
+			throw new RangeError('capacity must be a positive integer');
+		}
+	}
+
+	/** Slots taken right now. */
+	get active(): number {
+		return this.used;
+	}
+
+	/** Take a slot, or return null when every slot is taken. */
+	tryAcquire(): (() => void) | null {
+		if (this.used >= this.capacity) {
+			return null;
+		}
+		this.used++;
+		let released = false;
+		return () => {
+			if (!released) {
+				released = true;
+				this.used--;
+			}
+		};
+	}
+}
+
+/** Thrown inside a request's work when the request has been cancelled, so the work stops. */
+export class WorkCancelled extends Error {
+	constructor() {
+		super('the request was cancelled');
+		this.name = 'WorkCancelled';
+	}
+}
+
+/** Stop the work that is running, between items, once its request has been cancelled. */
+export function throwIfCancelled(signal: AbortSignal): void {
+	if (signal.aborted) {
+		throw new WorkCancelled();
+	}
+}
+
+/**
+ * Wait for `promise`, but stop waiting with WorkCancelled as soon as `signal` aborts. The promise
+ * itself keeps running, so work shared with other requests, such as a schema load, is not cancelled.
+ */
+export function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+	if (signal.aborted) {
+		return Promise.reject(new WorkCancelled());
+	}
+	return new Promise<T>((resolve, reject) => {
+		const onAbort = (): void => reject(new WorkCancelled());
+		signal.addEventListener('abort', onAbort, { once: true });
+		promise.then(
+			(value) => {
+				signal.removeEventListener('abort', onAbort);
+				resolve(value);
+			},
+			(error: unknown) => {
+				signal.removeEventListener('abort', onAbort);
+				reject(error);
+			},
+		);
+	});
 }

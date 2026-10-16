@@ -11,8 +11,9 @@
 
 import { EMBEDDING_SCHEMA_VERSION, embeddingsManager, type SemanticStep } from '../engine/index.js';
 import type { DaemonConfig } from './config.js';
+import { WorkCancelled } from './limits.js';
 import { errorDetail, type Logger } from './log.js';
-import type { SemanticState, SemanticStatus } from './protocol.js';
+import { ApiError, type SemanticState, type SemanticStatus } from './protocol.js';
 
 /** The wait after the first failed warm-up, and the longest wait. The wait doubles each failure. */
 export const SEMANTIC_BACKOFF_BASE_MS = 30_000;
@@ -37,6 +38,106 @@ export function semanticBackoffMs(failures: number, backoff: SemanticBackoff = D
  */
 export function semanticStatusOf(steps: readonly SemanticStep[]): SemanticStatus {
 	return steps.includes('failed') ? 'unavailable' : 'ok';
+}
+
+/** Seconds a client is told to wait when the semantic slot and its queue are both full. */
+export const SEMANTIC_BUSY_RETRY_SECONDS = 5;
+
+interface Waiter {
+	grant: () => void;
+	signal: AbortSignal;
+	onAbort: () => void;
+}
+
+/**
+ * The semantic slots and the queue behind them. Inference runs on the event loop, so
+ * `SEMANTIC_CONCURRENCY` (default 1) bounds how many semantic requests run at once, and
+ * `SEMANTIC_QUEUE` bounds how many wait for a slot. A request that finds both full is refused with
+ * SEMANTIC_BUSY. A waiting request leaves the queue the moment its signal aborts, so the time it
+ * spends queued counts toward its timeout, and the next in line is served in order.
+ */
+export class SemanticGate {
+	private active = 0;
+	private readonly waiting: Waiter[] = [];
+
+	constructor(
+		private readonly concurrency: number,
+		private readonly queueLimit: number,
+	) {
+		if (!Number.isInteger(concurrency) || concurrency < 1) {
+			throw new RangeError('concurrency must be a positive integer');
+		}
+		if (!Number.isInteger(queueLimit) || queueLimit < 0) {
+			throw new RangeError('queueLimit must be a non-negative integer');
+		}
+	}
+
+	/** Requests holding a slot. */
+	get running(): number {
+		return this.active;
+	}
+
+	/** Requests waiting for a slot. */
+	get queued(): number {
+		return this.waiting.length;
+	}
+
+	/**
+	 * Take a slot, waiting in the queue if none is free. Resolves with the function that gives the
+	 * slot back, which does nothing the second time. Rejects with SEMANTIC_BUSY when the queue is
+	 * full, and with WorkCancelled when `signal` aborts first.
+	 */
+	acquire(signal: AbortSignal): Promise<() => void> {
+		if (signal.aborted) {
+			return Promise.reject(new WorkCancelled());
+		}
+		if (this.active < this.concurrency && this.waiting.length === 0) {
+			this.active++;
+			return Promise.resolve(this.releaser());
+		}
+		if (this.waiting.length >= this.queueLimit) {
+			return Promise.reject(
+				new ApiError('SEMANTIC_BUSY', 'semantic search is busy; try again shortly', {
+					retryAfterSeconds: SEMANTIC_BUSY_RETRY_SECONDS,
+				}),
+			);
+		}
+		return new Promise((resolve, reject) => {
+			const waiter: Waiter = {
+				signal,
+				// A slot handed to a waiter stays counted as active, so it is never free for a newcomer.
+				grant: () => {
+					signal.removeEventListener('abort', waiter.onAbort);
+					resolve(this.releaser());
+				},
+				onAbort: () => {
+					const at = this.waiting.indexOf(waiter);
+					if (at !== -1) {
+						this.waiting.splice(at, 1);
+					}
+					reject(new WorkCancelled());
+				},
+			};
+			signal.addEventListener('abort', waiter.onAbort, { once: true });
+			this.waiting.push(waiter);
+		});
+	}
+
+	private releaser(): () => void {
+		let released = false;
+		return () => {
+			if (released) {
+				return;
+			}
+			released = true;
+			const next = this.waiting.shift();
+			if (next) {
+				next.grant();
+			} else {
+				this.active--;
+			}
+		};
+	}
 }
 
 export interface SemanticSnapshot {
