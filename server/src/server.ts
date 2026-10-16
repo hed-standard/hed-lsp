@@ -20,6 +20,7 @@ import {
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { completionTriggerCharacters, provideCompletions, resolveCompletionItem } from './completion.js';
 import { provideDefinition } from './definitionProvider.js';
+import { validateDocument } from './diagnostics.js';
 import { parseJsonForHedStrings } from './documentParser.js';
 import { embeddingsManager } from './embeddings.js';
 import { provideHover } from './hover.js';
@@ -28,7 +29,6 @@ import { provideSemanticTokens, semanticTokensLegend } from './semanticTokens.js
 import { suggestBatch } from './suggestionEngine.js';
 import { isTsvDocument, parseTsvForHedStrings } from './tsvParser.js';
 import { defaultSettings, type HedLspSettings, type HedRegion } from './types.js';
-import { validateDocument } from './validation.js';
 
 /**
  * Get HED regions from a document (JSON or TSV).

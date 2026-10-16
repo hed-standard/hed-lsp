@@ -9,9 +9,9 @@ import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Diagnostic } from 'vscode-languageserver';
 import { TextDocument } from 'vscode-languageserver-textdocument';
+import { validateDocument } from '../diagnostics.js';
 import { parseJsonForHedStrings } from '../documentParser.js';
 import { parseTsvForHedStrings } from '../tsvParser.js';
-import { validateDocument } from '../validation.js';
 
 const fixtures = path.join(__dirname, 'fixtures');
 const pinned = (name: string) => JSON.parse(readFileSync(path.join(fixtures, 'pinned', `${name}.json`), 'utf-8'));
