@@ -6,9 +6,9 @@
 import type { Schemas } from 'hed-validator';
 import { type Diagnostic, DiagnosticSeverity, type Range } from 'vscode-languageserver';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
-import { schemaManager } from './schemaManager.js';
+import { schemaManager } from './engine/schemaManager.js';
+import { validateHedString } from './engine/validation.js';
 import { boundsToRange, type HedRegion, type ValidationIssue } from './types.js';
-import { validateHedString } from './validation.js';
 
 /**
  * Validate all HED regions in a document and return diagnostics.

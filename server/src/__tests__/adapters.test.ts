@@ -10,8 +10,8 @@ import * as path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { provideCompletions } from '../completion.js';
+import { schemaManager } from '../engine/schemaManager.js';
 import { provideHover } from '../hover.js';
-import { schemaManager } from '../schemaManager.js';
 import { provideSemanticTokens } from '../semanticTokens.js';
 
 const fixtures = path.join(__dirname, 'fixtures');

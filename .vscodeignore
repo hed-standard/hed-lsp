@@ -27,6 +27,7 @@ server/out/*.js
 !server/out/server.js
 server/out/__tests__/**
 server/out/eval/**
+server/out/engine/**
 server/eval/**
 # transformers.js writes model downloads here when no cache directory is set; never ship them
 server/node_modules/@huggingface/transformers/.cache/**

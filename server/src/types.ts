@@ -3,7 +3,7 @@
  */
 
 import type { Position, Range } from 'vscode-languageserver';
-import { DEFAULT_HED_SCHEMA } from './schemaVersion.js';
+import { DEFAULT_HED_SCHEMA } from './engine/schemaVersion.js';
 
 export type { HedTag, HedTagAttributes, ValidationIssue } from './engine/types.js';
 

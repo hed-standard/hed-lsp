@@ -7,8 +7,8 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { schemaManager } from '../schemaManager.js';
-import { DEFAULT_HED_SCHEMA, EMBEDDING_SCHEMA_VERSION, FALLBACK_HED_SCHEMA } from '../schemaVersion.js';
+import { schemaManager } from '../engine/schemaManager.js';
+import { DEFAULT_HED_SCHEMA, EMBEDDING_SCHEMA_VERSION, FALLBACK_HED_SCHEMA } from '../engine/schemaVersion.js';
 
 /** Collects the `default` values of every property whose key mentions schemaVersion. */
 function schemaVersionDefaults(node: unknown, found: string[] = []): string[] {

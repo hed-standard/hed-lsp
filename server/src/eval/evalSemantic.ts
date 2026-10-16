@@ -11,9 +11,9 @@
  */
 
 import * as fs from 'node:fs';
-import type { QueryFormat } from '../embeddingConfig.js';
-import { embeddingsManager } from '../embeddings.js';
-import { findSuggestions } from '../suggestionEngine.js';
+import type { QueryFormat } from '../engine/embeddingConfig.js';
+import { embeddingsManager } from '../engine/embeddings.js';
+import { findSuggestions } from '../engine/suggestionEngine.js';
 import { EVAL_SCHEMA_VERSION, type EvalPair, type EvalSplit, loadEvalSet } from './evalSet.js';
 import { bootstrapMeanDifference, type Interval, mean, type RankScore, scoreRanking } from './metrics.js';
 

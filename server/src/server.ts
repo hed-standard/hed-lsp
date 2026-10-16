@@ -22,11 +22,11 @@ import { completionTriggerCharacters, provideCompletions, resolveCompletionItem 
 import { provideDefinition } from './definitionProvider.js';
 import { validateDocument } from './diagnostics.js';
 import { parseJsonForHedStrings } from './documentParser.js';
-import { embeddingsManager } from './embeddings.js';
+import { embeddingsManager } from './engine/embeddings.js';
+import { schemaManager } from './engine/schemaManager.js';
+import { suggestBatch } from './engine/suggestionEngine.js';
 import { provideHover } from './hover.js';
-import { schemaManager } from './schemaManager.js';
 import { provideSemanticTokens, semanticTokensLegend } from './semanticTokens.js';
-import { suggestBatch } from './suggestionEngine.js';
 import { isTsvDocument, parseTsvForHedStrings } from './tsvParser.js';
 import { defaultSettings, type HedLspSettings, type HedRegion } from './types.js';
 

@@ -16,7 +16,7 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { parseStandaloneString, type Schemas } from 'hed-validator';
-import { schemaManager } from '../schemaManager.js';
+import { schemaManager } from '../engine/schemaManager.js';
 import { EVAL_SCHEMA_VERSION, EVAL_SET_PATH, type EvalPair, type EvalSet } from './evalSet.js';
 
 interface RawPair {

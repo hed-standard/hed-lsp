@@ -8,7 +8,7 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { embeddingsManager } from '../embeddings.js';
+import { embeddingsManager } from '../engine/embeddings.js';
 
 const dataPath = path.join(__dirname, '..', '..', 'data', 'tag-embeddings.compact.json');
 

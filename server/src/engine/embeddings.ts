@@ -9,6 +9,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ANCHOR_KEYWORDS } from './anchorKeywords.js';
+import { dataDir } from './dataPath.js';
 import {
 	DEFAULT_QUERY_FORMAT,
 	DTYPE,
@@ -220,9 +221,9 @@ class EmbeddingsManager {
 
 		try {
 			// Try compact version first (smaller file), then full version
-			let embeddingsPath = path.join(__dirname, '..', 'data', 'tag-embeddings.compact.json');
+			let embeddingsPath = path.join(dataDir(), 'tag-embeddings.compact.json');
 			if (!fs.existsSync(embeddingsPath)) {
-				embeddingsPath = path.join(__dirname, '..', 'data', 'tag-embeddings.json');
+				embeddingsPath = path.join(dataDir(), 'tag-embeddings.json');
 			}
 			if (fs.existsSync(embeddingsPath)) {
 				const data = fs.readFileSync(embeddingsPath, 'utf-8');
@@ -257,11 +258,11 @@ class EmbeddingsManager {
 	 * Save embeddings to file for faster future loads.
 	 */
 	async saveEmbeddings(schemaVersion: string): Promise<void> {
-		const embeddingsPath = path.join(__dirname, '..', 'data', 'tag-embeddings.json');
-		const dataDir = path.dirname(embeddingsPath);
+		const embeddingsPath = path.join(dataDir(), 'tag-embeddings.json');
+		const outputDir = path.dirname(embeddingsPath);
 
-		if (!fs.existsSync(dataDir)) {
-			fs.mkdirSync(dataDir, { recursive: true });
+		if (!fs.existsSync(outputDir)) {
+			fs.mkdirSync(outputDir, { recursive: true });
 		}
 
 		const db: EmbeddingsDatabase = {

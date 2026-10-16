@@ -8,8 +8,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { MODEL_ID } from '../embeddingConfig.js';
-import { embeddingsManager } from '../embeddings.js';
+import { MODEL_ID } from '../engine/embeddingConfig.js';
+import { embeddingsManager } from '../engine/embeddings.js';
 
 describe('embed failures without a model', () => {
 	it('counts an embed that cannot start because embeddings are disabled', async () => {
