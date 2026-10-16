@@ -41,6 +41,11 @@ export interface SuggestionResult {
 	semanticStep: SemanticStep;
 }
 
+/** The message of an error, or the text of any other thrown value, which goes to the log as a line's detail. */
+function errorText(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
 const DEFAULT_OPTIONS: SuggestionOptions = {
 	schema: DEFAULT_HED_SCHEMA,
 	top: 10,
@@ -103,7 +108,7 @@ export async function findSuggestions(
 				}
 			}
 		} catch (error) {
-			log.error(`Warning: Schema search failed: ${error instanceof Error ? error.name : typeof error}`);
+			log.errorWithDetail('Warning: Schema search failed', errorText(error));
 		}
 	}
 
@@ -131,7 +136,7 @@ export async function findSuggestions(
 				}
 			}
 		} catch (error) {
-			log.error(`Warning: Semantic search failed: ${error instanceof Error ? error.name : typeof error}`);
+			log.errorWithDetail('Warning: Semantic search failed', errorText(error));
 		}
 	}
 
@@ -177,9 +182,7 @@ export async function suggestBatch(
 			entries.push([query, result.suggestions]);
 		} catch (error) {
 			// The position identifies the failing query, so the log line does not repeat the query text.
-			log.error(
-				`[HED] Suggestions failed for query ${index + 1} of ${queries.length}: ${error instanceof Error ? error.name : typeof error}`,
-			);
+			log.errorWithDetail(`[HED] Suggestions failed for query ${index + 1} of ${queries.length}`, errorText(error));
 		}
 	}
 	// Object.fromEntries defines own properties, so a query named `__proto__` stays a key.

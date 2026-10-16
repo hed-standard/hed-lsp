@@ -43,7 +43,11 @@ export function createLogger(write: LineWriter = stderrWriter, clock: () => Date
 	};
 }
 
-/** A sink for the engine's `setLogger`, so engine lines are JSON objects like the daemon's own. */
+/**
+ * A sink for the engine's `setLogger`, so engine lines are JSON objects like the daemon's own. The
+ * detail that the engine passes with some lines, the message of an error, is dropped on purpose: it
+ * can quote the request, and the daemon logs no request text.
+ */
 export function engineSink(logger: Logger): LogSink {
 	return {
 		info: (message) => logger.info(message),

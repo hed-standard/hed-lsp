@@ -2,12 +2,15 @@
  * Tests for what the daemon logs about an exception. An exception's message can quote the request
  * that caused it, and it can run over many lines, so only the type of the exception and its stack
  * frames are logged, and the frames are read from the stack only after its header, the name and the
- * message, has been cut off. Real errors, real stacks. No mocks.
+ * message, has been cut off. The engine passes the message of an error apart from the text of some
+ * of its lines, as a detail; the daemon's sink writes the text and drops the detail. Real errors,
+ * real stacks, a real engine failure. No mocks.
  */
 
 import { describe, expect, it } from 'vitest';
-import { createLogger, errorDetail } from '../daemon/log.js';
+import { createLogger, engineSink, errorDetail } from '../daemon/log.js';
 import { failureReply, itemFailure, VALIDATION_FAILED } from '../daemon/server.js';
+import { findSuggestions, setLogger } from '../engine/index.js';
 
 const SECRET = 'SECRET-9c1f';
 
@@ -114,5 +117,46 @@ describe('what reaches the log when a request or an item fails', () => {
 		for (const line of lines) {
 			expect(JSON.parse(line).frames.length).toBeGreaterThan(0);
 		}
+	});
+});
+
+describe('engine lines through the daemon sink', () => {
+	/** A library that does not exist, so loading it fails for real and the schema search that needs it throws. */
+	const MISSING = '8.4.0,sc:score_9.9.9';
+
+	it('writes the text of a line and drops its detail, which can quote the request', () => {
+		const lines: string[] = [];
+		const sink = engineSink(createLogger((line) => lines.push(line)));
+
+		sink.error('Warning: Schema search failed', `Could not load ${SECRET}`);
+		sink.info('[HED] Loading schema: 8.4.0', SECRET);
+
+		const entries = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+		expect(entries).toMatchObject([
+			{ level: 'error', msg: 'Warning: Schema search failed' },
+			{ level: 'info', msg: '[HED] Loading schema: 8.4.0' },
+		]);
+		for (const entry of entries) {
+			expect(Object.keys(entry).sort()).toEqual(['level', 'msg', 'time']);
+		}
+		expect(lines.join('\n')).not.toContain(SECRET);
+	});
+
+	it('writes the schema search warning of the real engine without the message of its error', async () => {
+		const lines: string[] = [];
+		const previous = setLogger(engineSink(createLogger((line) => lines.push(line))));
+		try {
+			await findSuggestions('red square', { schema: MISSING, top: 10 });
+		} finally {
+			setLogger(previous);
+		}
+
+		const warnings = lines
+			.map((line) => JSON.parse(line) as Record<string, unknown>)
+			.filter((entry) => entry.msg === 'Warning: Schema search failed');
+		expect(warnings).toHaveLength(1);
+		expect(Object.keys(warnings[0]).sort()).toEqual(['level', 'msg', 'time']);
+		expect(JSON.stringify(warnings[0])).not.toContain('SCHEMA_LOAD_FAILED');
+		expect(JSON.stringify(warnings[0])).not.toContain('9.9.9');
 	});
 });

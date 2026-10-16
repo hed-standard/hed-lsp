@@ -390,7 +390,9 @@ The daemon writes one JSON line per request to standard error: the time, the req
 A path that is not a route is logged as `unknown route`, because it is the client's text, and a request that was cut off before its answer was written is logged with `aborted: true` and no status.
 A connection that is reset because its response stalled gets one more line, a warning with the request ID and no other detail.
 Engine messages go through the same writer as JSON lines.
-An unexpected exception is logged by its type and its stack frames, never its message, which can quote the request, and the engine's own log lines name an error by its type for the same reason.
+An unexpected exception is logged by its type and its stack frames, never its message, which can quote the request.
+Some engine lines carry the message of an error as a detail beside their text.
+The language server and the `hed-suggest` command print the detail after the text, and the daemon's sink writes the text alone and drops the detail, for the same reason.
 
 - Request bodies, queries, HED strings, and IP addresses are never logged.
   A test checks that no log line carries request text.

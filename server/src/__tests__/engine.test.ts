@@ -198,6 +198,52 @@ describe('engine logging', () => {
 		}
 	});
 
+	it('prints a line with a detail to stderr as the message, a colon, and the detail', () => {
+		const built = path.join(__dirname, '..', '..', 'out', 'engine', 'log.js');
+		const script = `
+			const { log } = require(${JSON.stringify(built)});
+			log.errorWithDetail('Warning: Schema search failed', 'because of 100%d of it');
+			log.error('plain', 'line');
+		`;
+
+		const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf-8', timeout: 30000 });
+
+		expect(result.status).toBe(0);
+		expect(result.stderr).toBe('Warning: Schema search failed: because of 100%d of it\nplain line\n');
+	});
+
+	it('prints the failure lines of the suggestion engine to stderr with the same text as before the detail existed', () => {
+		const dir = path.join(__dirname, '..', '..', 'out', 'engine');
+		// A real failure of each kind, run in a process that has the default sink: a library that does not exist,
+		// so the schema search fails, and a query that is a number, so one query of a batch fails. The expected
+		// text is built from the messages of the real errors, as the engine did before it passed them as details.
+		const script = `
+			const { findSuggestions, suggestBatch } = require(${JSON.stringify(path.join(dir, 'suggestionEngine.js'))});
+			const { schemaManager } = require(${JSON.stringify(path.join(dir, 'schemaManager.js'))});
+			(async () => {
+				const missing = '8.4.0,sc:score_9.9.9';
+				const messages = {};
+				try { await schemaManager.getSchema(missing); } catch (error) { messages.schema = error.message; }
+				try { await findSuggestions(42, { schema: '8.4.0' }); } catch (error) { messages.query = error.message; }
+				process.stderr.write('--- begin\\n');
+				await findSuggestions('red square', { schema: missing, top: 10 });
+				await suggestBatch(['red square', 42, 'modulator'], { schema: '8.4.0,sc:score_2.1.0', top: 5 });
+				process.stderr.write('--- end\\n');
+				process.stdout.write(JSON.stringify(messages));
+			})();
+		`;
+
+		const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf-8', timeout: 120000 });
+
+		expect(result.status, result.stderr).toBe(0);
+		const messages = JSON.parse(result.stdout) as { schema: string; query: string };
+		expect(messages.schema).toContain('SCHEMA_LOAD_FAILED');
+		expect(messages.query).toContain('toLowerCase');
+		const printed = result.stderr.slice(result.stderr.indexOf('--- begin\n'), result.stderr.indexOf('--- end\n'));
+		expect(printed).toContain(`\nWarning: Schema search failed: ${messages.schema}\n`);
+		expect(printed).toContain(`\n[HED] Suggestions failed for query 2 of 3: ${messages.query}\n`);
+	}, 150000);
+
 	it('writes a path with a percent sign to stderr intact', () => {
 		const built = path.join(__dirname, '..', '..', 'out', 'engine', 'log.js');
 		const script = `require(${JSON.stringify(built)}).log.error('Failed to parse /data/100%data/x:', 'detail');`;

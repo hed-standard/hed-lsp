@@ -101,7 +101,7 @@ graph TB
     F --> J
 ```
 
-Engine log lines go to stderr by default, so the CLI JSON on stdout stays clean. The language server sends them to its console, one string per message. Under `--stdio` the client receives them as log messages; under IPC, info lines go to stdout and error lines go to stderr.
+Engine log lines go to stderr by default, so the CLI JSON on stdout stays clean. The language server sends them to its console, one string per message. Under `--stdio` the client receives them as log messages; under IPC, info lines go to stdout and error lines go to stderr. A line can carry a detail beside its text, such as the message of an error, and each sink decides whether to print it: the default sink and the language server print `text: detail`, and the daemon's sink drops the detail, because the message can quote the request.
 
 ### Daemon Request Lifecycle
 

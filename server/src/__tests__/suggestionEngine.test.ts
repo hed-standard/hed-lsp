@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { embeddingsManager } from '../engine/embeddings.js';
-import { setLogger } from '../engine/log.js';
+import { type LogSink, setLogger } from '../engine/log.js';
 import { schemaManager } from '../engine/schemaManager.js';
 import { DEFAULT_HED_SCHEMA } from '../engine/schemaVersion.js';
 import { findSuggestions, suggestBatch } from '../engine/suggestionEngine.js';
@@ -188,12 +188,39 @@ describe('suggestBatch result contract', () => {
 	});
 });
 
+/** A log line as a sink receives it: the text, and the detail that some lines carry beside it. */
+interface LogLine {
+	message: string;
+	detail?: string;
+}
+
+/** A sink that keeps every line it is given, detail included, in `lines`. */
+function recordingSink(lines: LogLine[]): LogSink {
+	const keep = (message: string, detail?: string): void => {
+		lines.push(detail === undefined ? { message } : { message, detail });
+	};
+	return { info: keep, error: keep };
+}
+
+/** The message of the error that a query which is not a string throws, which a number in a JSON request is. */
+async function messageOfNumericQuery(): Promise<string> {
+	const previousSink = setLogger({ info: () => {}, error: () => {} });
+	try {
+		await findSuggestions(42 as unknown as string, { schema: '8.4.0', top: 5 });
+	} catch (error) {
+		return (error as Error).message;
+	} finally {
+		setLogger(previousSink);
+	}
+	throw new Error('a numeric query was expected to throw');
+}
+
 describe('suggestBatch with a failing query', () => {
 	const schema = '8.4.0,sc:score_2.1.0';
 
 	it('keeps the other queries and omits the one that failed', async () => {
-		const lines: string[] = [];
-		const previousSink = setLogger({ info: (message) => lines.push(message), error: (message) => lines.push(message) });
+		const lines: LogLine[] = [];
+		const previousSink = setLogger(recordingSink(lines));
 		let output: Record<string, string[]>;
 		try {
 			// A number is not a valid query; JSON clients can send one.
@@ -205,9 +232,9 @@ describe('suggestBatch with a failing query', () => {
 		expect(Object.keys(output)).toEqual(['red square', 'modulator']);
 		expect(output['red square']).toContain('Red');
 		expect(output.modulator).toContain('sc:Modulator');
-		// The line names the failing query by its position and the error by its type, not its message.
-		expect(lines.filter((line) => line.includes('Suggestions failed'))).toEqual([
-			'[HED] Suggestions failed for query 2 of 3: TypeError',
+		// The line names the failing query by its position, and passes the message of the error apart, as its detail.
+		expect(lines.filter((line) => line.message.includes('Suggestions failed'))).toEqual([
+			{ message: '[HED] Suggestions failed for query 2 of 3', detail: await messageOfNumericQuery() },
 		]);
 	});
 	it('still rejects when the schema cannot be loaded', async () => {
@@ -222,9 +249,9 @@ describe('suggestBatch with a failing query', () => {
 });
 
 describe('engine log lines', () => {
-	it('logs the type of a failed schema search and not its message, which quotes the schema and the network', async () => {
-		const lines: string[] = [];
-		const previousSink = setLogger({ info: (message) => lines.push(message), error: (message) => lines.push(message) });
+	it('passes the message of a failed schema search as the detail of its line, which quotes the schema and the network', async () => {
+		const lines: LogLine[] = [];
+		const previousSink = setLogger(recordingSink(lines));
 		let result: Awaited<ReturnType<typeof findSuggestions>>;
 		try {
 			// The library 9.9.9 does not exist, so its load fails for real, online with a 404 and offline with
@@ -235,10 +262,11 @@ describe('engine log lines', () => {
 		}
 
 		expect(result.suggestions.length).toBeGreaterThan(0);
-		const warnings = lines.filter((line) => line.startsWith('Warning: Schema search failed'));
+		const warnings = lines.filter((line) => line.message.startsWith('Warning: Schema search failed'));
 		expect(warnings).toHaveLength(1);
-		expect(warnings[0]).toMatch(/^Warning: Schema search failed: \w+$/);
-		expect(warnings[0]).not.toContain('9.9.9');
-		expect(warnings[0]).not.toContain('SCHEMA_LOAD_FAILED');
+		// The text of the line is fixed. The message of the error, with the schema and the network in it, is the detail.
+		expect(warnings[0].message).toBe('Warning: Schema search failed');
+		expect(warnings[0].detail).toContain('SCHEMA_LOAD_FAILED');
+		expect(warnings[0].detail).toContain('9.9.9');
 	});
 });
