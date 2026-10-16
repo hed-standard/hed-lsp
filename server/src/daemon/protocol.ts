@@ -145,7 +145,7 @@ export interface HealthResponse {
 export interface SchemaListing {
 	spec: string;
 	status: SchemaStatus;
-	/** The version that loaded; differs from `spec` when the bundled fallback ran. */
+	/** The version that loaded, which is not the same as `spec` when the bundled fallback ran. */
 	used?: string;
 	/** For a failed schema, the seconds until a request may try it again. */
 	retryAfterSeconds?: number;
