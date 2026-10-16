@@ -9,6 +9,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ANCHOR_KEYWORDS } from './anchorKeywords.js';
+import { DTYPE, MODEL_ID, NORMALIZE, POOLING } from './embeddingConfig.js';
 import { lookupOwn } from './keywordLookup.js';
 
 // Dynamic import for transformers.js (ES module)
@@ -79,8 +80,8 @@ export interface EmbeddingConfig {
 }
 
 const DEFAULT_CONFIG: EmbeddingConfig = {
-	modelId: 'neuromechanist/Qwen3-Embedding-0.6B-ONNX-Q8',
-	dtype: 'uint8', // Matches model_uint8.onnx file name
+	modelId: MODEL_ID,
+	dtype: DTYPE,
 	enabled: false, // Disabled by default - requires ~600MB model download
 };
 
@@ -279,8 +280,8 @@ class EmbeddingsManager {
 
 		try {
 			const output = await extractor(text, {
-				pooling: 'last_token',
-				normalize: true,
+				pooling: POOLING,
+				normalize: NORMALIZE,
 			});
 
 			// Convert to regular array
@@ -303,8 +304,8 @@ class EmbeddingsManager {
 
 		try {
 			const output = await extractor(texts, {
-				pooling: 'last_token',
-				normalize: true,
+				pooling: POOLING,
+				normalize: NORMALIZE,
 			});
 
 			// Convert to array of arrays
