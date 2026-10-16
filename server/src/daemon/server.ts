@@ -2,10 +2,10 @@
  * The HTTP adapter for the HED engine: routing, the v1 envelope, the endpoints, and the limits. A
  * request gets a fresh ID, CORS headers, and exactly one JSON response; a failure is an ApiError
  * that becomes the error envelope, and anything else becomes a generic 500 with the detail in the
- * log. Every request except a GET or HEAD of health pays at the door against its client's rate bucket
- * before anything else happens: one unit, or for a POST one unit for each 4096 bytes of body it
- * declares, so refusals, unknown paths, and OPTIONS requests are limited like other traffic. A POST
- * must declare its length, and a request then pays for what it asks, by the length of its text. A
+ * log. Every request except a GET or HEAD of health without a body pays at the door against its
+ * client's rate bucket before anything else happens: one unit for each 4096 bytes of body it
+ * declares, whatever its method, and at least one, so refusals, unknown paths, and OPTIONS requests
+ * are limited like other traffic. A POST must declare its length, and a request then pays for what it asks, by the length of its text. A
  * charge is for the request, not its result, and nothing is ever refunded. A body is input, not
  * work: a POST that is still sending its body holds one of its client's few pending-body slots,
  * bounded by BODY_TIMEOUT_MS, and no in-flight slot. Every request that reaches a handler except
@@ -240,17 +240,24 @@ export const UNKNOWN_ROUTE_LABEL = 'unknown route';
 export const DOOR_BYTES_PER_UNIT = 4096;
 
 /**
- * The units a request pays at the door, before anything about it is known but its headers. A POST
- * pays by the body it declares, one unit for each DOOR_BYTES_PER_UNIT bytes rounded up and at least
- * one, so a client cannot make the daemon read or discard large bodies for a unit each. Anything
- * else pays one unit. A POST without a usable Content-Length pays one unit and is refused.
+ * The units a request pays at the door, before anything about it is known but its headers. Every
+ * request pays by the body it declares, whatever its method: one unit for each DOOR_BYTES_PER_UNIT
+ * bytes rounded up and at least one, so a client cannot make the daemon read or discard large bodies
+ * for a unit each, on a GET or an unknown path as on a POST. A request without a usable
+ * Content-Length, such as a chunked POST, pays one unit; a POST of that kind is refused.
  */
-export function doorCost(method: string, contentLength: string | undefined): number {
-	if (method !== 'POST') {
-		return 1;
-	}
+export function doorCost(contentLength: string | undefined): number {
 	const bytes = contentLength !== undefined && /^\d+$/.test(contentLength) ? Number(contentLength) : 0;
 	return Math.max(1, Math.ceil(bytes / DOOR_BYTES_PER_UNIT));
+}
+
+/** Whether a request declares a body: a Content-Length above zero, or any Transfer-Encoding. */
+function declaresBody(headers: http.IncomingHttpHeaders): boolean {
+	const length = headers['content-length'];
+	if (length !== undefined && /^\d+$/.test(length) && Number(length) > 0) {
+		return true;
+	}
+	return headers['transfer-encoding'] !== undefined;
 }
 
 /** The client closed the connection before the request was complete; there is nobody to answer. */
@@ -654,17 +661,17 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 	}
 
 	/**
-	 * The door: every request except a GET of health pays against its client's general bucket before
-	 * anything else is done with it, so a flood of refusals, unknown paths, and OPTIONS requests is
-	 * limited like any other traffic. A POST pays by the length it declares (see `doorCost`), the
-	 * rest one unit, and a charge over the burst is the whole burst. The door is never refunded:
+	 * The door: every request except a GET of health without a body pays against its client's general
+	 * bucket before anything else is done with it, so a flood of refusals, unknown paths, and OPTIONS
+	 * requests is limited like any other traffic. A request pays by the length it declares, whatever
+	 * its method (see `doorCost`), and a charge over the burst is the whole burst. The door is never refunded:
 	 * whatever happens to the request afterward, it has paid at least this. A bucket too empty for it
 	 * answers 429 with the wait, and takes nothing.
 	 */
 	function admit(ctx: RequestContext, req: http.IncomingMessage): void {
 		const now = clock();
 		const bucket = clients.get(ctx.client, now).items;
-		const cost = doorCost(ctx.method, req.headers['content-length']);
+		const cost = doorCost(req.headers['content-length']);
 		const taken = bucket.take(cost, now);
 		if (!taken.allowed) {
 			throw rateLimited(taken.retryAfterSeconds);
@@ -892,8 +899,9 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		const route = routes.get(ctx.path);
 		// A route that answers GET answers HEAD the same way, and the response leaves out the body.
 		const method = ctx.method === 'HEAD' && route?.methods.includes('GET') ? 'GET' : ctx.method;
-		// Health is the one exemption: a GET of it pays nothing, and any other request pays at the door.
-		if (!(route && !route.limited && method === 'GET')) {
+		// Health is the one exemption: a GET of it with no body pays nothing. Any other request pays at the
+		// door, and so does a GET of health that carries a body, which the daemon would have to discard.
+		if (!(route && !route.limited && method === 'GET' && !declaresBody(req.headers))) {
 			admit(ctx, req);
 		}
 		if (!route) {

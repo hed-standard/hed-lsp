@@ -75,7 +75,7 @@ Exit status 1 means a failure at run time, such as an address that cannot be bou
 ### `GET /v1/health`
 
 Answers 200 when the daemon can serve requests and 503 while it is starting.
-Health is exempt from every limit, so a probe never competes with clients.
+Health is exempt from every limit when the request has no body, so a probe never competes with clients.
 
 ```json
 {
@@ -301,10 +301,11 @@ The values below are starting values chosen to keep one shared machine safe, and
 
 Each client has a bucket of units that refills at `RATE_ITEMS_PER_SEC` up to `RATE_ITEMS_BURST`.
 
-- Every request except a GET or HEAD of `/v1/health` pays at the door, before anything else is done with it and before a byte of its body is read.
-  A POST pays one unit for each 4096 bytes of body it declares, rounded up and at least one, so a large body costs more than a small one even when it is refused.
-  Any other request pays one unit.
+- Every request except a GET or HEAD of `/v1/health` that has no body pays at the door, before anything else is done with it and before a byte of its body is read.
+  A request pays one unit for each 4096 bytes of body it declares in `Content-Length`, rounded up and at least one, whatever its method, so a large body costs more than a small one even when it is refused, on a GET or an unknown path as on a POST.
+  A request that declares no length, such as one with a chunked body, pays one unit.
   Unknown paths, wrong methods, and OPTIONS requests are limited like other traffic.
+  A GET of health that carries a body pays like any other request, because the daemon has to read and discard the body.
 - A request then pays for what it asks.
   A string or a query costs `max(1, ceil(length / CHARGE_CHARS_PER_UNIT))` units, and an item that is not a string costs one.
   The door counts toward this charge: a request costs the larger of what the door took and what its items cost, and never more than the burst, so an empty batch is not free.

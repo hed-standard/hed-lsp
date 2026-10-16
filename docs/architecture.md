@@ -111,9 +111,9 @@ Limits are checked in the order that is cheapest first, so a refused request cos
 ```mermaid
 flowchart TD
     A[Request arrives] --> B[Assign request ID, CORS headers, client key, start timeout timer]
-    B --> C{GET /v1/health?}
+    B --> C{GET /v1/health without a body?}
     C -->|Yes| H[Answer health, no limits]
-    C -->|No| D[Pay the door: 1 unit, or 1 per 4096 declared bytes of a POST]
+    C -->|No| D[Pay the door: 1 unit per 4096 declared bytes, at least 1]
     D -->|Bucket empty| X1[429 RATE_LIMITED]
     D --> E{Route and method known?}
     E -->|No| X2[404, 405, or 204 for OPTIONS]

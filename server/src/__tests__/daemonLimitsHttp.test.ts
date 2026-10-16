@@ -318,7 +318,7 @@ describe('the door charged by body length, and refusals that keep their charge',
 			{ now: clock.now },
 		);
 		const body = padded(2 * 4096 + 1);
-		expect(doorCost('POST', String(Buffer.byteLength(body)))).toBe(3);
+		expect(doorCost(String(Buffer.byteLength(body)))).toBe(3);
 
 		// The body is refused for its unknown field, and the door took 3 of the 10 units.
 		const refused = await postJson(url, '/v1/validate', body);
@@ -332,17 +332,132 @@ describe('the door charged by body length, and refusals that keep their charge',
 	});
 
 	it('charges a body of exactly 4096 bytes one unit and one byte more two', () => {
-		expect([0, 1, 4096].map((bytes) => doorCost('POST', String(bytes)))).toEqual([1, 1, 1]);
-		expect([4097, 8192].map((bytes) => doorCost('POST', String(bytes)))).toEqual([2, 2]);
-		expect(doorCost('POST', String(8193))).toBe(3);
+		expect([0, 1, 4096].map((bytes) => doorCost(String(bytes)))).toEqual([1, 1, 1]);
+		expect([4097, 8192].map((bytes) => doorCost(String(bytes)))).toEqual([2, 2]);
+		expect(doorCost(String(8193))).toBe(3);
 	});
 
-	it.each(['GET', 'OPTIONS', 'PUT', 'DELETE'])('charges a %s one unit whatever it declares', (method) => {
-		expect(doorCost(method, String(10_000_000))).toBe(1);
+	it('charges a body of 2 MiB 512 units and a body of 10 million bytes 2442, whatever the request is', () => {
+		expect(doorCost(String(2 * 1024 * 1024))).toBe(512);
+		expect(doorCost(String(10_000_000))).toBe(2442);
+	});
+
+	/**
+	 * Send `method path` over a raw socket with a Content-Length of `length` (none when it is undefined) and no body
+	 * at all, and resolve with the status of the answer. The daemon answers without waiting for the body, and the socket is closed after.
+	 */
+	function declaringBody(
+		url: string,
+		method: string,
+		path: string,
+		length: number | undefined,
+		extra = '',
+	): Promise<number> {
+		return new Promise((resolve, reject) => {
+			const socket = net.connect(Number(new URL(url).port), '127.0.0.1');
+			let text = '';
+			socket.on('error', reject);
+			socket.on('data', (chunk) => {
+				text += chunk.toString('latin1');
+				const status = /^HTTP\/1\.1 (\d+)/.exec(text);
+				if (status && text.includes('\r\n\r\n')) {
+					socket.destroy();
+					resolve(Number(status[1]));
+				}
+			});
+			socket.on('connect', () =>
+				socket.write(
+					`${method} ${path} HTTP/1.1\r\nHost: localhost\r\n${length === undefined ? '' : `Content-Length: ${length}\r\n`}${extra}\r\n`,
+				),
+			);
+		});
+	}
+
+	it.each([
+		['GET', '/v1/schemas'],
+		['OPTIONS', '/v1/validate'],
+		['PUT', '/v1/validate'],
+		['DELETE', '/v1/validate'],
+		['POST', '/v1/nothing'],
+		['GET', '/nothing'],
+	])(
+		'charges %s %s by the length it declares: with a bucket of 600, a body of 2 MiB passes once',
+		async (method, path) => {
+			const clock = manualClock();
+			const { url } = await start(
+				{ HED_LSP_RATE_ITEMS_PER_SEC: '0.001', HED_LSP_RATE_ITEMS_BURST: '600' },
+				{ now: clock.now },
+			);
+
+			const first = await declaringBody(url, method, path, 2 * 1024 * 1024, 'Content-Type: application/json\r\n');
+			const second = await declaringBody(url, method, path, 2 * 1024 * 1024, 'Content-Type: application/json\r\n');
+
+			// 512 units for the first leave 88 for the second, which needs 512.
+			expect(first).not.toBe(429);
+			expect(second).toBe(429);
+		},
+	);
+
+	it('lets a burst of 1000 pay for one GET that declares 2 MiB, and a burst of 1024 for two', async () => {
+		for (const [burst, expected] of [
+			[1000, 1],
+			[1024, 2],
+		]) {
+			const clock = manualClock();
+			const { url } = await start(
+				{ HED_LSP_RATE_ITEMS_PER_SEC: '0.001', HED_LSP_RATE_ITEMS_BURST: String(burst) },
+				{ now: clock.now },
+			);
+			let passed = 0;
+			// A GET that declares no body costs one unit, so 1000 of them would pass; these declare 2 MiB.
+			for (let i = 0; i < 10; i++) {
+				if ((await declaringBody(url, 'GET', '/v1/schemas', 2 * 1024 * 1024)) !== 429) {
+					passed++;
+				}
+			}
+
+			expect(passed, `a burst of ${burst}`).toBe(expected);
+		}
+	});
+
+	it('charges a GET of health that carries a body, and leaves one without a body free', async () => {
+		const clock = manualClock();
+		const { url } = await start(
+			{ HED_LSP_RATE_ITEMS_PER_SEC: '0.001', HED_LSP_RATE_ITEMS_BURST: '600' },
+			{ now: clock.now },
+		);
+
+		const withBody = [];
+		for (let i = 0; i < 3; i++) {
+			withBody.push(await declaringBody(url, 'GET', '/v1/health', 2 * 1024 * 1024));
+		}
+		// A body of zero bytes is no body.
+		const zero = await declaringBody(url, 'GET', '/v1/health', 0);
+
+		expect(withBody).toEqual([200, 429, 429]);
+		expect(zero).toBe(200);
+		// Without any body header health stays free, however empty the bucket is.
+		expect((await call(url, '/v1/health')).status).toBe(200);
+	});
+
+	it('charges a GET of health with a chunked body one unit, because the body has to be discarded', async () => {
+		const clock = manualClock();
+		const { url } = await start(
+			{ HED_LSP_RATE_ITEMS_PER_SEC: '0.001', HED_LSP_RATE_ITEMS_BURST: '2' },
+			{ now: clock.now },
+		);
+
+		const statuses = [];
+		for (let i = 0; i < 3; i++) {
+			statuses.push(await declaringBody(url, 'GET', '/v1/health', undefined, 'Transfer-Encoding: chunked\r\n'));
+		}
+
+		expect(statuses).toEqual([200, 200, 429]);
+		expect((await call(url, '/v1/health')).status).toBe(200);
 	});
 
 	it('charges a POST without a usable length one unit', () => {
-		expect([undefined, '', '-5', '1.5', 'abc'].map((length) => doorCost('POST', length))).toEqual([1, 1, 1, 1, 1]);
+		expect([undefined, '', '-5', '1.5', 'abc'].map((length) => doorCost(length))).toEqual([1, 1, 1, 1, 1]);
 	});
 
 	it('charges a declared length past the burst as the whole burst, even when the body is refused unread', async () => {
@@ -365,7 +480,7 @@ describe('the door charged by body length, and refusals that keep their charge',
 		const clock = manualClock();
 		const { url } = await start({ HED_LSP_RATE_ITEMS_PER_SEC: '1', HED_LSP_RATE_ITEMS_BURST: '5' }, { now: clock.now });
 		const body = padded(3 * 4096);
-		expect(doorCost('POST', String(Buffer.byteLength(body)))).toBe(3);
+		expect(doorCost(String(Buffer.byteLength(body)))).toBe(3);
 
 		const statuses = [];
 		for (let i = 0; i < 3; i++) {
