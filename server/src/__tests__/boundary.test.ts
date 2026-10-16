@@ -11,6 +11,12 @@
  * modules must name their imports as literals. It does not skip comments either, so prose that
  * quotes a name right after the word from, such as differs from `spec`, reads as an import and is
  * reworded.
+ *
+ * A second check, in the same style, keeps the wall clock out of the modules that enforce limits: the
+ * rate buckets, the schema backoff, and the semantic backoff take their time as a parameter or from a
+ * monotonic clock, so a step of the system clock cannot change a limit. It reads their source for a
+ * use of `Date.now`, call or reference, comments included, so a comment names the wall clock in
+ * other words.
  */
 
 import * as fs from 'node:fs';
@@ -312,6 +318,70 @@ describe('daemon boundary', () => {
 
 		it('does not read the data keywords from and import as imports', () => {
 			expect(violations("const keywords = [['from'], ['import']];")).toEqual([]);
+		});
+	});
+});
+
+/**
+ * The daemon modules whose limits depend on time: the rate buckets and the client table, the schema
+ * backoff, and the semantic backoff. Uptime and log timestamps are not limits and may read the wall
+ * clock, so `server.ts` and `log.ts` are not in this list.
+ */
+const limitModules = ['limits.ts', 'schemas.ts', 'semantic.ts'];
+
+/** A use of the wall clock through `Date.now`: a call, or a reference such as `options.now ?? Date.now`. */
+const WALL_CLOCK_PATTERN = /\bDate\s*\.\s*now\b/g;
+
+/** The uses of `Date.now` in source text. */
+function wallClockReadsIn(source: string): string[] {
+	return Array.from(source.matchAll(WALL_CLOCK_PATTERN), (match) => match[0]);
+}
+
+describe('daemon limit clocks', () => {
+	it('names the modules that enforce limits, and they exist', () => {
+		const names = sourceFiles(daemonDir).map((file) => path.basename(file));
+
+		expect(limitModules.every((name) => names.includes(name))).toBe(true);
+	});
+
+	it.each(limitModules)('%s does not read the wall clock with Date.now', (name) => {
+		const source = fs.readFileSync(path.join(daemonDir, name), 'utf-8');
+
+		expect(source.length).toBeGreaterThan(0);
+		expect(wallClockReadsIn(source), `${name} reads the wall clock`).toEqual([]);
+	});
+
+	describe('rule', () => {
+		it.each([
+			'const now = Date.now();',
+			'const started = Date.now()',
+			'return Date.now() - this.last;',
+			'const later = () => Date.now ();',
+			'const odd = Date . now();',
+			'const clock = options.now ?? Date.now;',
+			'constructor(now = Date.now) {}',
+			'setTimeout(tick, Date.now() % 10);',
+		])('flags %s', (line) => {
+			expect(wallClockReadsIn(line).length).toBeGreaterThan(0);
+		});
+
+		it.each([
+			'const now = performance.now();',
+			'const clock = options.now ?? monotonicNow;',
+			'const waitMs = entry.nextRetryAt - this.now();',
+			'now: () => number;',
+			'const birthday = new Date(2026, 9, 16);',
+			'const label = "Date and now";',
+			'const isUpdate = Update.now();',
+			'const dates = Dates.now();',
+		])('does not flag %s', (line) => {
+			expect(wallClockReadsIn(line)).toEqual([]);
+		});
+
+		it('names each use, so a module with two uses reports two', () => {
+			const source = ['const a = Date.now();', 'const b = performance.now();', 'const c = Date.now;'].join('\n');
+
+			expect(wallClockReadsIn(source)).toHaveLength(2);
 		});
 	});
 });

@@ -74,6 +74,32 @@ describe('TokenBucket', () => {
 		expect(bucket.take(1, 1100)).toEqual({ allowed: true });
 	});
 
+	it('adds nothing for any distance of a step back, and refills again only once the clock is past the latest time it read', () => {
+		const bucket = new TokenBucket(10, 5, 1_000_000);
+		bucket.take(5, 1_000_000);
+		const anHourBack = 1_000_000 - 3_600_000;
+
+		// A step back gives no tokens, and time moving forward from the new reading gives none until the
+		// clock is back past where it was, because the bucket counts from the latest time it has seen.
+		expect(bucket.take(1, anHourBack).allowed).toBe(false);
+		expect(bucket.take(1, anHourBack + 1000).allowed).toBe(false);
+		expect(bucket.take(1, 1_000_000).allowed).toBe(false);
+		// 100 ms past that time refills one token at 10 a second, and only one.
+		expect(bucket.take(1, 1_000_100)).toEqual({ allowed: true });
+		expect(bucket.take(1, 1_000_100).allowed).toBe(false);
+	});
+
+	it('refills the same for a long step forward as for the time it covers, up to the burst', () => {
+		const bucket = new TokenBucket(10, 5, 0);
+		bucket.take(5, 0);
+
+		// 200 ms is two tokens, and an hour is the burst, not 36000 tokens.
+		expect(bucket.take(2, 200)).toEqual({ allowed: true });
+		expect(bucket.take(1, 200).allowed).toBe(false);
+		expect(bucket.take(5, 200 + 3_600_000)).toEqual({ allowed: true });
+		expect(bucket.take(1, 200 + 3_600_000).allowed).toBe(false);
+	});
+
 	it('rejects a rate or burst that is not positive', () => {
 		expect(() => new TokenBucket(0, 5, 0)).toThrow(RangeError);
 		expect(() => new TokenBucket(1, 0, 0)).toThrow(RangeError);
@@ -101,39 +127,32 @@ describe('TokenBucket', () => {
 });
 
 describe('monotonicNow', () => {
-	/** Run `action` while the wall clock reads `offsetMs` away from the real time, as after a clock adjustment. */
-	async function withWallClockStep<T>(offsetMs: number, action: () => Promise<T>): Promise<T> {
-		const realNow = Date.now;
-		Date.now = () => realNow() + offsetMs;
-		try {
-			return await action();
-		} finally {
-			Date.now = realNow;
-		}
-	}
-
-	it('keeps moving forward when the wall clock steps back an hour, and does not read the wall clock', async () => {
-		const before = monotonicNow();
-
-		const after = await withWallClockStep(-3_600_000, async () => {
-			await new Promise((resolve) => setTimeout(resolve, 30));
-			return monotonicNow();
-		});
-
-		expect(after - before).toBeGreaterThanOrEqual(25);
-		expect(after - before).toBeLessThan(3000);
+	// The system clock cannot be stepped in a test without replacing it, so these cases check what the
+	// clock reads and how it moves. That it never reads the wall clock is checked on the source of the
+	// limit modules in boundary.test.ts.
+	it('reads a monotonic clock of the same scale as performance.now, not milliseconds since 1970', () => {
+		expect(Math.abs(monotonicNow() - performance.now())).toBeLessThan(50);
 	});
 
-	it('lets a bucket that reads it refill across a backward step of the wall clock', async () => {
+	it('moves forward with real time and never backward', async () => {
+		const readings = Array.from({ length: 1000 }, () => monotonicNow());
+		await new Promise((resolve) => setTimeout(resolve, 30));
+		readings.push(monotonicNow());
+
+		expect(readings.every((reading, i) => i === 0 || reading >= readings[i - 1])).toBe(true);
+		expect(readings[readings.length - 1] - readings[readings.length - 2]).toBeGreaterThanOrEqual(25);
+		expect(readings[readings.length - 1] - readings[0]).toBeLessThan(3000);
+	});
+
+	it('lets a bucket that reads it refill as real time passes', async () => {
 		const bucket = new TokenBucket(100, 10, monotonicNow());
 		expect(bucket.take(10, monotonicNow())).toEqual({ allowed: true });
 		expect(bucket.take(1, monotonicNow()).allowed).toBe(false);
 
-		await withWallClockStep(-3_600_000, async () => {
-			// 100 tokens a second: 60 ms refills 6.
-			await new Promise((resolve) => setTimeout(resolve, 60));
-			expect(bucket.take(1, monotonicNow())).toEqual({ allowed: true });
-		});
+		// 100 tokens a second: 60 ms refills 6.
+		await new Promise((resolve) => setTimeout(resolve, 60));
+
+		expect(bucket.take(1, monotonicNow())).toEqual({ allowed: true });
 	});
 });
 

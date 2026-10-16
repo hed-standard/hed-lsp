@@ -402,28 +402,58 @@ describe('the door charged by body length, and refusals that keep their charge',
 });
 
 describe('the clock of the rate limits', () => {
-	it('keeps refilling the buckets when the wall clock steps back an hour', async () => {
-		// The wall clock is installed before the daemon starts, because the daemon keeps the clock function it
-		// finds. It reads real time until the test steps it back. No clock is passed to the daemon, so it
-		// uses its default one: on the wall clock its buckets would stay empty for the whole hour.
-		const realNow = Date.now;
-		let stepBackMs = 0;
-		Date.now = () => realNow() - stepBackMs;
-		try {
-			// 20 units a second, and a burst of 5.
-			const { url } = await start({ HED_LSP_RATE_ITEMS_PER_SEC: '20', HED_LSP_RATE_ITEMS_BURST: '5' });
-			expect((await postJson(url, '/v1/validate', strings(5))).status).toBe(200);
+	// The buckets read only the clock the daemon is given, which is a monotonic clock unless a test passes its own,
+	// so a step of the system clock cannot reach them. These cases step the clock they are given, forward and
+	// backward, and check the refill and the Retry-After. That the default clock is not the wall clock is checked on
+	// the source of the limit modules in boundary.test.ts.
+	// The client table forgets a client that is idle for CLIENT_IDLE_MS, ten minutes by default, and the client then
+	// starts with a fresh bucket. It is set to its largest value so that only the refill is under test.
+	const TWENTY_A_SECOND = {
+		HED_LSP_RATE_ITEMS_PER_SEC: '20',
+		HED_LSP_RATE_ITEMS_BURST: '5',
+		HED_LSP_CLIENT_IDLE_MS: '2147483647',
+	};
+	const AN_HOUR = 3_600_000;
 
-			stepBackMs = 3_600_000;
+	it('refills the buckets as the clock moves forward, however large the step, up to the burst', async () => {
+		const clock = manualClock();
+		const { url } = await start(TWENTY_A_SECOND, { now: clock.now });
+		expect((await postJson(url, '/v1/validate', strings(5))).status).toBe(200);
+		const empty = await postJson(url, '/v1/validate', strings(1));
+		expect(empty.status).toBe(429);
+		expect(empty.headers['retry-after']).toBe('1');
 
-			await waitFor(
-				async () => (await postJson(url, '/v1/validate', strings(1))).status === 200,
-				5000,
-				'the bucket to refill',
-			);
-		} finally {
-			Date.now = realNow;
-		}
+		// 250 ms at 20 a second is five units.
+		clock.advance(250);
+		expect((await postJson(url, '/v1/validate', strings(5))).status).toBe(200);
+		expect((await postJson(url, '/v1/validate', strings(1))).status).toBe(429);
+
+		// An hour forward fills the bucket to its burst of five, not beyond.
+		clock.advance(AN_HOUR);
+		expect((await postJson(url, '/v1/validate', strings(5))).status).toBe(200);
+		const after = await postJson(url, '/v1/validate', strings(1));
+		expect(after.status).toBe(429);
+		expect(after.headers['retry-after']).toBe('1');
+	});
+
+	it('gives no tokens for a step back of the clock, and refills again once it is past where it was', async () => {
+		const clock = manualClock();
+		const { url } = await start(TWENTY_A_SECOND, { now: clock.now });
+		expect((await postJson(url, '/v1/validate', strings(5))).status).toBe(200);
+
+		clock.advance(-AN_HOUR);
+		const back = await postJson(url, '/v1/validate', strings(1));
+		expect(back.status).toBe(429);
+		expect(back.headers['retry-after']).toBe('1');
+
+		// 59 minutes on is still 1 minute short of the time the bucket last saw, and nothing has refilled.
+		clock.advance(AN_HOUR - 60_000);
+		expect((await postJson(url, '/v1/validate', strings(1))).status).toBe(429);
+
+		// The last minute and 250 ms more is 250 ms past it: five units.
+		clock.advance(60_250);
+		expect((await postJson(url, '/v1/validate', strings(5))).status).toBe(200);
+		expect((await postJson(url, '/v1/validate', strings(1))).status).toBe(429);
 	});
 });
 

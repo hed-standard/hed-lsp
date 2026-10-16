@@ -10,8 +10,9 @@
 
 /**
  * The default clock of the limits, in milliseconds from an arbitrary origin. It is monotonic: it
- * never steps backward when the wall clock is set, as `Date.now` does. A token bucket that read the
- * wall clock would stop refilling for as long as a backward step is wide.
+ * never steps backward when the wall clock is set, as the wall clock does. A token bucket that read
+ * the wall clock would stop refilling for as long as a backward step is wide. The limit modules read no
+ * wall clock at all, which boundary.test.ts checks on their source.
  */
 export function monotonicNow(): number {
 	return performance.now();
