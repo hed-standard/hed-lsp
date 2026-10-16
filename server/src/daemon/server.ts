@@ -6,11 +6,14 @@
  * before anything else happens: one unit, or for a POST one unit for each 4096 bytes of body it
  * declares, so refusals, unknown paths, and OPTIONS requests are limited like other traffic. A POST
  * must declare its length, and a request then pays for what it asks, by the length of its text. A
- * charge is for the request, not its result, and nothing is ever refunded. Every request that
- * reaches a handler except health also holds an in-flight slot from the moment its headers arrive
- * until its work stops, and is answered with a 503 TIMEOUT when it runs past REQUEST_TIMEOUT_MS; its
- * work looks for that between items. A response is written in pieces and its connection is reset
- * when the write makes no progress for WRITE_STALL_MS. Nothing logged or returned carries request text.
+ * charge is for the request, not its result, and nothing is ever refunded. A body is input, not
+ * work: a POST that is still sending its body holds one of its client's few pending-body slots,
+ * bounded by BODY_TIMEOUT_MS, and no in-flight slot. Every request that reaches a handler except
+ * health takes an in-flight slot once its body is complete, or at once when it has none, and keeps
+ * it until its work stops. A request is answered with a 503 TIMEOUT when it runs past
+ * REQUEST_TIMEOUT_MS, and its work looks for that between items. A response is written in pieces and
+ * its connection is reset when the write makes no progress for WRITE_STALL_MS. Nothing logged or
+ * returned carries request text.
  */
 
 import * as crypto from 'node:crypto';
@@ -117,6 +120,8 @@ interface RequestContext {
 	signal: AbortSignal;
 	/** The bytes of the request body read so far; the discard of an unread body counts on from here. */
 	body: BodyProgress;
+	/** The whole body of a POST, received before the request takes its in-flight slots. */
+	rawBody?: Buffer;
 	/** The units the door took from the client's general bucket, which count toward the request's charge. */
 	doorUnits: number;
 	items?: number;
@@ -133,7 +138,8 @@ interface Route {
 	gated: boolean;
 	/**
 	 * Whether the route is subject to the in-flight cap and the rate limits. A GET of a route that is
-	 * not, which is health alone, is exempt from every limit; any other request to it is charged.
+	 * not, which is health alone, is exempt from every limit when it carries no body; any other
+	 * request to it is charged.
 	 */
 	limited: boolean;
 	handler: Handler;
@@ -400,12 +406,25 @@ function discardRest(req: http.IncomingMessage, discardLimit: number, alreadyRea
 	req.resume();
 }
 
+function payloadTooLarge(limit: number): ApiError {
+	return new ApiError('PAYLOAD_TOO_LARGE', `the request body is larger than ${limit} bytes`, {
+		details: { maxBytes: limit },
+	});
+}
+
+/** Refuse a body whose Content-Length is over `limit`, before a byte of it is read. */
+function assertDeclaredWithinLimit(req: http.IncomingMessage, limit: number): void {
+	const declared = req.headers['content-length'];
+	if (declared !== undefined && /^\d+$/.test(declared) && Number(declared) > limit) {
+		throw payloadTooLarge(limit);
+	}
+}
+
 /**
- * Read the request body, refusing more than `limit` bytes: by Content-Length before reading a
- * byte, and by counting while streaming. A POST without a length never gets here and Node holds a
- * declared length to its word, so the count is a second line of defense.
- * Nothing past the limit is kept. `progress` counts the bytes consumed, so the discard that
- * follows a refusal continues the count.
+ * Read the request body, refusing more than `limit` bytes by counting while streaming. The caller
+ * has already refused a declared length over the limit; Node holds a declared length to its word, so
+ * the count is a second line of defense. Nothing past the limit is kept. `progress` counts the bytes
+ * consumed, so the discard that follows a refusal continues the count.
  */
 function readBody(
 	req: http.IncomingMessage,
@@ -413,16 +432,8 @@ function readBody(
 	signal: AbortSignal,
 	progress: BodyProgress,
 ): Promise<Buffer> {
-	const tooLarge = (): ApiError =>
-		new ApiError('PAYLOAD_TOO_LARGE', `the request body is larger than ${limit} bytes`, {
-			details: { maxBytes: limit },
-		});
 	if (signal.aborted) {
 		return Promise.reject(new WorkCancelled());
-	}
-	const declared = req.headers['content-length'];
-	if (declared !== undefined && /^\d+$/.test(declared) && Number(declared) > limit) {
-		return Promise.reject(tooLarge());
 	}
 	return new Promise((resolve, reject) => {
 		const chunks: Buffer[] = [];
@@ -444,7 +455,7 @@ function readBody(
 			size += chunk.length;
 			progress.bytes += chunk.length;
 			if (size > limit) {
-				settle(() => reject(tooLarge()));
+				settle(() => reject(payloadTooLarge(limit)));
 				return;
 			}
 			chunks.push(chunk);
@@ -462,15 +473,8 @@ function readBody(
 	});
 }
 
-/** The body of a POST as a JSON object, after the media type, size, and syntax checks. */
-async function readJsonObject(
-	req: http.IncomingMessage,
-	limit: number,
-	signal: AbortSignal,
-	progress: BodyProgress,
-): Promise<Record<string, unknown>> {
-	checkContentType(req.headers['content-type']);
-	const raw = await readBody(req, limit, signal, progress);
+/** A received body as a JSON object, after the syntax check. */
+function parseJsonObject(raw: Buffer): Record<string, unknown> {
 	let value: unknown;
 	try {
 		value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw));
@@ -602,6 +606,8 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 			// A client that is evicted while its requests run keeps releasing into the entry it took
 			// its slots from, and comes back with fresh slots, which the table size bounds.
 			slots: new SlotLimiter(config.maxInFlightPerClient),
+			// Requests of this client whose body is still arriving, which hold no work slot.
+			bodies: new SlotLimiter(config.maxPendingBodiesPerClient),
 		}),
 	});
 	const inFlight = new SlotLimiter(config.maxInFlight);
@@ -696,13 +702,40 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		}
 	}
 
-	/** The JSON object body of a POST, within MAX_BODY_BYTES. */
-	function readBodyOf(req: http.IncomingMessage, ctx: RequestContext): Promise<Record<string, unknown>> {
-		return readJsonObject(req, config.maxBodyBytes, ctx.signal, ctx.body);
+	/**
+	 * Receive the whole body of a POST into `ctx.rawBody`, before the request takes any in-flight slot.
+	 * While the body arrives the request holds one pending-body slot of its client, and a request over
+	 * that count is refused at once with 503 OVERLOADED, its body unread, before its media type and
+	 * declared length are looked at. The slot is given back when the body is complete or refused, the
+	 * request is cancelled, or the client goes away, so a slow sender is held by BODY_TIMEOUT_MS and
+	 * the connection cap, and takes nothing from the work that other clients need.
+	 */
+	async function receiveBody(req: http.IncomingMessage, ctx: RequestContext): Promise<void> {
+		const releasePending = clients.get(ctx.client, clock()).bodies.tryAcquire();
+		if (!releasePending) {
+			throw new ApiError('OVERLOADED', 'too many of your requests are still sending their bodies; try again shortly', {
+				retryAfterSeconds: 1,
+			});
+		}
+		try {
+			checkContentType(req.headers['content-type']);
+			assertDeclaredWithinLimit(req, config.maxBodyBytes);
+			ctx.rawBody = await readBody(req, config.maxBodyBytes, ctx.signal, ctx.body);
+		} finally {
+			releasePending();
+		}
 	}
 
-	async function validateStrings(req: http.IncomingMessage, ctx: RequestContext): Promise<Reply> {
-		const body = await readBodyOf(req, ctx);
+	/** The JSON object body of a POST, which `receiveBody` has already read within MAX_BODY_BYTES. */
+	function bodyOf(ctx: RequestContext): Record<string, unknown> {
+		if (ctx.rawBody === undefined) {
+			throw new Error('a handler ran before its body was received');
+		}
+		return parseJsonObject(ctx.rawBody);
+	}
+
+	async function validateStrings(_req: http.IncomingMessage, ctx: RequestContext): Promise<Reply> {
+		const body = bodyOf(ctx);
 		assertKnownFields(body, ['strings', 'schema']);
 		const { strings } = body;
 		if (!Array.isArray(strings)) {
@@ -753,8 +786,8 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		return { status: 200, body: response };
 	}
 
-	async function suggest(req: http.IncomingMessage, ctx: RequestContext): Promise<Reply> {
-		const body = await readBodyOf(req, ctx);
+	async function suggest(_req: http.IncomingMessage, ctx: RequestContext): Promise<Reply> {
+		const body = bodyOf(ctx);
 		assertKnownFields(body, ['queries', 'top', 'schema', 'semantic']);
 		const { queries } = body;
 		if (!Array.isArray(queries)) {
@@ -889,8 +922,14 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		if (!route.limited) {
 			return route.handler(req, ctx);
 		}
-		// The slot is held from here, when the headers have arrived, until the work has stopped, so a
-		// slow body holds it too, and so does a request that timed out until its work notices.
+		// A body is input, not work, so it is received before any slot is taken: a client that sends
+		// it slowly holds a pending-body slot of its own, and no other client feels it.
+		if (method === 'POST') {
+			await receiveBody(req, ctx);
+			throwIfCancelled(ctx.signal);
+		}
+		// The slot is held from here, when the body is complete or there is none, until the work has
+		// stopped, so a request that timed out keeps it until its work notices.
 		// The client's own cap comes first, so a client at its cap takes no slot from the others.
 		const releaseClient = clients.get(ctx.client, clock()).slots.tryAcquire();
 		if (!releaseClient) {

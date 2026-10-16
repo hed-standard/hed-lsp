@@ -67,6 +67,12 @@ export interface DaemonConfig {
 	maxInFlight: number;
 	/** Requests running at once for one client, so one client cannot take every slot. */
 	maxInFlightPerClient: number;
+	/**
+	 * Requests of one client whose body is still arriving. A body is input, not work, so it holds no
+	 * in-flight slot; this cap keeps one client from holding every connection with slow bodies, and
+	 * each such body is bounded by `bodyTimeoutMs`.
+	 */
+	maxPendingBodiesPerClient: number;
 	/** Always 1: see `readSemanticConcurrency`. */
 	semanticConcurrency: number;
 	semanticQueue: number;
@@ -396,6 +402,7 @@ export function loadConfig(env: Env = process.env): DaemonConfig {
 		chargeCharsPerUnit: readInt(env, 'CHARGE_CHARS_PER_UNIT', 256, 1, MAX_INT),
 		maxInFlight: readInt(env, 'MAX_IN_FLIGHT', 8, 1, MAX_INT),
 		maxInFlightPerClient: readInt(env, 'MAX_IN_FLIGHT_PER_CLIENT', 4, 1, MAX_INT),
+		maxPendingBodiesPerClient: readInt(env, 'MAX_PENDING_BODIES_PER_CLIENT', 4, 1, MAX_INT),
 		semanticConcurrency: readSemanticConcurrency(env),
 		semanticQueue: readInt(env, 'SEMANTIC_QUEUE', 8, 0, MAX_INT),
 		requestTimeoutMs,

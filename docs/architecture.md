@@ -121,12 +121,16 @@ flowchart TD
     E2 -->|No| X9[411 LENGTH_REQUIRED]
     E2 -->|Yes| F{Default schema loaded?}
     F -->|No| X3[503 STARTING]
-    F -->|Yes| G{Client and shared in-flight slots free?}
+    F -->|Yes| G{POST: pending-body slot of the client free?}
     G -->|No| X4[503 OVERLOADED]
-    G -->|Yes| I[Read body: media type, size, JSON, fields]
-    I -->|Refused| X5[415, 413, or 400]
+    G -->|Yes| I[Read body: media type, size]
+    I -->|Refused| X5[415 or 413]
     I -->|Body too slow| X10[408 REQUEST_TIMEOUT]
-    I --> J[Check batch and item limits, choose schema]
+    I --> G2{Client and shared in-flight slots free?}
+    G2 -->|No| X4
+    G2 -->|Yes| I2[Parse JSON, check fields]
+    I2 -->|Refused| X11[400]
+    I2 --> J[Check batch and item limits, choose schema]
     J -->|Refused| X6[400 BATCH_TOO_LARGE or UNKNOWN_SCHEMA]
     J --> K[Charge the units for the text, by length]
     K -->|Over the rate| X1
@@ -144,7 +148,8 @@ flowchart TD
 Two timers surround this path.
 The request timer, `REQUEST_TIMEOUT_MS`, starts when the headers arrive and answers 503 `TIMEOUT` if the whole path, queue wait included, has not finished; the work stops at its next item.
 The body timer, `BODY_TIMEOUT_MS`, starts at the same moment and answers 408 `REQUEST_TIMEOUT` if the body is not complete in time.
-The in-flight slots, one for the client and one shared, are held from the moment the headers arrive until the work has stopped, so the caps count work that is still running after a timeout.
+A body is input, not work: while a POST body arrives it holds one of its client's pending-body slots (`MAX_PENDING_BODIES_PER_CLIENT`) and no in-flight slot, so a slow sender cannot lock other clients out.
+The in-flight slots, one for the client and one shared, are taken when the body is complete, or at once when there is none, and held until the work has stopped, so the caps count work that is still running after a timeout.
 Any answer that is sent while the body is still arriving first arranges for the rest of it to be read and dropped, up to four times `MAX_BODY_BYTES`, after which the connection is closed.
 The write of the answer has its own watchdog, `WRITE_STALL_MS`: the body goes out in pieces, each after the socket has drained, and a write that makes no progress for that long has its connection reset, so a client that stops reading cannot hold a connection until Node's socket timeout fires two to three periods later.
 No charge is refunded on any of these exits.

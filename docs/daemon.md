@@ -244,7 +244,7 @@ Its `status` says what happened to semantic search; see [Semantic search](#seman
 | 429 | `RATE_LIMITED` | The client is over its rate; `Retry-After` gives whole seconds |
 | 500 | `INTERNAL_ERROR` | An unexpected failure; the message is generic and the detail is in the log |
 | 503 | `STARTING` | The default schema has not loaded yet; `Retry-After: 1` |
-| 503 | `OVERLOADED` | The client already has `MAX_IN_FLIGHT_PER_CLIENT` requests running, or all clients together have `MAX_IN_FLIGHT`; `Retry-After: 1` |
+| 503 | `OVERLOADED` | The client already has `MAX_IN_FLIGHT_PER_CLIENT` requests running, or all clients together have `MAX_IN_FLIGHT`, or a POST finds `MAX_PENDING_BODIES_PER_CLIENT` bodies of the client still arriving; `Retry-After: 1` |
 | 503 | `SEMANTIC_BUSY` | The semantic slot and its queue are full; `Retry-After: 5` |
 | 503 | `SCHEMA_UNAVAILABLE` | The schema failed to load and is waiting out its backoff; `Retry-After` gives the wait |
 | 503 | `TIMEOUT` | The request ran past `REQUEST_TIMEOUT_MS`; `Retry-After: 1`, and the connection is closed |
@@ -284,6 +284,7 @@ The values below are starting values chosen to keep one shared machine safe, and
 | `CHARGE_CHARS_PER_UNIT` | `256` | Characters that cost one unit of charge |
 | `MAX_IN_FLIGHT` | `8` | Requests running at once, all clients together |
 | `MAX_IN_FLIGHT_PER_CLIENT` | `4` | Requests running at once for one client |
+| `MAX_PENDING_BODIES_PER_CLIENT` | `4` | Bodies of one client still arriving at once; they hold no in-flight slot |
 | `SEMANTIC_CONCURRENCY` | `1` | Semantic requests running at once; 1 is the only accepted value |
 | `SEMANTIC_QUEUE` | `8` | Semantic requests waiting for the slot |
 | `REQUEST_TIMEOUT_MS` | `30000` | Time for a whole request, queue wait included |
@@ -329,11 +330,15 @@ Set `TRUSTED_PROXIES` to the address of the proxy in front of it.
 
 ### Requests in flight and timeouts
 
-A request is in flight from the moment its headers arrive until its work stops, so a client that sends a body slowly holds a slot.
+A body is input, not work, so a client that sends one slowly holds no in-flight slot.
+A POST takes one of its client's pending-body slots while its body is arriving, `MAX_PENDING_BODIES_PER_CLIENT` of them (4), and gives it back when the body is complete, when `BODY_TIMEOUT_MS` has passed, or when the request ends.
+A POST over that count gets 503 `OVERLOADED` with `Retry-After: 1` before its body is read.
+A slow sender can therefore hold at most four connections, for at most `BODY_TIMEOUT_MS` each, and never a slot that another client's work needs.
+A body that is still incomplete `BODY_TIMEOUT_MS` after the headers gets 408 `REQUEST_TIMEOUT` and the connection is closed, so it holds its pending-body slot for 10 seconds and not for the whole request timeout.
+
+A request is in flight from the moment its body is complete, or at once when it has none, until its work stops.
 Two caps apply: `MAX_IN_FLIGHT_PER_CLIENT` for one client, so that one client cannot take every slot, and `MAX_IN_FLIGHT` for all clients together.
-A request over either cap gets 503 `OVERLOADED` with `Retry-After: 1`.
-A body that is still incomplete `BODY_TIMEOUT_MS` after the headers gets 408 `REQUEST_TIMEOUT` and the connection is closed.
-Its work is canceled and its slot is free at once, so a slow sender holds a slot for 10 seconds and not for the whole request timeout.
+A request over either cap gets 503 `OVERLOADED` with `Retry-After: 1`; its body has been read by then.
 A request that runs past `REQUEST_TIMEOUT_MS` is answered 503 `TIMEOUT`.
 Its work stops between items, and it keeps its slot until then; a semantic run that has already started finishes.
 Node's own request timer is set 5 seconds past the daemon's, so the daemon always answers first.

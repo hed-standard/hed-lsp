@@ -256,25 +256,29 @@ describe('rate limits charged by item', () => {
 		}
 		expect(startingStatuses).toEqual([503, 503, 429]);
 
-		// One request holds the only slot. Another client, named by a header that the trusted local proxy
-		// may set, finds out when the slot is taken. The clock then moves far enough to refill every bucket.
+		// A client, named by a header that the trusted local proxy may set, has a body that is still arriving
+		// and may have no other. The same client finds out when that pending-body slot is taken. The clock
+		// then moves far enough to refill the bucket.
 		const busy = await start(
-			{ HED_LSP_RATE_ITEMS_PER_SEC: '1', HED_LSP_RATE_ITEMS_BURST: '3', HED_LSP_MAX_IN_FLIGHT: '1' },
+			{ HED_LSP_RATE_ITEMS_PER_SEC: '1', HED_LSP_RATE_ITEMS_BURST: '3', HED_LSP_MAX_PENDING_BODIES_PER_CLIENT: '1' },
 			{ now: clock.now },
 		);
-		const held = holdRequest(busy.url, '/v1/validate', { length: 1000, first: '{"strings"' });
+		const client = { 'X-Forwarded-For': '203.0.113.9' };
+		const held = holdRequest(busy.url, '/v1/validate', { length: 1000, first: '{"strings"', headers: client });
+		// The pause comes first: a probe that arrived before the held body could take its slot instead.
+		await sleep(100);
 		await waitFor(
 			async () => {
 				clock.advance(1000);
-				return (await call(busy.url, '/v1/schemas', { headers: { 'X-Forwarded-For': '203.0.113.9' } })).status === 503;
+				return (await postJson(busy.url, '/v1/validate', strings(1), client)).status === 503;
 			},
 			5000,
-			'the slot to be taken',
+			'the pending-body slot to be taken',
 		);
 		clock.advance(60_000);
 		const overloaded = [];
 		for (let i = 0; i < 4; i++) {
-			overloaded.push((await call(busy.url, '/v1/schemas')).status);
+			overloaded.push((await postJson(busy.url, '/v1/validate', strings(1), client)).status);
 		}
 
 		expect(overloaded).toEqual([503, 503, 503, 429]);
@@ -649,27 +653,174 @@ describe('the client a request is limited as', () => {
 	});
 });
 
-describe('requests in flight', () => {
-	it('holds a slot from the headers until the work stops, so a half-sent body makes the next request overloaded', async () => {
-		const { url } = await start({ HED_LSP_MAX_IN_FLIGHT: '1' });
-		const body = JSON.stringify(strings(1));
-		const held = holdRequest(url, '/v1/validate', { length: body.length, first: body.slice(0, 5) });
+/**
+ * A validate request that keeps the daemon busy: `count` strings of 4096 open parentheses, the slowest
+ * kind to validate, about 12 ms each on a fast desktop computer and several times that in a
+ * container. The work yields between strings, so other requests are served while it runs. The
+ * request takes an in-flight slot when its body is complete, and keeps it until the last string is done.
+ */
+function busyBody(count: number): string {
+	return JSON.stringify({ strings: Array.from({ length: count }, () => '('.repeat(4096)), schema: BUNDLED });
+}
 
-		await waitFor(async () => (await call(url, '/v1/schemas')).status === 503, 5000, 'the slot to be taken');
-		const refused = await call(url, '/v1/schemas');
-		const refusedPost = await postJson(url, '/v1/validate', strings(1));
-		const health = await call(url, '/v1/health');
+/** Start a busy validate request for a client. The reply arrives when its work is done, or when it is refused. */
+function startBusy(url: string, count: number, headers: Record<string, string> = {}): ReturnType<typeof postJson> {
+	return postJson(url, '/v1/validate', busyBody(count), headers);
+}
 
+describe('pending bodies', () => {
+	const A = { 'X-Forwarded-For': '203.0.113.1' };
+	const B = { 'X-Forwarded-For': '203.0.113.2' };
+	const C = { 'X-Forwarded-For': '203.0.113.3' };
+
+	/** Hold `count` requests of a client that promised a body and sent a little of it. */
+	function holdBodies(url: string, count: number, headers: Record<string, string>): ReturnType<typeof holdRequest>[] {
+		return Array.from({ length: count }, () =>
+			holdRequest(url, '/v1/validate', { length: 1000, first: '{"strings"', headers }),
+		);
+	}
+
+	/**
+	 * Wait until a client has used up its pending-body slots, which a further body from it finds out. The
+	 * pause comes first: a probe that arrived before a held body could take its slot and make that body
+	 * the one that is refused.
+	 */
+	async function untilFull(url: string, headers: Record<string, string>): Promise<void> {
+		await sleep(100);
+		await waitFor(
+			async () => (await postJson(url, '/v1/validate', strings(1), headers)).status === 503,
+			5000,
+			'the pending bodies of the client to be counted',
+		);
+	}
+
+	it('lets two clients hold four slow bodies each, the whole of the default shared cap, without blocking a third client', async () => {
+		const { url, config } = await start();
+		expect(config.maxInFlight).toBe(8);
+		expect(config.maxPendingBodiesPerClient).toBe(4);
+		const held = [...holdBodies(url, 4, A), ...holdBodies(url, 4, B)];
+		await untilFull(url, A);
+		await untilFull(url, B);
+
+		const validate = await postJson(url, '/v1/validate', strings(2), C);
+		const schemas = await call(url, '/v1/schemas', { headers: C });
+		const health = await call(url, '/v1/health', { headers: C });
+
+		expect(validate.status).toBe(200);
+		expect(validate.json.results).toHaveLength(2);
+		expect(schemas.status).toBe(200);
+		expect(health.status).toBe(200);
+		for (const request of held) {
+			request.abandon();
+		}
+	});
+
+	it('refuses a fifth pending body from one client with 503 OVERLOADED and Retry-After 1, before it is read', async () => {
+		const { url } = await start();
+		const held = holdBodies(url, 4, A);
+		await untilFull(url, A);
+
+		const fifth = holdRequest(url, '/v1/validate', { length: 1000, first: '{"strings"', headers: A });
+		const refused = await fifth.response;
+
+		expect(refused.status).toBe(503);
 		expect(refused.json.error.code).toBe('OVERLOADED');
 		expect(refused.headers['retry-after']).toBe('1');
 		expect(refused.headers['access-control-allow-origin']).toBe('*');
-		expect(refusedPost.json.error.code).toBe('OVERLOADED');
-		expect(health.status).toBe(200);
+		expect(refused.json.requestId).toBe(refused.headers['x-request-id']);
+		// Another client is not affected by it.
+		expect((await postJson(url, '/v1/validate', strings(1), B)).status).toBe(200);
+		fifth.abandon();
+		for (const request of held) {
+			request.abandon();
+		}
+	});
+
+	it('gives the slot back when a body is complete, so the client can send another', async () => {
+		const { url } = await start({ HED_LSP_MAX_PENDING_BODIES_PER_CLIENT: '1' });
+		const body = JSON.stringify(strings(1));
+		const held = holdRequest(url, '/v1/validate', { length: body.length, first: body.slice(0, 5), headers: A });
+		await untilFull(url, A);
+
+		held.complete(body.slice(5));
+		const finished = await held.response;
+
+		expect(finished.status).toBe(200);
+		expect((await postJson(url, '/v1/validate', strings(1), A)).status).toBe(200);
+		expect((await postJson(url, '/v1/validate', strings(1), A)).status).toBe(200);
+	});
+
+	it('gives the slot back when a client abandons a half-sent body', async () => {
+		const { url } = await start({ HED_LSP_MAX_PENDING_BODIES_PER_CLIENT: '1' });
+		const held = holdRequest(url, '/v1/validate', { length: 1000, first: '{"strings"', headers: A });
+		await untilFull(url, A);
+
+		held.abandon();
+
+		await waitFor(
+			async () => (await postJson(url, '/v1/validate', strings(1), A)).status === 200,
+			5000,
+			'the pending-body slot to be free',
+		);
+	});
+
+	it('counts only a request that is waiting for its body: other kinds of request are not refused', async () => {
+		const { url } = await start({ HED_LSP_MAX_PENDING_BODIES_PER_CLIENT: '1' });
+		const held = holdRequest(url, '/v1/validate', { length: 1000, first: '{"strings"', headers: A });
+		await untilFull(url, A);
+
+		expect((await call(url, '/nope', { headers: A })).status).toBe(404);
+		expect((await call(url, '/v1/validate', { method: 'OPTIONS', headers: A })).status).toBe(204);
+		expect((await call(url, '/v1/validate', { headers: A })).status).toBe(405);
+		expect((await call(url, '/v1/schemas', { headers: A })).status).toBe(200);
+		held.abandon();
+	});
+});
+
+describe('requests in flight', () => {
+	it('takes no slot while a body is still arriving, so a slow sender blocks nobody', async () => {
+		// One slot in all. The client has one pending-body slot, which shows when its body is counted.
+		const { url } = await start({ HED_LSP_MAX_IN_FLIGHT: '1', HED_LSP_MAX_PENDING_BODIES_PER_CLIENT: '1' });
+		const body = JSON.stringify(strings(1));
+		const held = holdRequest(url, '/v1/validate', { length: body.length, first: body.slice(0, 5) });
+		// The pause comes first: a probe that arrived before the held body could take its slot instead.
+		await sleep(100);
+		await waitFor(
+			async () => (await postJson(url, '/v1/validate', strings(1))).status === 503,
+			5000,
+			'the body to be counted as pending',
+		);
+
+		// The only slot is free: a request that needs one is served.
+		const schemas = await call(url, '/v1/schemas');
+		expect(schemas.status).toBe(200);
 
 		held.complete(body.slice(5));
 		const finished = await held.response;
 		expect(finished.status).toBe(200);
 		expect(finished.json.results).toHaveLength(1);
+	});
+
+	it('holds a slot from the moment the body is complete until the work stops', async () => {
+		const { url } = await start({ HED_LSP_MAX_IN_FLIGHT: '1' });
+		// Two requests with a complete body: one gets the slot, and the one that finds it taken is refused
+		// at once, while the first is at work.
+		const works = [startBusy(url, 30), startBusy(url, 30)];
+		const refused = await Promise.race(works);
+
+		const schemas = await call(url, '/v1/schemas');
+		const post = await postJson(url, '/v1/validate', strings(1));
+		const health = await call(url, '/v1/health');
+
+		expect(refused.status).toBe(503);
+		expect(refused.json.error.code).toBe('OVERLOADED');
+		expect(refused.headers['retry-after']).toBe('1');
+		expect(refused.headers['access-control-allow-origin']).toBe('*');
+		expect(schemas.json.error.code).toBe('OVERLOADED');
+		expect(post.json.error.code).toBe('OVERLOADED');
+		expect(health.status).toBe(200);
+		const statuses = (await Promise.all(works)).map((reply) => reply.status).sort();
+		expect(statuses).toEqual([200, 503]);
 		await waitFor(async () => (await call(url, '/v1/schemas')).status === 200, 5000, 'the slot to be free');
 	});
 
@@ -677,16 +828,10 @@ describe('requests in flight', () => {
 		const { url } = await start({ HED_LSP_MAX_IN_FLIGHT: '8', HED_LSP_MAX_IN_FLIGHT_PER_CLIENT: '2' });
 		const greedy = { 'X-Forwarded-For': '203.0.113.1' };
 		const other = { 'X-Forwarded-For': '203.0.113.2' };
-		const held = [1, 2].map(() =>
-			holdRequest(url, '/v1/validate', { length: 1000, first: '{"strings"', headers: greedy }),
-		);
-		await waitFor(
-			async () => (await postJson(url, '/v1/validate', strings(1), greedy)).status === 503,
-			5000,
-			'the client to reach its cap',
-		);
+		// Three requests of one client with a complete body: two get a slot, and the third is refused at once.
+		const works = [1, 2, 3].map(() => startBusy(url, 30, greedy));
+		const refused = await Promise.race(works);
 
-		const refused = await postJson(url, '/v1/validate', strings(1), greedy);
 		const served = await postJson(url, '/v1/validate', strings(1), other);
 		const health = await call(url, '/v1/health', { headers: greedy });
 
@@ -696,9 +841,8 @@ describe('requests in flight', () => {
 		expect(refused.headers['access-control-allow-origin']).toBe('*');
 		expect(served.status).toBe(200);
 		expect(health.status).toBe(200);
-		for (const request of held) {
-			request.abandon();
-		}
+		const statuses = (await Promise.all(works)).map((reply) => reply.status).sort();
+		expect(statuses).toEqual([200, 200, 503]);
 		await waitFor(
 			async () => (await postJson(url, '/v1/validate', strings(1), greedy)).status === 200,
 			5000,
@@ -710,55 +854,42 @@ describe('requests in flight', () => {
 		const { url } = await start({ HED_LSP_MAX_IN_FLIGHT: '2', HED_LSP_MAX_IN_FLIGHT_PER_CLIENT: '2' });
 		const first = { 'X-Forwarded-For': '203.0.113.1' };
 		const second = { 'X-Forwarded-For': '203.0.113.2' };
-		const heldFirst = holdRequest(url, '/v1/validate', { length: 1000, first: '{"strings"', headers: first });
-		const heldSecond = holdRequest(url, '/v1/validate', { length: 1000, first: '{"strings"', headers: second });
-		await waitFor(
-			async () =>
-				(await postJson(url, '/v1/validate', strings(1), { 'X-Forwarded-For': '203.0.113.3' })).status === 503,
-			5000,
-			'the shared cap to be reached',
-		);
+		// The first client works longer than the second. Both have a complete body well before the pause
+		// ends, and a request sent earlier could take a free slot and make one of them find none.
+		const workFirst = startBusy(url, 80, first);
+		const workSecond = startBusy(url, 30, second);
+		await sleep(150);
 
 		// The first client is under its own cap of two, and the shared cap refuses it five times.
 		const refusals = [];
 		for (let i = 0; i < 5; i++) {
 			refusals.push((await postJson(url, '/v1/validate', strings(1), first)).status);
 		}
-		heldSecond.abandon();
-		await waitFor(
-			async () => (await postJson(url, '/v1/validate', strings(1), second)).status === 200,
-			5000,
-			'the shared slot to be free',
-		);
+		const third = await postJson(url, '/v1/validate', strings(1), { 'X-Forwarded-For': '203.0.113.3' });
+		expect((await workSecond).status).toBe(200);
 
-		// The first client holds one slot of its two. Had a refusal kept a slot, it would be at its cap now.
+		// The second client is done, and the first still holds one slot of its two. Had a refusal kept a
+		// slot, it would be at its cap now.
 		const again = await postJson(url, '/v1/validate', strings(1), first);
 
 		expect(refusals).toEqual([503, 503, 503, 503, 503]);
+		expect(third.status).toBe(503);
 		expect(again.status).toBe(200);
-		heldFirst.abandon();
-	});
-
-	it('frees the slot when a client abandons a half-sent body', async () => {
-		const { url } = await start({ HED_LSP_MAX_IN_FLIGHT: '1' });
-		const held = holdRequest(url, '/v1/validate', { length: 1000, first: '{"strings"' });
-		await waitFor(async () => (await call(url, '/v1/schemas')).status === 503, 5000, 'the slot to be taken');
-
-		held.abandon();
-
-		await waitFor(async () => (await call(url, '/v1/schemas')).status === 200, 5000, 'the slot to be free');
+		expect((await workFirst).status).toBe(200);
 	});
 
 	it('does not count a refused OVERLOADED request, a 404, or a preflight against the cap', async () => {
 		const { url } = await start({ HED_LSP_MAX_IN_FLIGHT: '1' });
-		const held = holdRequest(url, '/v1/validate', { length: 1000, first: '{"strings"' });
-		await waitFor(async () => (await call(url, '/v1/schemas')).status === 503, 5000, 'the slot to be taken');
+		const works = [startBusy(url, 30), startBusy(url, 30)];
+		const refused = await Promise.race(works);
+		expect(refused.status).toBe(503);
 
 		expect((await call(url, '/nope')).status).toBe(404);
 		expect((await call(url, '/v1/validate', { method: 'OPTIONS' })).status).toBe(204);
 		expect((await call(url, '/v1/validate')).status).toBe(405);
 
-		held.abandon();
+		await Promise.all(works);
+		await waitFor(async () => (await call(url, '/v1/schemas')).status === 200, 5000, 'the slot to be free');
 	});
 });
 
@@ -767,7 +898,8 @@ describe('the request timeout', () => {
 	// answer. It is longer than the default limit on a string, so these daemons raise that limit.
 	const LONG_STRINGS = { HED_LSP_MAX_STRING_CHARS: '16384' };
 	const SLOW_STRING = Array.from({ length: 600 }, (_, i) => `Label/item${i}`).join(', ');
-	const BATCH = { strings: Array.from({ length: 100 }, () => SLOW_STRING) };
+	// Sixty strings are enough to be cut off between items; a hundred were more than the test needs.
+	const BATCH = { strings: Array.from({ length: 60 }, () => SLOW_STRING) };
 
 	it('answers 503 TIMEOUT with Retry-After 1, then stops the work between items and frees the slot', async () => {
 		// How long the whole batch takes on this machine when nothing interrupts it.
@@ -797,17 +929,26 @@ describe('the request timeout', () => {
 		expect(reply.headers['retry-after']).toBe('1');
 		expect(reply.headers.connection).toBe('close');
 		expect(reply.headers['access-control-allow-origin']).toBe('*');
-		// The slot is held until the work has stopped, which is after the item in progress, not after all 100.
+		// The slot is held until the work has stopped, which is after the item in progress, not after all of them.
 		await waitFor(async () => (await call(daemon.url, '/v1/schemas')).status === 200, 5000, 'the slot to be free');
 		expect(Date.now() - startedAt).toBeLessThan(fullMs / 2);
 		const line = daemon.logLines().find((entry) => entry.msg === 'request' && entry.status === 503);
-		expect(line).toMatchObject({ error: 'TIMEOUT', items: 100 });
-	});
+		expect(line).toMatchObject({ error: 'TIMEOUT', items: BATCH.strings.length });
+		// This test starts two daemons and runs the whole batch once before the run that is cut off. On a slow
+		// host, such as a container on a laptop, that takes longer than the default limit of 5 seconds.
+	}, 60_000);
 
-	it('answers a request that times out while its body is still arriving, and frees the slot', async () => {
-		const { url } = await start({ ...SHORT_HEADERS, HED_LSP_REQUEST_TIMEOUT_MS: '300', HED_LSP_MAX_IN_FLIGHT: '1' });
+	it('answers a request that times out while its body is still arriving, and frees its pending-body slot', async () => {
+		const { url } = await start({
+			...SHORT_HEADERS,
+			HED_LSP_REQUEST_TIMEOUT_MS: '300',
+			HED_LSP_MAX_PENDING_BODIES_PER_CLIENT: '1',
+		});
 		const startedAt = Date.now();
 		const held = holdRequest(url, '/v1/validate', { length: 1000, first: '{"strings"' });
+		// The held body has the client's only pending-body slot for now.
+		await sleep(100);
+		expect((await postJson(url, '/v1/validate', strings(1))).status).toBe(503);
 
 		const reply = await held.response;
 
@@ -816,7 +957,11 @@ describe('the request timeout', () => {
 		expect(reply.headers['retry-after']).toBe('1');
 		expect(Date.now() - startedAt).toBeGreaterThanOrEqual(250);
 		expect(Date.now() - startedAt).toBeLessThan(3000);
-		await waitFor(async () => (await call(url, '/v1/schemas')).status === 200, 5000, 'the slot to be free');
+		await waitFor(
+			async () => (await postJson(url, '/v1/validate', strings(1))).status === 200,
+			5000,
+			'the pending-body slot to be free',
+		);
 	});
 
 	it('does not time out a request that finishes in time, and leaves nothing running afterward', async () => {
@@ -881,11 +1026,18 @@ describe('the body timeout', () => {
 		});
 	}
 
-	it('answers 408 and closes the connection when the body is still incomplete, and frees the slot', async () => {
-		const daemon = await start({ HED_LSP_BODY_TIMEOUT_MS: '300', HED_LSP_MAX_IN_FLIGHT: '1' });
+	it('answers 408 and closes the connection when the body is still incomplete, and frees the pending-body slot', async () => {
+		// A second of body time leaves room to see the slot taken first, on a slow host as on a fast one. The
+		// explicit limit is for the daemon start, which loads two schemas and takes seconds in a loaded container.
+		const daemon = await start({ HED_LSP_BODY_TIMEOUT_MS: '1000', HED_LSP_MAX_PENDING_BODIES_PER_CLIENT: '1' });
 		const startedAt = Date.now();
 		const held = holdRequest(daemon.url, '/v1/validate', { length: 1000, first: '{"strings"' });
-		await waitFor(async () => (await call(daemon.url, '/v1/schemas')).status === 503, 5000, 'the slot to be taken');
+		await sleep(100);
+		await waitFor(
+			async () => (await postJson(daemon.url, '/v1/validate', strings(1))).status === 503,
+			5000,
+			'the pending-body slot to be taken',
+		);
 
 		const reply = await held.response;
 
@@ -894,12 +1046,32 @@ describe('the body timeout', () => {
 		expect(reply.json.requestId).toBe(reply.headers['x-request-id']);
 		expect(reply.headers.connection).toBe('close');
 		expect(reply.headers['access-control-allow-origin']).toBe('*');
-		expect(Date.now() - startedAt).toBeGreaterThanOrEqual(250);
-		expect(Date.now() - startedAt).toBeLessThan(3000);
-		await waitFor(async () => (await call(daemon.url, '/v1/schemas')).status === 200, 5000, 'the slot to be free');
+		expect(Date.now() - startedAt).toBeGreaterThanOrEqual(900);
+		expect(Date.now() - startedAt).toBeLessThan(5000);
+		await waitFor(
+			async () => (await postJson(daemon.url, '/v1/validate', strings(1))).status === 200,
+			5000,
+			'the pending-body slot to be free',
+		);
 		const line = daemon.logLines().find((entry) => entry.msg === 'request' && entry.error === 'REQUEST_TIMEOUT');
 		expect(line).toMatchObject({ method: 'POST', path: '/v1/validate', status: 408 });
-	});
+	}, 60_000);
+
+	it('leaves a body that has arrived in full alone, however long the work takes after BODY_TIMEOUT_MS', async () => {
+		// The deadline is for the body. A body that arrives at once is complete, so a batch that takes longer
+		// than the deadline to validate is still answered. The work is 60 strings, about 0.8 s on a fast machine,
+		// and several times that in a container, hence the explicit limit.
+		const daemon = await start({ HED_LSP_BODY_TIMEOUT_MS: '300' });
+		const startedAt = Date.now();
+
+		const reply = await startBusy(daemon.url, 60);
+
+		expect(Date.now() - startedAt, 'the work must outlast the body deadline, or nothing is tested').toBeGreaterThan(
+			300,
+		);
+		expect(reply.status).toBe(200);
+		expect(reply.json.results).toHaveLength(60);
+	}, 60_000);
 
 	it('counts from the headers, so a body that drips in a byte at a time still times out on schedule', async () => {
 		const daemon = await start({ HED_LSP_BODY_TIMEOUT_MS: '400' });

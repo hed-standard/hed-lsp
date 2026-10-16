@@ -10,7 +10,7 @@
 
 import * as net from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { call, holdRequest, postJson, type RunningDaemon, startDaemon, waitFor } from './daemonHarness.js';
+import { call, holdRequest, postJson, type RunningDaemon, sleep, startDaemon, waitFor } from './daemonHarness.js';
 
 const VALID = 'Sensory-event, Visual-presentation';
 
@@ -156,11 +156,19 @@ const REFUSALS: Refusal[] = [
 		code: 'RATE_LIMITED',
 	},
 	{
-		label: 'a daemon at its limit of requests in flight (OVERLOADED)',
-		overrides: { HED_LSP_MAX_IN_FLIGHT: '1' },
+		// A client over its limit of pending bodies is refused before its body is read. A client over a limit of
+		// requests in flight is refused after, because the body is read before the slot is taken.
+		label: 'a client at its limit of pending bodies (OVERLOADED)',
+		overrides: { HED_LSP_MAX_PENDING_BODIES_PER_CLIENT: '1' },
 		prepare: async (daemon) => {
 			const held = holdRequest(daemon.url, '/v1/validate', { length: 1000, first: '{"strings"' });
-			await waitFor(async () => (await call(daemon.url, '/v1/schemas')).status === 503, 5000, 'the slot to be taken');
+			// The pause comes first: a probe that arrived before the held body could take its slot instead.
+			await sleep(100);
+			await waitFor(
+				async () => (await postJson(daemon.url, '/v1/validate', { strings: [VALID] })).status === 503,
+				5000,
+				'the pending-body slot to be taken',
+			);
 			return async () => held.abandon();
 		},
 		request: head('POST', '/v1/validate', JSON_TYPE),
