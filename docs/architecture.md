@@ -85,15 +85,19 @@ graph TB
     end
 
     A --> H
+    A --> I
+    A --> J
     B --> G
     B --> J
     C --> I
     C --> J
     D --> J
     E --> H
+    F --> I
+    F --> J
 ```
 
-Engine log lines go to stderr by default, so the CLI JSON on stdout stays clean. The language server sends them to its console, which reaches the client under `--stdio` and stays on stdout under IPC.
+Engine log lines go to stderr by default, so the CLI JSON on stdout stays clean. The language server sends them to its console, one string per message. Under `--stdio` the client receives them as log messages; under IPC, info lines go to stdout and error lines go to stderr.
 
 ### Data Flow for Validation
 

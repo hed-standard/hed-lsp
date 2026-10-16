@@ -31,8 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Suggestion requests that omit `top`, or send `null` or a blank value for an option, now use the default.
   Before, a missing `top` overrode the default and skipped the schema search, and a `null` `top` returned no results.
 - `hed-suggest --semantic --json` wrote engine log lines to stdout, mixed into its JSON output.
-  Engine logs now go to stderr. The language server's console output is unchanged: it reaches the client under `--stdio` and stays on stdout under IPC.
+  Engine logs now go to stderr. The language server's console output is unchanged: under `--stdio` the client receives it as log messages, and under IPC info lines go to stdout and error lines go to stderr.
 - Concurrent requests for a schema version that is not cached share one load. A failed load is not kept, so the next request retries it.
+- Engine messages that contain a percent sign, such as a file path, are no longer garbled when the language server logs them under IPC.
 
 ## [0.4.0] - 2026-05-21
 
