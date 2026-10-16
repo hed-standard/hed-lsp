@@ -27,6 +27,7 @@ import {
 	batchCost,
 	ClientTable,
 	clientKey,
+	monotonicNow,
 	SlotLimiter,
 	type TakeResult,
 	TokenBucket,
@@ -67,7 +68,10 @@ export interface DaemonOptions {
 	 * answers as it does while starting.
 	 */
 	autoPreload?: boolean;
-	/** Clock in milliseconds, used for schema backoff and the rate buckets. Defaults to Date.now. */
+	/**
+	 * Clock in milliseconds, used for schema backoff, the rate buckets, and the client table. Defaults to
+	 * a monotonic clock, so a change of the wall clock cannot stop a bucket from refilling.
+	 */
 	now?: () => number;
 	/** The version shown in health. Defaults to the nearest package.json. */
 	version?: string;
@@ -481,7 +485,7 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 	const version = options.version ?? readPackageVersion(__dirname);
 	const registry = new SchemaRegistry(config, { now: options.now, logger });
 	const semantic = new SemanticService(config, { logger, backoff: options.semanticBackoff });
-	const clock = options.now ?? Date.now;
+	const clock = options.now ?? monotonicNow;
 	// Per-client buckets, by unit of text: one for everything, one more for what runs semantic search.
 	const clients = new ClientTable({
 		maxClients: config.maxClients,

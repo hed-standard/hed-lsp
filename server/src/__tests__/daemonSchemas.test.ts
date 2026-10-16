@@ -290,6 +290,30 @@ describe('SchemaRegistry failures', () => {
 		expect(schemas.list()[0]).toEqual({ spec: MISSING, status: 'failed', retryAfterSeconds: 60 });
 	});
 
+	it('measures its backoff on a monotonic clock, so a step of the wall clock does not end it', async () => {
+		// The wall clock is installed before the registry is made, because it keeps the clock function it
+		// finds, and no clock is passed, so it uses its default one.
+		const realNow = Date.now;
+		let stepMs = 0;
+		Date.now = () => realNow() + stepMs;
+		try {
+			const schemas = registry({ HED_LSP_SCHEMAS: MISSING, HED_LSP_DEFAULT_SCHEMA: MISSING });
+			await rejected(schemas.ensure(MISSING));
+			expect(loadAttempts(MISSING)).toBe(1);
+
+			// The wall clock jumps forward an hour, far past the 30 second backoff.
+			stepMs = 3_600_000;
+			const again = await rejected(schemas.ensure(MISSING));
+
+			expect(again.code).toBe('SCHEMA_UNAVAILABLE');
+			expect(again.options.retryAfterSeconds).toBeGreaterThanOrEqual(29);
+			expect(again.options.retryAfterSeconds).toBeLessThanOrEqual(30);
+			expect(loadAttempts(MISSING)).toBe(1);
+		} finally {
+			Date.now = realNow;
+		}
+	});
+
 	it('doubles the backoff with each consecutive failure', async () => {
 		const schemas = failing();
 

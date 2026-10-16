@@ -8,6 +8,15 @@
  * the client table lives in memory only.
  */
 
+/**
+ * The default clock of the limits, in milliseconds from an arbitrary origin. It is monotonic: it
+ * never steps backward when the wall clock is set, as `Date.now` does. A token bucket that read the
+ * wall clock would stop refilling for as long as a backward step is wide.
+ */
+export function monotonicNow(): number {
+	return performance.now();
+}
+
 import * as net from 'node:net';
 
 /** The outcome of taking tokens: allowed, or the whole seconds to wait before the cost fits. */

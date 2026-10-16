@@ -7,6 +7,7 @@
 
 import { schemaVersionUsed } from '../engine/index.js';
 import { type DaemonConfig, parseSchemaSpec, schemaSpecTooLong } from './config.js';
+import { monotonicNow } from './limits.js';
 import { errorDetail, type Logger } from './log.js';
 import { ApiError, type SchemaListing, type SchemaStatus } from './protocol.js';
 
@@ -29,7 +30,7 @@ interface Entry {
 }
 
 export interface SchemaRegistryOptions {
-	/** Clock in milliseconds, used for the backoff. Defaults to Date.now. */
+	/** Clock in milliseconds, used for the backoff. Defaults to a monotonic clock. */
 	now?: () => number;
 	logger?: Logger;
 }
@@ -56,7 +57,7 @@ export class SchemaRegistry {
 		private readonly config: Pick<DaemonConfig, 'schemas' | 'defaultSchema' | 'schemaLoadTimeoutMs'>,
 		options: SchemaRegistryOptions = {},
 	) {
-		this.now = options.now ?? Date.now;
+		this.now = options.now ?? monotonicNow;
 		this.logger = options.logger;
 		this.defaultSpec = config.defaultSchema;
 		this.defaultSettled = new Promise<void>((resolve) => {

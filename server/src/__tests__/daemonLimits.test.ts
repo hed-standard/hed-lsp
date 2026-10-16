@@ -11,6 +11,7 @@ import {
 	ClientTable,
 	clientKey,
 	itemCost,
+	monotonicNow,
 	normalizeIp,
 	SlotLimiter,
 	TokenBucket,
@@ -96,6 +97,43 @@ describe('TokenBucket', () => {
 		expect(bucket.check(3, 1000)).toEqual({ allowed: false, retryAfterSeconds: 1 });
 		expect(bucket.take(2, 1000)).toEqual({ allowed: true });
 		expect(bucket.check(1, 1000).allowed).toBe(false);
+	});
+});
+
+describe('monotonicNow', () => {
+	/** Run `action` while the wall clock reads `offsetMs` away from the real time, as after a clock adjustment. */
+	async function withWallClockStep<T>(offsetMs: number, action: () => Promise<T>): Promise<T> {
+		const realNow = Date.now;
+		Date.now = () => realNow() + offsetMs;
+		try {
+			return await action();
+		} finally {
+			Date.now = realNow;
+		}
+	}
+
+	it('keeps moving forward when the wall clock steps back an hour, and does not read the wall clock', async () => {
+		const before = monotonicNow();
+
+		const after = await withWallClockStep(-3_600_000, async () => {
+			await new Promise((resolve) => setTimeout(resolve, 30));
+			return monotonicNow();
+		});
+
+		expect(after - before).toBeGreaterThanOrEqual(25);
+		expect(after - before).toBeLessThan(3000);
+	});
+
+	it('lets a bucket that reads it refill across a backward step of the wall clock', async () => {
+		const bucket = new TokenBucket(100, 10, monotonicNow());
+		expect(bucket.take(10, monotonicNow())).toEqual({ allowed: true });
+		expect(bucket.take(1, monotonicNow()).allowed).toBe(false);
+
+		await withWallClockStep(-3_600_000, async () => {
+			// 100 tokens a second: 60 ms refills 6.
+			await new Promise((resolve) => setTimeout(resolve, 60));
+			expect(bucket.take(1, monotonicNow())).toEqual({ allowed: true });
+		});
 	});
 });
 

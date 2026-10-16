@@ -401,6 +401,32 @@ describe('the door charged by body length, and refusals that keep their charge',
 	});
 });
 
+describe('the clock of the rate limits', () => {
+	it('keeps refilling the buckets when the wall clock steps back an hour', async () => {
+		// The wall clock is installed before the daemon starts, because the daemon keeps the clock function it
+		// finds. It reads real time until the test steps it back. No clock is passed to the daemon, so it
+		// uses its default one: on the wall clock its buckets would stay empty for the whole hour.
+		const realNow = Date.now;
+		let stepBackMs = 0;
+		Date.now = () => realNow() - stepBackMs;
+		try {
+			// 20 units a second, and a burst of 5.
+			const { url } = await start({ HED_LSP_RATE_ITEMS_PER_SEC: '20', HED_LSP_RATE_ITEMS_BURST: '5' });
+			expect((await postJson(url, '/v1/validate', strings(5))).status).toBe(200);
+
+			stepBackMs = 3_600_000;
+
+			await waitFor(
+				async () => (await postJson(url, '/v1/validate', strings(1))).status === 200,
+				5000,
+				'the bucket to refill',
+			);
+		} finally {
+			Date.now = realNow;
+		}
+	});
+});
+
 describe('rate limits charged by length of text', () => {
 	const config = testConfig();
 	const perUnit = config.chargeCharsPerUnit;
