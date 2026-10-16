@@ -38,7 +38,7 @@ function parseArgs(args: string[]): { options: CliOptions; queries: string[] } {
 				i++;
 				options.schema = args[i];
 			} else {
-				console.error('Warning: --schema requires a version argument, using default 8.5.0');
+				console.error(`Warning: --schema requires a version argument, using default ${DEFAULT_HED_SCHEMA}`);
 			}
 		} else if (arg === '--top' || arg === '-n') {
 			if (i + 1 < args.length && !args[i + 1].startsWith('-')) {
@@ -70,7 +70,7 @@ Usage:
 
 Options:
   -j, --json         Output results as JSON
-  -s, --schema VER   Use specific schema version (default: 8.5.0)
+  -s, --schema VER   Use specific schema version (default: ${DEFAULT_HED_SCHEMA})
   -n, --top N        Return top N suggestions (default: 10)
   --semantic         Use semantic search (requires model download)
   -h, --help         Show this help message
