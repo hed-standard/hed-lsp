@@ -2,6 +2,11 @@
  * Boundary test: the engine must not depend on the language server or on the editor adapters.
  * The rules are applied to the real engine source, and the rules are tested on synthetic source
  * text so that a weakened matcher fails here. No mocks.
+ *
+ * The check is textual, not a parse. It reads module specifiers written as string literals after
+ * import, export-from, require, and triple-slash reference forms, with single, double, or backtick
+ * quotes. It does not follow computed specifiers, such as a variable or a createRequire call, so
+ * engine modules must name their imports as literals.
  */
 
 import * as fs from 'node:fs';
@@ -24,15 +29,19 @@ function allowed(specifier: string, file: string): boolean {
 }
 
 /**
- * Module specifiers in source text: static imports, re-exports, side-effect imports, dynamic
- * imports, and require calls, with either quote style. The keyword must be followed by whitespace
- * or a parenthesis, and the specifier must stay on one line, so data such as the keyword 'from'
- * (followed directly by a quote) does not look like an import.
+ * Each alternative names one form and captures its path in one of three groups (single, double, or
+ * backtick quotes). The keyword must be followed by whitespace or a parenthesis, and the path must
+ * stay on one line, so data such as the keyword 'from' (followed directly by a quote) is not read as
+ * an import. Triple-slash path and types references are read as well.
  */
+const SPECIFIER_PATTERN =
+	/\bfrom\s+(?:'([^'\n]+)'|"([^"\n]+)"|`([^`\n]+)`)|\bimport\s*\(\s*(?:'([^'\n]+)'|"([^"\n]+)"|`([^`\n]+)`)|\bimport\s+(?:'([^'\n]+)'|"([^"\n]+)"|`([^`\n]+)`)|\brequire(?:\.resolve)?\s*\(\s*(?:'([^'\n]+)'|"([^"\n]+)"|`([^`\n]+)`)|<reference\s+(?:path|types)\s*=\s*(?:'([^'\n]+)'|"([^"\n]+)")/g;
+
+/** Module specifiers in source text, in the order they appear. */
 function specifiersIn(source: string): string[] {
-	const pattern =
-		/\bfrom\s+['"]([^'"\n]+)['"]|\bimport\s*\(\s*['"]([^'"\n]+)['"]|\bimport\s+['"]([^'"\n]+)['"]|\brequire\s*\(\s*['"]([^'"\n]+)['"]/g;
-	return Array.from(source.matchAll(pattern), (match) => match.slice(1).find((group) => group !== undefined) ?? '');
+	return Array.from(source.matchAll(SPECIFIER_PATTERN), (match) => {
+		return match.slice(1).find((group) => group !== undefined) ?? '';
+	});
 }
 
 /** Specifiers in the source text of `file` that the engine may not import. */
@@ -40,14 +49,14 @@ function violationsIn(source: string, file: string): string[] {
 	return specifiersIn(source).filter((specifier) => !allowed(specifier, file));
 }
 
-/** Every TypeScript file under `dir`, including subdirectories. */
+/** Every TypeScript or JavaScript module under `dir`, including subdirectories. */
 function sourceFiles(dir: string): string[] {
 	return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
 		const full = path.join(dir, entry.name);
 		if (entry.isDirectory()) {
 			return sourceFiles(full);
 		}
-		return entry.name.endsWith('.ts') ? [full] : [];
+		return /\.(?:[cm]?ts|js)$/.test(entry.name) ? [full] : [];
 	});
 }
 
@@ -75,6 +84,7 @@ describe('engine boundary', () => {
 			"import { x } from 'node:fs';",
 			"import { x } from 'hed-validator';",
 			"import { x } from '@huggingface/transformers';",
+			"/// <reference path='./types.ts' />",
 		])('allows %s', (line) => {
 			expect(violationsIn(line, probe)).toEqual([]);
 		});
@@ -88,9 +98,15 @@ describe('engine boundary', () => {
 			"import type { Position } from 'vscode-languageserver/node';",
 			"export { x } from 'vscode-languageserver-textdocument';",
 			'import { x } from "vscode-languageserver";',
+			'import { x } from `vscode-languageserver`;',
 			"const lsp = await import('vscode-languageserver');",
+			'const lsp = await import(`vscode-languageserver`);',
 			"const lsp = require('../server.js');",
+			"const lsp = require.resolve('vscode-languageserver');",
+			"import lsp = require('vscode-languageserver');",
 			"import { x } from '/abs/path.js';",
+			'/// <reference types="vscode-languageserver" />',
+			"/// <reference path='../types.ts' />",
 		])('rejects %s', (line) => {
 			expect(violationsIn(line, probe).length).toBeGreaterThan(0);
 		});
@@ -106,16 +122,18 @@ describe('engine boundary', () => {
 			expect(violationsIn("import { x } from '../../types.js';", nested)).toEqual(['../../types.js']);
 		});
 
-		it('collects source files from subdirectories', () => {
+		it('collects TypeScript and JavaScript modules from subdirectories', () => {
 			const root = fs.mkdtempSync(path.join(os.tmpdir(), 'engine-walk-'));
 			try {
 				fs.mkdirSync(path.join(root, 'sub'));
 				fs.writeFileSync(path.join(root, 'top.ts'), '');
+				fs.writeFileSync(path.join(root, 'esm.mts'), '');
+				fs.writeFileSync(path.join(root, 'legacy.js'), '');
 				fs.writeFileSync(path.join(root, 'sub', 'nested.ts'), '');
 				fs.writeFileSync(path.join(root, 'sub', 'notes.md'), '');
 
 				const found = sourceFiles(root).map((file) => path.relative(root, file));
-				expect(found.sort()).toEqual(['sub/nested.ts', 'top.ts']);
+				expect(found.sort()).toEqual(['esm.mts', 'legacy.js', path.join('sub', 'nested.ts'), 'top.ts']);
 			} finally {
 				fs.rmSync(root, { recursive: true, force: true });
 			}
