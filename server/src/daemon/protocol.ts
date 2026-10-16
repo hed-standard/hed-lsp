@@ -130,6 +130,12 @@ export const CORS_HEADERS: Readonly<Record<string, string>> = {
 	'Access-Control-Expose-Headers': 'Retry-After, X-Request-Id',
 };
 
+/**
+ * How long a browser may keep the answer to a preflight, in seconds. The answer never changes, so a
+ * browser that asks once need not ask again for each request; browsers cap this, some at 10 minutes.
+ */
+export const PREFLIGHT_MAX_AGE_SECONDS = 600;
+
 export type HealthStatus = 'starting' | 'ok' | 'degraded';
 export type SemanticState = 'disabled' | 'loading' | 'ready' | 'unavailable';
 export type SchemaStatus = 'loading' | 'loaded' | 'failed';

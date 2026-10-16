@@ -162,11 +162,13 @@ describe('routing', () => {
 	});
 
 	it.each([
-		['/v1/health', 'POST', 'GET, OPTIONS'],
-		['/v1/health', 'PUT', 'GET, OPTIONS'],
-		['/v1/health', 'DELETE', 'GET, OPTIONS'],
-		['/v1/health', 'HEAD', 'GET, OPTIONS'],
-		['/v1/schemas', 'POST', 'GET, OPTIONS'],
+		['/v1/health', 'POST', 'GET, HEAD, OPTIONS'],
+		['/v1/health', 'PUT', 'GET, HEAD, OPTIONS'],
+		['/v1/health', 'DELETE', 'GET, HEAD, OPTIONS'],
+		['/v1/schemas', 'POST', 'GET, HEAD, OPTIONS'],
+		['/v1/validate', 'HEAD', 'POST, OPTIONS'],
+		['/v1/suggest', 'HEAD', 'POST, OPTIONS'],
+		['/v1/validate', 'GET', 'POST, OPTIONS'],
 	])('answers 405 with Allow for %s %s', async (path, method, allow) => {
 		const { url } = await start();
 
@@ -174,7 +176,9 @@ describe('routing', () => {
 
 		expect(reply.status).toBe(405);
 		expect(reply.headers.allow).toBe(allow);
-		if (method !== 'HEAD') {
+		if (method === 'HEAD') {
+			expect(reply.text).toBe('');
+		} else {
 			expect(reply.json.error.code).toBe('METHOD_NOT_ALLOWED');
 		}
 	});
@@ -193,8 +197,27 @@ describe('routing', () => {
 
 		expect(reply.status).toBe(204);
 		expect(reply.text).toBe('');
-		expect(reply.headers.allow).toBe('GET, OPTIONS');
+		expect(reply.headers.allow).toBe('GET, HEAD, OPTIONS');
 		expect(reply.headers).toMatchObject(CORS);
+	});
+
+	it('lets a browser keep a preflight answer for 10 minutes, and only a preflight answer', async () => {
+		const { url } = await start();
+
+		const known = await call(url, '/v1/validate', { method: 'OPTIONS' });
+		const health = await call(url, '/v1/health', { method: 'OPTIONS' });
+		const others = [
+			await call(url, '/v1/health'),
+			await call(url, '/v1/schemas'),
+			await call(url, '/missing', { method: 'OPTIONS' }),
+			await call(url, '/v1/validate'),
+		];
+
+		expect(known.headers['access-control-max-age']).toBe('600');
+		expect(health.headers['access-control-max-age']).toBe('600');
+		for (const reply of others) {
+			expect(reply.headers['access-control-max-age']).toBeUndefined();
+		}
 	});
 
 	it('sets the CORS headers on every kind of response', async () => {
@@ -223,6 +246,71 @@ describe('routing', () => {
 		expect(reply.headers).toMatchObject(CORS);
 
 		await daemon.daemon.preload();
+	});
+});
+
+describe('HEAD', () => {
+	it('answers HEAD on a GET route with the headers of the GET and no body', async () => {
+		const { url } = await start();
+
+		const get = await call(url, '/v1/schemas');
+		const head = await call(url, '/v1/schemas', { method: 'HEAD' });
+
+		expect(head.status).toBe(200);
+		expect(head.text).toBe('');
+		expect(head.headers['content-type']).toBe(get.headers['content-type']);
+		expect(head.headers['content-length']).toBe(get.headers['content-length']);
+		expect(Number(head.headers['content-length'])).toBe(Buffer.byteLength(get.text));
+		expect(head.headers['cache-control']).toBe('no-store');
+		expect(head.headers).toMatchObject(CORS);
+		expect(head.headers['x-request-id']).toMatch(/^[0-9a-f-]{36}$/);
+	});
+
+	it('answers HEAD on health with its status, and 503 while starting, as the GET does', async () => {
+		const daemon = await start({}, { autoPreload: false });
+
+		const starting = await call(daemon.url, '/v1/health', { method: 'HEAD' });
+		await daemon.daemon.preload();
+		const ready = await call(daemon.url, '/v1/health', { method: 'HEAD' });
+		const get = await call(daemon.url, '/v1/health');
+
+		expect(starting.status).toBe(503);
+		expect(starting.headers['retry-after']).toBe('1');
+		expect(starting.text).toBe('');
+		expect(ready.status).toBe(200);
+		expect(ready.text).toBe('');
+		// The uptime may have gained a digit between the two requests.
+		expect(
+			Math.abs(Number(ready.headers['content-length']) - Number(get.headers['content-length'])),
+		).toBeLessThanOrEqual(1);
+	});
+
+	it('answers HEAD with no body for an error too, and logs the method', async () => {
+		const daemon = await start();
+
+		const missing = await call(daemon.url, '/missing', { method: 'HEAD' });
+
+		expect(missing.status).toBe(404);
+		expect(missing.text).toBe('');
+		expect(Number(missing.headers['content-length'])).toBeGreaterThan(0);
+		const line = daemon.logLines().find((entry) => entry.msg === 'request' && entry.method === 'HEAD');
+		expect(line).toMatchObject({ method: 'HEAD', path: 'unknown route', status: 404 });
+	});
+
+	it('exempts HEAD on health from the limits like GET, and charges HEAD on schemas like GET', async () => {
+		const daemon = await start({ HED_LSP_RATE_ITEMS_PER_SEC: '1', HED_LSP_RATE_ITEMS_BURST: '2' });
+
+		const health = [];
+		for (let i = 0; i < 5; i++) {
+			health.push((await call(daemon.url, '/v1/health', { method: 'HEAD' })).status);
+		}
+		const schemas = [];
+		for (let i = 0; i < 3; i++) {
+			schemas.push((await call(daemon.url, '/v1/schemas', { method: 'HEAD' })).status);
+		}
+
+		expect(health).toEqual([200, 200, 200, 200, 200]);
+		expect(schemas).toEqual([200, 200, 429]);
 	});
 });
 

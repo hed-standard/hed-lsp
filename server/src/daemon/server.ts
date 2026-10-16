@@ -44,6 +44,7 @@ import {
 	type HealthResponse,
 	type HealthStatus,
 	isPlainObject,
+	PREFLIGHT_MAX_AGE_SECONDS,
 	type SchemasResponse,
 	type SemanticStatus,
 	type SuggestResponse,
@@ -770,28 +771,37 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		['/v1/suggest', { methods: ['POST'], gated: true, limited: true, handler: suggest }],
 	]);
 
-	function allowHeader(route: Route): string {
-		return [...route.methods, 'OPTIONS'].join(', ');
+	/** The methods a route answers: its own, HEAD when it answers GET, and OPTIONS. */
+	function allowedMethods(route: Route): string[] {
+		return [...route.methods, ...(route.methods.includes('GET') ? ['HEAD'] : []), 'OPTIONS'];
 	}
 
 	async function dispatch(req: http.IncomingMessage, ctx: RequestContext): Promise<Reply> {
 		const route = routes.get(ctx.path);
+		// A route that answers GET answers HEAD the same way, and the response leaves out the body.
+		const method = ctx.method === 'HEAD' && route?.methods.includes('GET') ? 'GET' : ctx.method;
 		// Health is the one exemption: a GET of it pays nothing, and any other request pays at the door.
-		if (!(route && !route.limited && ctx.method === 'GET')) {
+		if (!(route && !route.limited && method === 'GET')) {
 			admit(ctx, req);
 		}
 		if (!route) {
 			throw new ApiError('NOT_FOUND', 'no such route');
 		}
-		if (ctx.method === 'OPTIONS') {
-			return { status: 204, headers: { Allow: allowHeader(route) } };
+		if (method === 'OPTIONS') {
+			return {
+				status: 204,
+				headers: {
+					Allow: allowedMethods(route).join(', '),
+					'Access-Control-Max-Age': String(PREFLIGHT_MAX_AGE_SECONDS),
+				},
+			};
 		}
-		if (!route.methods.includes(ctx.method)) {
-			throw new ApiError('METHOD_NOT_ALLOWED', 'method not allowed', { allow: [...route.methods, 'OPTIONS'] });
+		if (!route.methods.includes(method)) {
+			throw new ApiError('METHOD_NOT_ALLOWED', 'method not allowed', { allow: allowedMethods(route) });
 		}
 		// A POST says how long its body is, so the daemon knows the cost before it reads a byte, and a
 		// body of unknown length (chunked) is refused without being read.
-		if (ctx.method === 'POST' && req.headers['content-length'] === undefined) {
+		if (method === 'POST' && req.headers['content-length'] === undefined) {
 			throw new ApiError('LENGTH_REQUIRED', 'a POST needs a Content-Length header; chunked bodies are not accepted');
 		}
 		if (route.gated && !registry.defaultReady) {
@@ -832,7 +842,8 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		return failure;
 	}
 
-	function send(res: http.ServerResponse, reply: Reply): void {
+	/** Write the reply. A HEAD response has the headers of the GET response, Content-Length included, and no body. */
+	function send(res: http.ServerResponse, reply: Reply, headOnly: boolean): void {
 		const headers: Record<string, string | number> = { 'Cache-Control': 'no-store', ...reply.headers };
 		const payload = reply.body === undefined ? undefined : JSON.stringify(reply.body);
 		if (payload !== undefined) {
@@ -843,7 +854,7 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 			headers.Connection = 'close';
 		}
 		res.writeHead(reply.status, headers);
-		res.end(payload);
+		res.end(headOnly ? undefined : payload);
 	}
 
 	async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -931,7 +942,7 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 			return;
 		}
 		discardUnreadBody(req, ctx);
-		send(res, reply);
+		send(res, reply, ctx.method === 'HEAD');
 	}
 
 	/**
