@@ -6,6 +6,10 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { embeddingsManager } from '../engine/embeddings.js';
+import { setLogger } from '../engine/log.js';
+import { schemaManager } from '../engine/schemaManager.js';
+import { DEFAULT_HED_SCHEMA } from '../engine/schemaVersion.js';
 import { findSuggestions, suggestBatch } from '../engine/suggestionEngine.js';
 
 describe('findSuggestions', () => {
@@ -98,5 +102,88 @@ describe('characterization of suggestion output', () => {
 	it.each(expected)('keeps the suggestions for %s', async (query, tags) => {
 		const output = await suggestBatch([query], { schema: '8.5.0', top: 10 });
 		expect(output[query]).toEqual(tags);
+	});
+});
+
+describe('suggestBatch result contract', () => {
+	// The map shape is what `hed-suggest --json` prints and what `hed/suggest` returns. Schema 8.4.0 is
+	// bundled with hed-validator, so these checks run offline.
+	const opts = { schema: '8.4.0', top: 5 };
+
+	it('keys the result by query in input order, with each value equal to findSuggestions', async () => {
+		const queries = ['walk', 'red square', 'button press', 'house'];
+
+		const output = await suggestBatch(queries, opts);
+
+		expect(Object.keys(output)).toEqual(queries);
+		expect(output).toEqual({
+			walk: ['Walk', 'Ambulate', 'Move'],
+			'red square': ['Square', 'Rectangle', '2D-shape', 'Red-color', 'Red'],
+			'button press': ['Button', 'Response-button', 'Mouse-button', 'Press', 'Push'],
+			house: ['Building', 'Residence', 'Structure'],
+		});
+		for (const query of queries) {
+			expect(output[query]).toEqual((await findSuggestions(query, opts)).suggestions);
+		}
+	});
+
+	it('collapses duplicate queries to one key at the first position', async () => {
+		const output = await suggestBatch(['red', 'walk', 'red'], opts);
+
+		expect(Object.keys(output)).toEqual(['red', 'walk']);
+		expect(output.red).toEqual(['Red-color', 'Red', 'Predict', 'Manufactured-material', 'Tired']);
+	});
+
+	it('keeps __proto__ and constructor as own keys with their values', async () => {
+		const output = await suggestBatch(['__proto__', 'constructor', 'walk'], opts);
+
+		expect(Object.keys(output)).toEqual(['__proto__', 'constructor', 'walk']);
+		expect(Object.getPrototypeOf(output)).toBe(Object.prototype);
+		expect(Object.getOwnPropertyDescriptor(output, '__proto__')?.value).toEqual([]);
+		expect(Object.getOwnPropertyDescriptor(output, 'constructor')?.value).toEqual([]);
+		expect(output.walk).toEqual(['Walk', 'Ambulate', 'Move']);
+	});
+
+	it('honors top', async () => {
+		const query = 'button press';
+		const full = ['Button', 'Response-button', 'Mouse-button', 'Press', 'Push', 'Press-foot', 'Push-button'];
+
+		expect((await suggestBatch([query], { schema: '8.4.0', top: 1 }))[query]).toEqual(full.slice(0, 1));
+		expect((await suggestBatch([query], { schema: '8.4.0', top: 3 }))[query]).toEqual(full.slice(0, 3));
+		expect((await suggestBatch([query], { schema: '8.4.0', top: 10 }))[query]).toEqual(full);
+	});
+
+	it('uses the default schema for a blank schema, not the schema manager current version', async () => {
+		const previous = schemaManager.getCurrentVersion();
+		// The current version names SCORE, so a blank schema that fell through to it would find sc:Modulator.
+		schemaManager.setCurrentVersion('8.4.0,sc:score_2.1.0');
+		try {
+			const blank = await suggestBatch(['modulator'], { schema: '   ' });
+
+			expect(blank).toEqual({ modulator: [] });
+			expect(blank).toEqual(await suggestBatch(['modulator'], { schema: DEFAULT_HED_SCHEMA }));
+			expect((await suggestBatch(['modulator'], { schema: '8.4.0,sc:score_2.1.0' })).modulator).toContain(
+				'sc:Modulator',
+			);
+		} finally {
+			schemaManager.setCurrentVersion(previous);
+		}
+	});
+
+	it('never loads the model when semantic is false', async () => {
+		const lines: string[] = [];
+		const previousSink = setLogger({ info: (message) => lines.push(message), error: (message) => lines.push(message) });
+		// An enabled manager must still stay idle: the semantic option, not the manager flag, decides.
+		embeddingsManager.setEnabled(true);
+		try {
+			await suggestBatch(['red square', 'xyzzy nonsense'], { ...opts, semantic: false });
+		} finally {
+			embeddingsManager.setEnabled(false);
+			setLogger(previousSink);
+		}
+
+		expect(embeddingsManager.isModelLoaded()).toBe(false);
+		expect(embeddingsManager.size()).toBe(0);
+		expect(lines.filter((line) => line.startsWith('[HED Embeddings]'))).toEqual([]);
 	});
 });
