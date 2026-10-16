@@ -21,6 +21,7 @@ import {
 	type QueryFormat,
 } from './embeddingConfig.js';
 import { lookupOwn } from './keywordLookup.js';
+import { log } from './log.js';
 
 // Dynamic import for transformers.js (ES module)
 let pipeline: any = null;
@@ -132,7 +133,7 @@ class EmbeddingsManager {
 	 */
 	async initializeModel(): Promise<boolean> {
 		if (!this.config.enabled) {
-			console.log('[HED Embeddings] Embeddings disabled in config');
+			log.info('[HED Embeddings] Embeddings disabled in config');
 			return false;
 		}
 
@@ -149,7 +150,7 @@ class EmbeddingsManager {
 
 	private async _loadModel(): Promise<boolean> {
 		try {
-			console.log('[HED Embeddings] Loading Qwen3-Embedding model...');
+			log.info('[HED Embeddings] Loading Qwen3-Embedding model...');
 			this.progressCallback?.({
 				status: 'loading',
 				message: 'Initializing semantic search model...',
@@ -164,7 +165,7 @@ class EmbeddingsManager {
 			const cacheDir = this.getCacheDir();
 			if (transformers.env) {
 				transformers.env.cacheDir = cacheDir;
-				console.log(`[HED Embeddings] Cache directory: ${cacheDir}`);
+				log.info(`[HED Embeddings] Cache directory: ${cacheDir}`);
 			}
 
 			// Track download progress
@@ -195,14 +196,14 @@ class EmbeddingsManager {
 			});
 
 			this.modelLoaded = true;
-			console.log('[HED Embeddings] Model loaded successfully');
+			log.info('[HED Embeddings] Model loaded successfully');
 			this.progressCallback?.({
 				status: 'ready',
 				message: 'Semantic search ready',
 			});
 			return true;
 		} catch (error) {
-			console.error('[HED Embeddings] Failed to load model:', error);
+			log.error('[HED Embeddings] Failed to load model:', error);
 			this.progressCallback?.({
 				status: 'error',
 				message: `Failed to load model: ${error}`,
@@ -238,19 +239,19 @@ class EmbeddingsManager {
 				// Load keyword embeddings (v3.0+)
 				if (db.keywords && db.keywords.length > 0) {
 					this.keywordEmbeddings = db.keywords;
-					console.log(`[HED Embeddings] Loaded ${this.keywordEmbeddings.length} keyword embeddings`);
+					log.info(`[HED Embeddings] Loaded ${this.keywordEmbeddings.length} keyword embeddings`);
 				}
 
 				this.dimensions = db.dimensions;
 				this.embeddingsLoaded = true;
-				console.log(`[HED Embeddings] Loaded ${this.tagEmbeddings.size} tag embeddings`);
+				log.info(`[HED Embeddings] Loaded ${this.tagEmbeddings.size} tag embeddings`);
 				return true;
 			}
 		} catch (error) {
-			console.error('[HED Embeddings] Failed to load pre-computed embeddings:', error);
+			log.error('[HED Embeddings] Failed to load pre-computed embeddings:', error);
 		}
 
-		console.log('[HED Embeddings] No pre-computed embeddings found');
+		log.info('[HED Embeddings] No pre-computed embeddings found');
 		return false;
 	}
 
@@ -275,7 +276,7 @@ class EmbeddingsManager {
 		};
 
 		fs.writeFileSync(embeddingsPath, JSON.stringify(db));
-		console.log(
+		log.info(
 			`[HED Embeddings] Saved ${this.tagEmbeddings.size} tag embeddings and ${this.keywordEmbeddings.length} keyword embeddings to disk`,
 		);
 	}
@@ -303,7 +304,7 @@ class EmbeddingsManager {
 			return embedding.slice(0, this.dimensions);
 		} catch (error) {
 			this.embedFailures++;
-			console.error('[HED Embeddings] Embedding failed:', error);
+			log.error('[HED Embeddings] Embedding failed:', error);
 			return null;
 		}
 	}
@@ -342,7 +343,7 @@ class EmbeddingsManager {
 
 			return embeddings;
 		} catch (error) {
-			console.error('[HED Embeddings] Batch embedding failed:', error);
+			log.error('[HED Embeddings] Batch embedding failed:', error);
 			return null;
 		}
 	}
@@ -411,7 +412,7 @@ class EmbeddingsManager {
 		await this.loadEmbeddings();
 
 		if (this.tagEmbeddings.size === 0) {
-			console.log('[HED Embeddings] No embeddings available for search');
+			log.info('[HED Embeddings] No embeddings available for search');
 			return [];
 		}
 
@@ -591,15 +592,15 @@ class EmbeddingsManager {
 
 			if (fs.existsSync(modelDir)) {
 				fs.rmSync(modelDir, { recursive: true, force: true });
-				console.log(`[HED Embeddings] Deleted cache: ${modelDir}`);
+				log.info(`[HED Embeddings] Deleted cache: ${modelDir}`);
 				this.modelLoaded = false;
 				extractor = null;
 				return true;
 			}
-			console.log('[HED Embeddings] No cache to delete');
+			log.info('[HED Embeddings] No cache to delete');
 			return false;
 		} catch (error) {
-			console.error('[HED Embeddings] Failed to delete cache:', error);
+			log.error('[HED Embeddings] Failed to delete cache:', error);
 			return false;
 		}
 	}

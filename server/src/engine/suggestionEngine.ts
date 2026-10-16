@@ -10,6 +10,7 @@
 import type { QueryFormat } from './embeddingConfig.js';
 import { embeddingsManager } from './embeddings.js';
 import { lookupOwn } from './keywordLookup.js';
+import { log } from './log.js';
 import { schemaManager } from './schemaManager.js';
 import { DEFAULT_HED_SCHEMA } from './schemaVersion.js';
 import { SEMANTIC_MAPPINGS } from './semanticMappings.js';
@@ -82,7 +83,7 @@ export async function findSuggestions(
 				}
 			}
 		} catch (error) {
-			console.error(`Warning: Schema search failed: ${error instanceof Error ? error.message : error}`);
+			log.error(`Warning: Schema search failed: ${error instanceof Error ? error.message : error}`);
 		}
 	}
 
@@ -98,7 +99,7 @@ export async function findSuggestions(
 				}
 			}
 		} catch (error) {
-			console.error(`Warning: Semantic search failed: ${error instanceof Error ? error.message : error}`);
+			log.error(`Warning: Semantic search failed: ${error instanceof Error ? error.message : error}`);
 		}
 	}
 

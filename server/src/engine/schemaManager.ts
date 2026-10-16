@@ -9,6 +9,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { Schemas } from 'hed-validator';
 import { buildSchemasFromVersion } from 'hed-validator';
+import { log } from './log.js';
 import { DEFAULT_HED_SCHEMA, FALLBACK_HED_SCHEMA } from './schemaVersion.js';
 import type { HedTag, HedTagAttributes } from './types.js';
 
@@ -78,7 +79,7 @@ export class SchemaManager {
 		}
 
 		try {
-			console.error(`[HED] Loading schema: ${normalizedVersion}`);
+			log.error(`[HED] Loading schema: ${normalizedVersion}`);
 			const schemas = await buildSchemasFromVersion(normalizedVersion);
 			this.schemaCache.set(normalizedVersion, schemas);
 			return schemas;
@@ -87,14 +88,14 @@ export class SchemaManager {
 				// The default is fetched from GitHub. Fall back to the schema bundled with hed-validator so
 				// validation keeps working offline; the warning is logged once, when the schema is first needed.
 				const reason = error instanceof Error ? error.message : String(error);
-				console.error(
+				log.error(
 					`[HED] Could not load HED ${DEFAULT_HED_SCHEMA} (${reason}); using bundled ${FALLBACK_HED_SCHEMA}. Tags added in ${DEFAULT_HED_SCHEMA} are unavailable until it loads.`,
 				);
 				const fallback = await buildSchemasFromVersion(FALLBACK_HED_SCHEMA);
 				this.schemaCache.set(normalizedVersion, fallback);
 				return fallback;
 			}
-			console.error(`Failed to load HED schema ${normalizedVersion}:`, error);
+			log.error(`Failed to load HED schema ${normalizedVersion}:`, error);
 			throw error;
 		}
 	}
@@ -129,12 +130,12 @@ export class SchemaManager {
 						const version = parseHedVersion(description);
 
 						if (version) {
-							console.log(`[HED] Detected schema version from ${descPath}: ${version}`);
+							log.info(`[HED] Detected schema version from ${descPath}: ${version}`);
 							this.workspaceVersionCache.set(documentUri, version);
 							return version;
 						}
 					} catch (parseError) {
-						console.error(`Failed to parse ${descPath}:`, parseError);
+						log.error(`Failed to parse ${descPath}:`, parseError);
 					}
 				}
 
@@ -146,7 +147,7 @@ export class SchemaManager {
 				currentDir = parentDir;
 			}
 		} catch (error) {
-			console.error('Error detecting schema version:', error);
+			log.error('Error detecting schema version:', error);
 		}
 
 		return null;

@@ -23,6 +23,7 @@ import { provideDefinition } from './definitionProvider.js';
 import { validateDocument } from './diagnostics.js';
 import { parseJsonForHedStrings } from './documentParser.js';
 import { embeddingsManager } from './engine/embeddings.js';
+import { setLogger } from './engine/log.js';
 import { schemaManager } from './engine/schemaManager.js';
 import { suggestBatch } from './engine/suggestionEngine.js';
 import { provideHover } from './hover.js';
@@ -44,6 +45,13 @@ function getHedRegions(document: TextDocument): HedRegion[] {
 
 // Create a connection using Node's IPC transport
 const connection = createConnection(ProposedFeatures.all);
+
+// Engine log lines reach the client through the same console the LSP library redirects.
+setLogger({
+	info: (message) => console.log(message),
+	warn: (message) => console.warn(message),
+	error: (message) => console.error(message),
+});
 
 // Create a document manager
 const documents = new TextDocuments(TextDocument);

@@ -4,6 +4,9 @@
  * Real schema and real validator; no mocks.
  */
 
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as engine from '../engine/index.js';
 import { schemaManager } from '../engine/schemaManager.js';
@@ -62,4 +65,20 @@ describe('suggestion options', () => {
 
 		expect(undefinedValues).toEqual(omitted);
 	});
+});
+
+describe('engine logging', () => {
+	it('keeps stdout free of engine log lines', () => {
+		const built = path.join(__dirname, '..', '..', 'out', 'engine', 'embeddings.js');
+		if (!existsSync(built)) {
+			throw new Error(`${built} is missing; run "bun run compile" before this test`);
+		}
+		const script = `require(${JSON.stringify(built)}).embeddingsManager.loadEmbeddings();`;
+
+		const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf-8', timeout: 120000 });
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toBe('');
+		expect(result.stderr).toContain('[HED Embeddings] Loaded');
+	}, 150000);
 });
