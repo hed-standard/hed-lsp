@@ -43,10 +43,12 @@
 		"saccade",
 		"stim",
 		"stroop",
+		"textblock",
 		"vitest",
 		"vsix",
 		"vsce",
 		"vscode",
+		"xyzzy",
 		"zebrafish"
 	],
 	"ignorePaths": [

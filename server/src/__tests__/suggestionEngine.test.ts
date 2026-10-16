@@ -59,3 +59,44 @@ describe('suggestBatch', () => {
 		}
 	});
 });
+
+describe('characterization of suggestion output', () => {
+	// Frozen from the CLI output of unmodified code before the keyword-lookup changes.
+	const expected: [string, string[]][] = [
+		['red square', ['Square', 'Rectangle', '2D-shape', 'Red-color', 'Red', 'RGB-red', 'RGB-red-#']],
+		['button press', ['Button', 'Response-button', 'Mouse-button', 'Press', 'Push', 'Press-foot', 'Push-button']],
+		['visual flash', ['Flash', 'Flickering', 'Visual-presentation', 'Visual-attribute']],
+		['house', ['Building', 'Residence', 'Structure']],
+		['walk', ['Walk', 'Ambulate', 'Move']],
+		['run', ['Run', 'Move-quickly', 'Runway']],
+		['click', ['Press', 'Click', 'Mouse-button-press']],
+		['stop', ['Offset', 'Stop', 'Termination', 'Stop-signal']],
+		['xyzzy nonsense', []],
+		[
+			'red',
+			[
+				'Red-color',
+				'Red',
+				'Predict',
+				'Manufactured-material',
+				'Tired',
+				'Computed-prediction',
+				'Disordered',
+				'Ordered',
+				'Leaf-covered-terrain',
+				'OrangeRed',
+			],
+		],
+		['block', ['Block', 'Experimental-block', 'Textblock', 'Time-block', 'Time-block-#']],
+		['monitor', ['Screen', 'Computer-screen', 'Display']],
+		[
+			'stimulus response',
+			['Stimulus', 'Experimental-stimulus', 'Sensory-event', 'Response', 'Participant-response', 'Task-stimulus-role'],
+		],
+	];
+
+	it.each(expected)('keeps the suggestions for %s', async (query, tags) => {
+		const output = await suggestBatch([query], { schema: '8.4.0', top: 10 });
+		expect(output[query]).toEqual(tags);
+	});
+});
