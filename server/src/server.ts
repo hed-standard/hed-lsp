@@ -391,8 +391,9 @@ connection.onRequest('hed/suggest', async (params: HedSuggestParams): Promise<Re
 		return {};
 	}
 	try {
+		// A request without a schema means the schema this server is configured for, not the engine default.
 		return await suggestBatch(params.queries, {
-			schema: params.schema,
+			schema: params.schema?.trim() || schemaManager.getCurrentVersion(),
 			top: params.top,
 			semantic: params.semantic,
 		});

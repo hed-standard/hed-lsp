@@ -111,6 +111,13 @@ describe('language server over stdio', () => {
 			expect(suggestions['red square'].length).toBeGreaterThan(0);
 			expect(suggestions['red square'].length).toBeLessThanOrEqual(5);
 
+			// No schema in the request: suggestions come from the current schema, which includes SCORE.
+			const byCurrent = (await session.connection.sendRequest('hed/suggest', {
+				queries: ['modulator'],
+				top: 10,
+			})) as Record<string, string[]>;
+			expect(byCurrent.modulator).toContain('sc:Modulator');
+
 			expect(await stopServer(session)).toBe(0);
 		} finally {
 			session.child.kill();
