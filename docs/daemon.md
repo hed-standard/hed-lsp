@@ -289,6 +289,7 @@ The values below are starting values chosen to keep one shared machine safe, and
 | `REQUEST_TIMEOUT_MS` | `30000` | Time for a whole request, queue wait included |
 | `BODY_TIMEOUT_MS` | `10000` | Time for a request body to arrive in full, counted from the headers |
 | `HEADERS_TIMEOUT_MS` | `10000` | Time for the headers to arrive; at most the request timeout plus 5000 |
+| `WRITE_STALL_MS` | `10000` | Time a response being written may go with no progress before its connection is reset; at least 1 |
 | `KEEPALIVE_TIMEOUT_MS` | `65000` | Idle time before a connection is closed, longer than a proxy's reuse window |
 | `MAX_CONNECTIONS` | `256` | Open connections |
 | `MAX_CLIENTS` | `10000` | Clients tracked for rate limiting |
@@ -341,8 +342,14 @@ A request that is refused before its body is read, for whatever reason, does not
 The daemon reads and drops up to four times `MAX_BODY_BYTES` of the body, counted from its first byte (2 MiB by default), so a client that sends a little more than the limit still reads the answer, and it closes the connection past that.
 The same holds for a body that nobody reads on a request that is answered, such as a GET with a body.
 
-Node's socket timeout is set to `REQUEST_TIMEOUT_MS` plus 5 seconds, so a connection that moves no bytes is closed, such as a client that stops reading a large response.
-Node does not fire it while a write is in progress until a whole period has passed with the write unmoved, so a stuck write is closed after two to three periods, about 70 to 105 seconds with the defaults.
+A response that is being written is bounded by `WRITE_STALL_MS` (10 seconds).
+The daemon writes the body in pieces of 64 KiB, each after the socket has taken the one before, and when the write makes no progress for that long it resets the connection.
+Progress is a drain of the socket or a piece written out, so a client that reads a large answer slowly but steadily is not cut off, however long the whole answer takes, and a client that sends a request and then stops reading loses its connection after `WRITE_STALL_MS`.
+The watchdog runs only while a response is pending; it stops when the response is finished or the connection closes or fails, so it never touches an idle kept-alive connection.
+The operating system's buffers take in the first part of an answer whether or not the client reads it, at least 2.4 MB on a macOS loopback connection, so a write stalls only for an answer larger than the buffers of the two ends.
+
+Node's socket timeout is set to `REQUEST_TIMEOUT_MS` plus 5 seconds, so a connection that moves no bytes at all is closed.
+It stays as a backstop, and it is not the bound for a stalled write: Node does not fire it while a write is in progress until a whole period has passed with the write unmoved, so a stuck write is closed after two to three periods, about 70 to 105 seconds with the defaults, which is why `WRITE_STALL_MS` exists.
 A kept-alive connection that is idle between requests is closed after `KEEPALIVE_TIMEOUT_MS` instead, plus one second that Node adds, and the socket timeout does not shorten that.
 
 ## Semantic search
@@ -370,6 +377,7 @@ Semantic search finds tags by meaning with an embedding model, and it is off by 
 
 The daemon writes one JSON line per request to standard error: the time, the request ID, the method, the path without its query string, the status, the milliseconds, the number of items, the schema used, the semantic status, the error code, and whether the client went away before the answer was sent.
 A path that is not a route is logged as `unknown route`, because it is the client's text, and a request that was cut off before its answer was written is logged with `aborted: true` and no status.
+A connection that is reset because its response stalled gets one more line, a warning with the request ID and no other detail.
 Engine messages go through the same writer as JSON lines.
 An unexpected exception is logged by its type and its stack frames, never its message, which can quote the request, and the engine's own log lines name an error by its type for the same reason.
 

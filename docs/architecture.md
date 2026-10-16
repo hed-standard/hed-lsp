@@ -146,6 +146,7 @@ The request timer, `REQUEST_TIMEOUT_MS`, starts when the headers arrive and answ
 The body timer, `BODY_TIMEOUT_MS`, starts at the same moment and answers 408 `REQUEST_TIMEOUT` if the body is not complete in time.
 The in-flight slots, one for the client and one shared, are held from the moment the headers arrive until the work has stopped, so the caps count work that is still running after a timeout.
 Any answer that is sent while the body is still arriving first arranges for the rest of it to be read and dropped, up to four times `MAX_BODY_BYTES`, after which the connection is closed.
+The write of the answer has its own watchdog, `WRITE_STALL_MS`: the body goes out in pieces, each after the socket has drained, and a write that makes no progress for that long has its connection reset, so a client that stops reading cannot hold a connection until Node's socket timeout fires two to three periods later.
 No charge is refunded on any of these exits.
 
 ### Data Flow for Validation

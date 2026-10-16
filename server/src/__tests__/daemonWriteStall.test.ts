@@ -1,19 +1,20 @@
 /**
- * Tests for connections that move no bytes. Node's socket timeout is set to REQUEST_TIMEOUT_MS plus
- * 5 seconds, so a client that stops reading a response is cut off instead of holding its connection
- * until the operating system gives up, and an idle kept-alive connection still lives for
- * KEEPALIVE_TIMEOUT_MS, which replaces the socket timeout between two requests.
- *
- * Node does not fire the socket timeout while a write is in progress until a whole period has
- * passed without the write queue moving, so a stalled write is cut off after two to three periods
- * (measured: 2.0, 2.0, and 3.0 times the timeout on a plain Node server), not one. The cases below
- * allow for that. The timeouts are real, so each case takes many seconds; the cases run at the same
- * time, each with its own daemon. Real daemon, real engine, raw sockets. No mocks.
+ * Tests for connections that move no bytes. A response that is being written is bounded by
+ * WRITE_STALL_MS: a client that sends a request and then stops reading loses its connection once the
+ * write has made no progress for that long. Node's own socket timeout does not do this, because it
+ * does not fire while a write is in progress until a whole period has passed without the write queue
+ * moving, so a stalled write is cut off after two to three periods (measured: 2.0, 2.0, and 3.0 times
+ * the timeout on a plain Node server, 70 to 105 seconds at the defaults). That timeout stays set,
+ * at REQUEST_TIMEOUT_MS plus 5 seconds, as a backstop, and an idle kept-alive connection still lives
+ * for KEEPALIVE_TIMEOUT_MS, which replaces the socket timeout between two requests. The timeouts are
+ * real, so each case takes seconds; the cases run at the same time, each with its own daemon. Real
+ * daemon, real engine, raw sockets. No mocks.
  */
 
+import * as http from 'node:http';
 import * as net from 'node:net';
 import { describe, expect, it } from 'vitest';
-import { postJson, type RunningDaemon, startDaemon, waitFor } from './daemonHarness.js';
+import { call, postJson, type RunningDaemon, sleep, startDaemon, waitFor } from './daemonHarness.js';
 
 const VALID = 'Sensory-event, Visual-presentation';
 
@@ -24,50 +25,180 @@ function portOf(daemon: RunningDaemon): number {
 /** Node refuses a headers timeout longer than the request timeout plus 5 s, so short timeouts shorten it too. */
 const SHORT = { HED_LSP_HEADERS_TIMEOUT_MS: '1000' };
 
-/** Limits raised so that one string of 4096 open parentheses is answered with about 17 MB of JSON. */
-const HUGE_ANSWERS = {
-	HED_LSP_MAX_ISSUES_PER_STRING: '5000',
-	HED_LSP_MAX_ISSUE_MESSAGE_CHARS: '10000',
-	HED_LSP_MAX_ISSUE_TEXT_CHARS: '100000000',
-};
+/**
+ * A validate request of 100 strings of 4096 open parentheses, the limit of strings and of characters,
+ * about 410 KB and under the body limit. At the default limits it is answered with about 1.1 MB of
+ * JSON, but the loopback buffers of the two ends took in at least 2.4 MB on the macOS host that this
+ * was measured on, so such an answer is written out whole even when nobody reads it, and nothing
+ * stalls. Raising the message text limit to 16 MB makes the answer about 11 MB, which no buffer holds.
+ */
+const LARGE_ANSWER = JSON.stringify({ strings: Array.from({ length: 100 }, () => '('.repeat(4096)), schema: '8.4.0' });
+const LARGE_ANSWER_LIMITS = { HED_LSP_MAX_ISSUE_TEXT_CHARS: '16000000' };
+
+/** How a client reads a response. By default it reads the first data that arrives, and no more. */
+interface Reading {
+	/** Read on, but pause for `pauseMs` after every `everyBytes` bytes: slow, and never idle for long. */
+	paced?: { everyBytes: number; pauseMs: number };
+}
+
+/** A client that sends a validate request and then reads slowly or not at all. */
+interface SlowClient {
+	socket: net.Socket;
+	/** When the first bytes of the response arrived, which is when the daemon began to write it. */
+	firstDataAt(): number;
+	/** The bytes of the response read so far. */
+	received(): number;
+	/** The total size of the response, headers included, from its Content-Length; zero until it is known. */
+	expected(): number;
+	/** Start reading again without pauses, as a client that was only slow. */
+	resume(): void;
+	closed: Promise<void>;
+}
+
+function slowClient(daemon: RunningDaemon, body: string, reading: Reading = {}): SlowClient {
+	const socket = net.connect(portOf(daemon), '127.0.0.1');
+	let firstDataAt = 0;
+	let received = 0;
+	let expected = 0;
+	let sinceBreak = 0;
+	let stopped = !reading.paced;
+	// An RST or an error ends the connection too, so one promise covers both.
+	const closed = new Promise<void>((resolve) => socket.on('close', () => resolve()));
+	socket.on('error', () => undefined);
+	socket.on('data', (chunk: Buffer) => {
+		firstDataAt ||= Date.now();
+		received += chunk.length;
+		if (expected === 0) {
+			const text = chunk.toString('latin1');
+			const length = /content-length: (\d+)/i.exec(text);
+			const headEnd = text.indexOf('\r\n\r\n');
+			if (length && headEnd !== -1) {
+				expected = headEnd + 4 + Number(length[1]);
+			}
+		}
+		if (reading.paced) {
+			sinceBreak += chunk.length;
+			if (sinceBreak >= reading.paced.everyBytes) {
+				sinceBreak = 0;
+				socket.pause();
+				setTimeout(() => socket.resume(), reading.paced.pauseMs);
+			}
+		} else if (stopped) {
+			socket.pause();
+		}
+	});
+	socket.on('connect', () =>
+		socket.write(
+			`POST /v1/validate HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+		),
+	);
+	return {
+		socket,
+		firstDataAt: () => firstDataAt,
+		received: () => received,
+		expected: () => expected,
+		resume: () => {
+			stopped = false;
+			socket.resume();
+		},
+		closed,
+	};
+}
 
 describe('connections that move no bytes', () => {
-	it.concurrent('closes the connection of a client that stops reading a large response, and serves the next client', async () => {
-		// The socket timeout is 1 s + 5 s = 6 s.
-		const daemon = await startDaemon({ ...SHORT, ...HUGE_ANSWERS, HED_LSP_REQUEST_TIMEOUT_MS: '1000' });
-		const socketTimeout = daemon.daemon.server.timeout;
-		expect(socketTimeout).toBe(6000);
-		const body = JSON.stringify({ strings: ['('.repeat(4096)], schema: '8.4.0' });
-		const socket = net.connect(portOf(daemon), '127.0.0.1');
-		socket.on('error', () => undefined);
-		const sentAt = await new Promise<number>((resolve) => {
-			socket.on('connect', () => {
-				// Reading stops here, so the answer, which is far larger than the buffers of the two
-				// ends of a loopback connection, cannot be written out.
-				socket.pause();
-				socket.write(
-					`POST /v1/validate HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
-				);
-				resolve(Date.now());
-			});
-		});
+	it.concurrent('closes the connection of a client that stops reading a large response within WRITE_STALL_MS, and serves the others', async () => {
+		const stallMs = 500;
+		const daemon = await startDaemon({ ...LARGE_ANSWER_LIMITS, HED_LSP_WRITE_STALL_MS: String(stallMs) });
+		expect(daemon.config.writeStallMs).toBe(stallMs);
+		const client = slowClient(daemon, LARGE_ANSWER);
 
 		try {
+			await waitFor(() => client.firstDataAt() > 0 && client.expected() > 0, 30_000, 'the response to start');
+			// The client reads no more, so its write has stalled, and a second client is answered at once.
+			const during = await postJson(daemon.url, '/v1/validate', { strings: [VALID], schema: '8.4.0' });
 			await waitFor(
 				() => daemon.rawLines.some((line) => line.includes('"aborted":true')),
-				30_000,
+				10_000,
 				'the stalled connection to be closed',
 			);
-			const closedAfter = Date.now() - sentAt;
-			const line = daemon.logLines().find((entry) => entry.msg === 'request' && entry.aborted === true);
+			const closedAfter = Date.now() - client.firstDataAt();
+			const stall = daemon
+				.logLines()
+				.find((entry) => entry.msg === 'connection closed because a response write stalled');
+			const request = daemon.logLines().find((entry) => entry.msg === 'request' && entry.aborted === true);
 
-			expect(closedAfter).toBeGreaterThanOrEqual(socketTimeout);
-			expect(closedAfter).toBeLessThan(3.5 * socketTimeout);
-			expect(line).toMatchObject({ method: 'POST', path: '/v1/validate', aborted: true });
-			const next = await postJson(daemon.url, '/v1/validate', { strings: [VALID], schema: '8.4.0' });
-			expect(next.status).toBe(200);
+			// The premise: the answer is about 11 MB, and far more than the client read.
+			expect(client.expected()).toBeGreaterThan(10_000_000);
+			expect(client.received()).toBeLessThan(client.expected());
+			expect(during.status).toBe(200);
+			expect(closedAfter).toBeGreaterThanOrEqual(0.8 * stallMs);
+			expect(closedAfter).toBeLessThan(stallMs + 2000);
+			expect(stall).toMatchObject({ level: 'warn' });
+			expect(request).toMatchObject({ method: 'POST', path: '/v1/validate', aborted: true });
+			expect(request?.requestId).toBe(stall?.requestId);
+
+			// The client sees a closed connection, and never gets the rest of the answer.
+			client.resume();
+			await client.closed;
+			expect(client.received()).toBeLessThan(client.expected());
+
+			// The daemon is still running and answers a new client.
+			const after = await postJson(daemon.url, '/v1/validate', { strings: [VALID], schema: '8.4.0' });
+			expect(after.status).toBe(200);
+			expect(after.json.results[0].valid).toBe(true);
 		} finally {
-			socket.destroy();
+			client.socket.destroy();
+			await daemon.stop();
+		}
+	}, 60_000);
+
+	it.concurrent('does not cut off a client that reads steadily, although the whole answer takes longer than WRITE_STALL_MS', async () => {
+		const stallMs = 1500;
+		const daemon = await startDaemon({ ...LARGE_ANSWER_LIMITS, HED_LSP_WRITE_STALL_MS: String(stallMs) });
+		// The client reads 1 MB, waits 300 ms, and reads on, so its pauses are short but the answer of
+		// about 11 MB takes it more than twice the stall time. Every pause ends with progress.
+		const client = slowClient(daemon, LARGE_ANSWER, { paced: { everyBytes: 1_000_000, pauseMs: 300 } });
+
+		try {
+			await waitFor(() => client.expected() > 0, 30_000, 'the response to start');
+			await waitFor(() => client.received() === client.expected(), 30_000, 'the whole response to be read');
+			await waitFor(
+				() => daemon.rawLines.some((line) => line.includes('"msg":"request"')),
+				5000,
+				'the request to be logged',
+			);
+			const readingTook = Date.now() - client.firstDataAt();
+			const request = daemon.logLines().find((entry) => entry.msg === 'request');
+
+			expect(client.expected()).toBeGreaterThan(10_000_000);
+			expect(readingTook).toBeGreaterThan(2 * stallMs);
+			expect(request).toMatchObject({ method: 'POST', path: '/v1/validate', status: 200 });
+			expect(request?.aborted).toBeUndefined();
+			expect(daemon.rawLines.some((line) => line.includes('write stalled'))).toBe(false);
+		} finally {
+			client.socket.destroy();
+			await daemon.stop();
+		}
+	}, 60_000);
+
+	it.concurrent('does not cut a kept-alive connection after its response was written, because the watchdog stops at the end of the response', async () => {
+		const stallMs = 300;
+		const daemon = await startDaemon({ HED_LSP_WRITE_STALL_MS: String(stallMs) });
+		const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+
+		try {
+			const first = await call(daemon.url, '/v1/health', { agent });
+			// Three times the stall time with no response pending: a timer that outlived the response would have fired.
+			await sleep(3 * stallMs);
+			const second = await call(daemon.url, '/v1/health', { agent });
+
+			expect(first.status).toBe(200);
+			expect(second.status).toBe(200);
+			// The connection was reused, so the pause did not cost it.
+			expect(second.localPort).toBe(first.localPort);
+			expect(daemon.rawLines.some((line) => line.includes('write stalled'))).toBe(false);
+		} finally {
+			agent.destroy();
 			await daemon.stop();
 		}
 	}, 60_000);

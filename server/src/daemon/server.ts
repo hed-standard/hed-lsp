@@ -9,7 +9,8 @@
  * charge is for the request, not its result, and nothing is ever refunded. Every request that
  * reaches a handler except health also holds an in-flight slot from the moment its headers arrive
  * until its work stops, and is answered with a 503 TIMEOUT when it runs past REQUEST_TIMEOUT_MS; its
- * work looks for that between items. Nothing logged or returned carries request text.
+ * work looks for that between items. A response is written in pieces and its connection is reset
+ * when the write makes no progress for WRITE_STALL_MS. Nothing logged or returned carries request text.
  */
 
 import * as crypto from 'node:crypto';
@@ -252,6 +253,83 @@ class ClientAborted extends Error {
 		super('the client closed the connection');
 		this.name = 'ClientAborted';
 	}
+}
+
+/**
+ * Bytes of a response handed to the socket at a time. The body is written in pieces, each after the
+ * socket has taken the one before, so a client that reads it slowly but steadily keeps making
+ * progress, where a single write would show none until its last byte was out.
+ */
+export const WRITE_CHUNK_BYTES = 64 * 1024;
+
+/**
+ * End a response whose headers are written, with `body` as its body. When `stallMs` milliseconds
+ * pass with no progress, call `onStall` and reset the connection. Node's socket timeout does not fire
+ * while a write is in progress, so without this a client that sends a request and then stops reading
+ * can hold its connection for two to three timeouts.
+ *
+ * The body is written one piece at a time, waiting for the socket to drain before the next. Progress
+ * is a drain, or a piece written out. The watchdog runs only while the response is pending: it
+ * starts here and is cleared on `finish`, on `close`, and on an error of the socket or of a write. It
+ * measures the time since the last progress that the event loop saw, so a loop blocked for longer
+ * than `stallMs` counts as a stall.
+ */
+function endWithinStallLimit(
+	res: http.ServerResponse,
+	body: Buffer | undefined,
+	stallMs: number,
+	onStall: () => void,
+): void {
+	const socket = res.socket;
+	let timer: NodeJS.Timeout | undefined;
+	let done = false;
+	const stop = (): void => {
+		done = true;
+		clearTimeout(timer);
+		socket?.off('error', stop);
+	};
+	const arm = (): void => {
+		clearTimeout(timer);
+		if (done) {
+			return;
+		}
+		timer = setTimeout(() => {
+			stop();
+			onStall();
+			if (socket && !socket.destroyed) {
+				// An RST, so the kernel drops what the client never read instead of holding it.
+				socket.resetAndDestroy();
+			}
+		}, stallMs);
+	};
+	const progress = (error?: Error | null): void => (error ? stop() : arm());
+
+	socket?.once('error', stop);
+	res.once('finish', stop);
+	res.once('close', stop);
+	res.on('drain', arm);
+	arm();
+
+	if (body === undefined || body.length === 0) {
+		res.end();
+		return;
+	}
+	let offset = 0;
+	const pump = (): void => {
+		while (!done && offset < body.length) {
+			const chunk = body.subarray(offset, offset + WRITE_CHUNK_BYTES);
+			offset += chunk.length;
+			if (offset >= body.length) {
+				res.end(chunk, progress);
+				return;
+			}
+			if (!res.write(chunk, progress)) {
+				res.once('drain', pump);
+				return;
+			}
+		}
+	};
+	pump();
 }
 
 /** Let other requests and timers run, so a long batch does not hold the event loop. */
@@ -843,19 +921,24 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		return failure;
 	}
 
-	/** Write the reply. A HEAD response has the headers of the GET response, Content-Length included, and no body. */
-	function send(res: http.ServerResponse, reply: Reply, headOnly: boolean): void {
+	/**
+	 * Write the reply. A HEAD response has the headers of the GET response, Content-Length included, and no body.
+	 * The write is bounded by WRITE_STALL_MS: a client that stops reading loses its connection.
+	 */
+	function send(res: http.ServerResponse, reply: Reply, headOnly: boolean, ctx: RequestContext): void {
 		const headers: Record<string, string | number> = { 'Cache-Control': 'no-store', ...reply.headers };
-		const payload = reply.body === undefined ? undefined : JSON.stringify(reply.body);
+		const payload = reply.body === undefined ? undefined : Buffer.from(JSON.stringify(reply.body), 'utf-8');
 		if (payload !== undefined) {
 			headers['Content-Type'] = 'application/json; charset=utf-8';
-			headers['Content-Length'] = Buffer.byteLength(payload);
+			headers['Content-Length'] = payload.length;
 		}
 		if (closing) {
 			headers.Connection = 'close';
 		}
 		res.writeHead(reply.status, headers);
-		res.end(headOnly ? undefined : payload);
+		endWithinStallLimit(res, headOnly ? undefined : payload, config.writeStallMs, () =>
+			logger.warn('connection closed because a response write stalled', { requestId: ctx.id }),
+		);
 	}
 
 	async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -943,7 +1026,7 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 			return;
 		}
 		discardUnreadBody(req, ctx);
-		send(res, reply, ctx.method === 'HEAD');
+		send(res, reply, ctx.method === 'HEAD', ctx);
 	}
 
 	/**
@@ -986,7 +1069,11 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 	// stops reading a response held its connection until the operating system gave up. It is set past
 	// the request timeout, because a request that waits its whole timeout in the semantic queue moves
 	// no bytes, and the daemon answers it with a 503 first. Between two requests on a kept-alive
-	// connection, KEEPALIVE_TIMEOUT_MS replaces it, so the keep-alive window is not shortened.
+	// connection, KEEPALIVE_TIMEOUT_MS replaces it, so the keep-alive window is not shortened. It does
+	// not bound a write that has stalled, because Node does not fire it while a write is in progress
+	// until a whole period has passed without the write queue moving: that takes two to three periods.
+	// The write watchdog (WRITE_STALL_MS, see endWithinStallLimit) bounds the write, and this stays as
+	// the backstop for a connection that moves no bytes for another reason.
 	server.timeout = config.requestTimeoutMs + NODE_REQUEST_TIMEOUT_MARGIN_MS;
 	// The warm-up starts after the listeners of the caller have run, so a caller that announces the
 	// address, as the entry point does, announces it before the first semantic work begins.

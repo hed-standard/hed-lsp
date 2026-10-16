@@ -67,6 +67,7 @@ describe('loadConfig defaults', () => {
 			requestTimeoutMs: 30000,
 			bodyTimeoutMs: 10000,
 			headersTimeoutMs: 10000,
+			writeStallMs: 10000,
 			keepAliveTimeoutMs: 65000,
 			maxConnections: 256,
 			maxClients: 10000,
@@ -134,6 +135,7 @@ describe('loadConfig overrides', () => {
 			HED_LSP_REQUEST_TIMEOUT_MS: '1',
 			HED_LSP_BODY_TIMEOUT_MS: '5',
 			HED_LSP_HEADERS_TIMEOUT_MS: '2',
+			HED_LSP_WRITE_STALL_MS: '7',
 			HED_LSP_KEEPALIVE_TIMEOUT_MS: '3',
 			HED_LSP_MAX_CONNECTIONS: '4',
 			HED_LSP_MAX_CLIENTS: '2',
@@ -172,12 +174,19 @@ describe('loadConfig overrides', () => {
 			requestTimeoutMs: 1,
 			bodyTimeoutMs: 5,
 			headersTimeoutMs: 2,
+			writeStallMs: 7,
 			keepAliveTimeoutMs: 3,
 			maxConnections: 4,
 			maxClients: 2,
 			clientIdleMs: 5,
 			commit: 'abc1234',
 		});
+	});
+
+	it('accepts a write stall of one millisecond, the shortest, and as long as a signed 32-bit timer allows', () => {
+		expect(loadConfig({ HED_LSP_WRITE_STALL_MS: '1' }).writeStallMs).toBe(1);
+		expect(loadConfig({ HED_LSP_WRITE_STALL_MS: '2147483647' }).writeStallMs).toBe(2_147_483_647);
+		expect(failure({ HED_LSP_WRITE_STALL_MS: '2147483648' }).variable).toBe('HED_LSP_WRITE_STALL_MS');
 	});
 
 	it('accepts true and false for the flags, in any case', () => {
@@ -257,6 +266,11 @@ describe('loadConfig failures', () => {
 		['BODY_TIMEOUT_MS', '0'],
 		['BODY_TIMEOUT_MS', 'soon'],
 		['HEADERS_TIMEOUT_MS', '0'],
+		['WRITE_STALL_MS', '0'],
+		['WRITE_STALL_MS', '-5'],
+		['WRITE_STALL_MS', '1.5'],
+		['WRITE_STALL_MS', 'soon'],
+		['WRITE_STALL_MS', ''],
 		['KEEPALIVE_TIMEOUT_MS', 'soon'],
 		['MAX_CONNECTIONS', '0'],
 		['MAX_CLIENTS', '0'],

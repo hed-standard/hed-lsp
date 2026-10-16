@@ -74,6 +74,11 @@ export interface DaemonConfig {
 	/** How long after its headers a request body may take to arrive in full. */
 	bodyTimeoutMs: number;
 	headersTimeoutMs: number;
+	/**
+	 * How long a response being written may go without progress before its connection is destroyed.
+	 * Any chunk of the response written out, or a drain of the socket, is progress.
+	 */
+	writeStallMs: number;
 	keepAliveTimeoutMs: number;
 	maxConnections: number;
 	maxClients: number;
@@ -396,6 +401,7 @@ export function loadConfig(env: Env = process.env): DaemonConfig {
 		requestTimeoutMs,
 		bodyTimeoutMs: readInt(env, 'BODY_TIMEOUT_MS', 10_000, 1, MAX_INT),
 		headersTimeoutMs,
+		writeStallMs: readInt(env, 'WRITE_STALL_MS', 10_000, 1, MAX_INT),
 		keepAliveTimeoutMs: readInt(env, 'KEEPALIVE_TIMEOUT_MS', 65_000, 1, MAX_INT),
 		maxConnections: readInt(env, 'MAX_CONNECTIONS', 256, 1, MAX_INT),
 		maxClients: readInt(env, 'MAX_CLIENTS', 10_000, 1, MAX_INT),
