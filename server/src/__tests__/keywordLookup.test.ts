@@ -12,6 +12,9 @@ import { provideCompletions } from '../completion.js';
 import { embeddingsManager } from '../embeddings.js';
 import { findSuggestions, suggestBatch } from '../suggestionEngine.js';
 
+// Only `constructor` and `__proto__` reproduce the inherited-member bug. The lookups
+// lowercase the query first, so `toString`, `valueOf`, and `hasOwnProperty` never reach
+// an inherited member; they stay in this list as guards against future regressions.
 const PROTOTYPE_NAMED_QUERIES = ['constructor', 'toString', 'valueOf', '__proto__', 'hasOwnProperty'];
 
 describe('findSuggestions with prototype-named queries', () => {
