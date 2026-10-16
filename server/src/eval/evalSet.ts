@@ -17,7 +17,10 @@ export const EVAL_SET_PATH = path.join(__dirname, '..', '..', 'eval', 'hed-examp
 export type EvalSplit = 'dev' | 'test';
 
 export interface EvalPair {
-	/** Stable identifier, assigned after sorting, e.g. "pair-0001". */
+	/**
+	 * Position in the sorted set, e.g. "pair-0001". Ids renumber when the set is
+	 * rebuilt from different data, so compare pairs by query and hed, not by id.
+	 */
 	id: string;
 	/** Source dataset directory, e.g. "datasets/eeg_ds004106s_hed". */
 	dataset: string;
@@ -31,9 +34,13 @@ export interface EvalPair {
 }
 
 export interface EvalSet {
-	version: 1;
+	version: 2;
+	/** The HED schema the expected tags were resolved against. */
 	schema: string;
-	source: string;
+	/** Where the pairs came from: the checkout's name and commit. */
+	source: { name: string; commit: string; description: string };
+	/** Pairs dropped from the source, by reason. */
+	skipped: { parseErrors: number; noLeafTags: number };
 	pairs: EvalPair[];
 }
 

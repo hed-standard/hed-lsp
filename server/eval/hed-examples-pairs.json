@@ -1,7 +1,15 @@
 {
-  "version": 1,
-  "schema": "8.4.0",
-  "source": "hed-examples: BIDS sidecar level descriptions paired with HED strings",
+  "version": 2,
+  "schema": "8.5.0",
+  "source": {
+    "name": "hed-examples",
+    "commit": "336a4fccaec59b4924c8f37c50967fa480538ccf",
+    "description": "BIDS sidecar level descriptions paired with HED strings"
+  },
+  "skipped": {
+    "parseErrors": 56,
+    "noLeafTags": 57
+  },
   "pairs": [
     {
       "id": "pair-0001",
@@ -1171,7 +1179,7 @@
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
       "query": "End showing image incorrect access level.",
-      "hed": "(Def/Show-image-invalid-level, Offset)",
+      "hed": "(Def/Show-image, Offset)",
       "expected": [
         "Offset"
       ]
@@ -1181,7 +1189,7 @@
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
       "query": "End showing image incorrect access level.",
-      "hed": "(Def/Show-image, Offset)",
+      "hed": "(Def/Show-image-invalid-level, Offset)",
       "expected": [
         "Offset"
       ]
@@ -1191,7 +1199,7 @@
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
       "query": "End showing image of expired ID.",
-      "hed": "(Def/Show-image-invalid-expired, Offset)",
+      "hed": "(Def/Show-image, Offset)",
       "expected": [
         "Offset"
       ]
@@ -1201,7 +1209,7 @@
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
       "query": "End showing image of expired ID.",
-      "hed": "(Def/Show-image, Offset)",
+      "hed": "(Def/Show-image-invalid-expired, Offset)",
       "expected": [
         "Offset"
       ]
@@ -1211,7 +1219,7 @@
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
       "query": "End showing image with no watermark.",
-      "hed": "(Def/Show-image-invalid-watermark, Offset)",
+      "hed": "(Def/Show-image, Offset)",
       "expected": [
         "Offset"
       ]
@@ -1221,7 +1229,7 @@
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
       "query": "End showing image with no watermark.",
-      "hed": "(Def/Show-image, Offset)",
+      "hed": "(Def/Show-image-invalid-watermark, Offset)",
       "expected": [
         "Offset"
       ]
@@ -1231,7 +1239,7 @@
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
       "query": "End showing image with photo ID mismatch.",
-      "hed": "(Def/Show-image-invalid-mismatch, Offset)",
+      "hed": "(Def/Show-image, Offset)",
       "expected": [
         "Offset"
       ]
@@ -1241,7 +1249,7 @@
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
       "query": "End showing image with photo ID mismatch.",
-      "hed": "(Def/Show-image, Offset)",
+      "hed": "(Def/Show-image-invalid-mismatch, Offset)",
       "expected": [
         "Offset"
       ]
@@ -1251,7 +1259,7 @@
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
       "query": "End showing image with suspicious DOB.",
-      "hed": "(Def/Show-image-invalid-dob, Offset)",
+      "hed": "(Def/Show-image, Offset)",
       "expected": [
         "Offset"
       ]
@@ -1261,7 +1269,7 @@
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
       "query": "End showing image with suspicious DOB.",
-      "hed": "(Def/Show-image, Offset)",
+      "hed": "(Def/Show-image-invalid-dob, Offset)",
       "expected": [
         "Offset"
       ]
@@ -1271,7 +1279,7 @@
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
       "query": "End showing of a valid image",
-      "hed": "(Def/Show-image-valid, Offset)",
+      "hed": "(Def/Show-image, Offset)",
       "expected": [
         "Offset"
       ]
@@ -1281,7 +1289,7 @@
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
       "query": "End showing of a valid image",
-      "hed": "(Def/Show-image, Offset)",
+      "hed": "(Def/Show-image-valid, Offset)",
       "expected": [
         "Offset"
       ]
@@ -1420,8 +1428,8 @@
       "id": "pair-0129",
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
-      "query": "Start of a system failure.",
-      "hed": "(Def/System-failure, Onset)",
+      "query": "Start of EEG system failure.",
+      "hed": "(Def/System-failure/EEG, Onset)",
       "expected": [
         "Onset"
       ]
@@ -1430,8 +1438,8 @@
       "id": "pair-0130",
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
-      "query": "Start of EEG system failure.",
-      "hed": "(Def/System-failure/EEG, Onset)",
+      "query": "Start of a system failure.",
+      "hed": "(Def/System-failure, Onset)",
       "expected": [
         "Onset"
       ]
@@ -1451,8 +1459,9 @@
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
       "query": "Start showing image incorrect access level.",
-      "hed": "(Def/Show-image-invalid-level, Onset)",
+      "hed": "(Def/Show-image, (Invalid, Label/No_access_to_level), Onset)",
       "expected": [
+        "Invalid",
         "Onset"
       ]
     },
@@ -1461,24 +1470,13 @@
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
       "query": "Start showing image incorrect access level.",
-      "hed": "(Def/Show-image, (Invalid, Label/No_access_to_level), Onset)",
+      "hed": "(Def/Show-image-invalid-level, Onset)",
       "expected": [
-        "Invalid",
         "Onset"
       ]
     },
     {
       "id": "pair-0134",
-      "dataset": "datasets/eeg_ds004106s_hed",
-      "split": "test",
-      "query": "Start showing image of expired ID",
-      "hed": "(Def/Show-image-invalid-expired, Onset)",
-      "expected": [
-        "Onset"
-      ]
-    },
-    {
-      "id": "pair-0135",
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
       "query": "Start showing image of expired ID",
@@ -1489,17 +1487,17 @@
       ]
     },
     {
-      "id": "pair-0136",
+      "id": "pair-0135",
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
-      "query": "Start showing image with no watermark.",
-      "hed": "(Def/Show-image-invalid-watermark, Onset)",
+      "query": "Start showing image of expired ID",
+      "hed": "(Def/Show-image-invalid-expired, Onset)",
       "expected": [
         "Onset"
       ]
     },
     {
-      "id": "pair-0137",
+      "id": "pair-0136",
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
       "query": "Start showing image with no watermark.",
@@ -1510,17 +1508,17 @@
       ]
     },
     {
-      "id": "pair-0138",
+      "id": "pair-0137",
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
-      "query": "Start showing image with photo ID mismatch.",
-      "hed": "(Def/Show-image-invalid-mismatch, Onset)",
+      "query": "Start showing image with no watermark.",
+      "hed": "(Def/Show-image-invalid-watermark, Onset)",
       "expected": [
         "Onset"
       ]
     },
     {
-      "id": "pair-0139",
+      "id": "pair-0138",
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
       "query": "Start showing image with photo ID mismatch.",
@@ -1531,17 +1529,17 @@
       ]
     },
     {
-      "id": "pair-0140",
+      "id": "pair-0139",
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
-      "query": "Start showing image with suspicious DOB.",
-      "hed": "(Def/Show-image-invalid-dob, Onset)",
+      "query": "Start showing image with photo ID mismatch.",
+      "hed": "(Def/Show-image-invalid-mismatch, Onset)",
       "expected": [
         "Onset"
       ]
     },
     {
-      "id": "pair-0141",
+      "id": "pair-0140",
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
       "query": "Start showing image with suspicious DOB.",
@@ -1552,17 +1550,17 @@
       ]
     },
     {
-      "id": "pair-0142",
+      "id": "pair-0141",
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
-      "query": "Start showing of a valid image",
-      "hed": "(Def/Show-image-valid, Onset)",
+      "query": "Start showing image with suspicious DOB.",
+      "hed": "(Def/Show-image-invalid-dob, Onset)",
       "expected": [
         "Onset"
       ]
     },
     {
-      "id": "pair-0143",
+      "id": "pair-0142",
       "dataset": "datasets/eeg_ds004106s_hed",
       "split": "test",
       "query": "Start showing of a valid image",
@@ -1570,6 +1568,16 @@
       "expected": [
         "Onset",
         "Valid"
+      ]
+    },
+    {
+      "id": "pair-0143",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start showing of a valid image",
+      "hed": "(Def/Show-image-valid, Onset)",
+      "expected": [
+        "Onset"
       ]
     },
     {
@@ -2252,20 +2260,6 @@
       "id": "pair-0195",
       "dataset": "src/data/bids_data",
       "split": "dev",
-      "query": "Bar disappears cueing the subject to make a choice about which hand to raise",
-      "hed": "Description/Onset of the go signal which is the disappearance of the cue bar, Sensory-event, (Visual-presentation, Experimental-stimulus, Instructional, Rectangle)",
-      "expected": [
-        "Experimental-stimulus",
-        "Instructional",
-        "Rectangle",
-        "Sensory-event",
-        "Visual-presentation"
-      ]
-    },
-    {
-      "id": "pair-0196",
-      "dataset": "src/data/bids_data",
-      "split": "dev",
       "query": "BCI predicts participant raised left hand",
       "hed": "Description/BCI predicts participant raised left hand, Computed-prediction, (Computational-evidence, (Hand, (Left-side-of, Torso)))",
       "expected": [
@@ -2277,7 +2271,7 @@
       ]
     },
     {
-      "id": "pair-0197",
+      "id": "pair-0196",
       "dataset": "src/data/bids_data",
       "split": "dev",
       "query": "BCI predicts participant raised right hand",
@@ -2288,6 +2282,20 @@
         "Hand",
         "Right-side-of",
         "Torso"
+      ]
+    },
+    {
+      "id": "pair-0197",
+      "dataset": "src/data/bids_data",
+      "split": "dev",
+      "query": "Bar disappears cueing the subject to make a choice about which hand to raise",
+      "hed": "Description/Onset of the go signal which is the disappearance of the cue bar, Sensory-event, (Visual-presentation, Experimental-stimulus, Instructional, Rectangle)",
+      "expected": [
+        "Experimental-stimulus",
+        "Instructional",
+        "Rectangle",
+        "Sensory-event",
+        "Visual-presentation"
       ]
     },
     {

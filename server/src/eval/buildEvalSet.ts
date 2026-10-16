@@ -12,6 +12,7 @@
  * The output is deterministic: rebuilding from the same checkout gives identical bytes.
  */
 
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { parseStandaloneString, type Schemas } from 'hed-validator';
@@ -82,10 +83,11 @@ function pairsFromSidecar(sidecar: unknown, dataset: string): RawPair[] {
 }
 
 /**
- * Short names of the leaf tags in a HED string, or null when the string has
- * errors under the schema or no leaf tags.
+ * Short names of the leaf tags in a HED string. Returns `{ error: 'parse' }` when
+ * the string has errors under the schema, and `{ error: 'empty' }` when it has no
+ * leaf tags (for example, only definition or label tags).
  */
-function expectedTags(hed: string, schemas: Schemas): { tags: string[] } | { error: 'parse' | 'empty' } {
+export function expectedTags(hed: string, schemas: Schemas): { tags: string[] } | { error: 'parse' | 'empty' } {
 	const [parsed, syntaxIssues, semanticIssues] = parseStandaloneString(hed, schemas, null);
 	const errors = [...syntaxIssues, ...semanticIssues].filter((issue) => issue.level === 'error');
 	if (errors.length > 0) {
@@ -114,13 +116,14 @@ export async function buildEvalSet(root: string): Promise<{ set: EvalSet; stats:
 	};
 
 	const unique = new Map<string, RawPair>();
+	const unreadable: string[] = [];
 	for (const file of listJsonFiles(root)) {
 		stats.jsonFiles++;
 		let sidecar: unknown;
 		try {
 			sidecar = JSON.parse(fs.readFileSync(file, 'utf-8'));
-		} catch {
-			stats.unreadableFiles++;
+		} catch (error) {
+			unreadable.push(`${file}: ${error instanceof Error ? error.message : String(error)}`);
 			continue;
 		}
 		for (const pair of pairsFromSidecar(sidecar, datasetOf(root, file))) {
@@ -129,6 +132,10 @@ export async function buildEvalSet(root: string): Promise<{ set: EvalSet; stats:
 				unique.set(key, pair);
 			}
 		}
+	}
+	// A file that cannot be read would silently change the eval set, so fail instead.
+	if (unreadable.length > 0) {
+		throw new Error(`cannot read ${unreadable.length} sidecar file(s):\n${unreadable.join('\n')}`);
 	}
 	stats.uniquePairs = unique.size;
 
@@ -146,8 +153,11 @@ export async function buildEvalSet(root: string): Promise<{ set: EvalSet; stats:
 		resolved.push({ ...pair, expected: result.tags });
 	}
 
+	// Code-unit comparison, so ids do not depend on the machine's locale.
+	const compareCodeUnits = (x: string, y: string): number => (x < y ? -1 : x > y ? 1 : 0);
 	resolved.sort(
-		(a, b) => a.dataset.localeCompare(b.dataset) || a.query.localeCompare(b.query) || a.hed.localeCompare(b.hed),
+		(a, b) =>
+			compareCodeUnits(a.dataset, b.dataset) || compareCodeUnits(a.query, b.query) || compareCodeUnits(a.hed, b.hed),
 	);
 
 	// Datasets alternate between dev (even index) and test (odd index), so no dataset spans both splits.
@@ -166,13 +176,27 @@ export async function buildEvalSet(root: string): Promise<{ set: EvalSet; stats:
 
 	return {
 		set: {
-			version: 1,
+			version: 2,
 			schema: EVAL_SCHEMA_VERSION,
-			source: 'hed-examples: BIDS sidecar level descriptions paired with HED strings',
+			source: {
+				name: 'hed-examples',
+				commit: checkoutCommit(root),
+				description: 'BIDS sidecar level descriptions paired with HED strings',
+			},
+			skipped: { parseErrors: stats.skippedParseErrors, noLeafTags: stats.skippedNoTags },
 			pairs,
 		},
 		stats,
 	};
+}
+
+/** The commit of the hed-examples checkout, so the eval set records where it came from. */
+function checkoutCommit(root: string): string {
+	try {
+		return execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf-8' }).trim();
+	} catch {
+		throw new Error(`${root} must be a git checkout so the eval set can record its commit`);
+	}
 }
 
 async function main(): Promise<void> {
