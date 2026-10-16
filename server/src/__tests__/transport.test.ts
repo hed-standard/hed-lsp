@@ -1,9 +1,10 @@
 /**
  * End-to-end checks over real transports: the compiled language server as a child process
  * speaking JSON-RPC over stdio, and the compiled hed-suggest CLI. They need `bun run compile`
- * first; they fail with a clear message if the build output is missing. Assertions are
- * structural because the default schema (8.5.0) may come from the network or the bundled
- * fallback. No mocks.
+ * first; they fail with a clear message if the build output is missing. The language server is
+ * configured to the bundled 8.4.0 (with its bundled libraries), so these tests run offline. The
+ * CLI uses the default 8.5.0, which falls back to the bundled 8.4.0 when offline, so its
+ * assertions are structural. No mocks.
  */
 
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
@@ -11,6 +12,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createMessageConnection, StreamMessageReader, StreamMessageWriter } from 'vscode-languageserver/node';
+import { defaultSettings } from '../types.js';
 
 const serverEntry = path.join(__dirname, '..', '..', 'out', 'server.js');
 const cliEntry = path.join(__dirname, '..', '..', 'out', 'cli.js');
@@ -48,10 +50,14 @@ async function stopServer(session: Session): Promise<number | null> {
 	const exited = new Promise<number | null>((resolve) => session.child.once('exit', (code) => resolve(code)));
 	await session.connection.sendRequest('shutdown');
 	session.connection.sendNotification('exit');
+	let timer: ReturnType<typeof setTimeout> | undefined;
 	const code = await Promise.race([
 		exited,
-		new Promise<number | null>((_, reject) => setTimeout(() => reject(new Error('server did not exit')), 30000)),
+		new Promise<number | null>((_, reject) => {
+			timer = setTimeout(() => reject(new Error('server did not exit')), 30000);
+		}),
 	]);
+	clearTimeout(timer);
 	session.connection.dispose();
 	return code;
 }
@@ -69,6 +75,9 @@ describe('language server over stdio', () => {
 			expect(init.capabilities.completionProvider).toBeDefined();
 			expect(init.capabilities.semanticTokensProvider).toBeDefined();
 			session.connection.sendNotification('initialized', {});
+			session.connection.sendNotification('workspace/didChangeConfiguration', {
+				settings: { hed: { ...defaultSettings, schemaVersion: '8.4.0' } },
+			});
 
 			const diagnostics = await new Promise<{ code?: unknown; message: string }[]>((resolve, reject) => {
 				const timer = setTimeout(() => reject(new Error('no diagnostics within 90s')), 90000);
@@ -86,6 +95,7 @@ describe('language server over stdio', () => {
 				});
 			});
 			expect(diagnostics.some((d) => d.code === 'TAG_INVALID')).toBe(true);
+			expect(session.logs).toContain('[HED] Loading schema: 8.4.0,sc:score_2.1.0,la:lang_1.1.0');
 
 			await session.connection.sendRequest('textDocument/completion', {
 				textDocument: { uri: sampleUri },
