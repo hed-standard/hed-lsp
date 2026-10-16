@@ -11,7 +11,16 @@ import { createLogger } from '../daemon/log.js';
 import { ApiError } from '../daemon/protocol.js';
 import { failureReply } from '../daemon/server.js';
 import { schemaManager } from '../engine/index.js';
-import { BUNDLED, BUNDLED_WITH_LIBRARIES, call, type RunningDaemon, startDaemon } from './daemonHarness.js';
+import {
+	BUNDLED,
+	BUNDLED_WITH_LIBRARIES,
+	call,
+	holdRequest,
+	type RunningDaemon,
+	sleep,
+	startDaemon,
+	waitFor,
+} from './daemonHarness.js';
 
 const running: RunningDaemon[] = [];
 
@@ -340,7 +349,7 @@ describe('logging', () => {
 
 		const lines = daemon.logLines().filter((line) => line.msg === 'request');
 		const health = lines.find((line) => line.path === '/v1/health');
-		const missing = lines.find((line) => line.path === '/missing');
+		const missing = lines.find((line) => line.path === 'unknown route');
 
 		expect(health).toMatchObject({
 			level: 'info',
@@ -355,6 +364,48 @@ describe('logging', () => {
 		expect(everything).not.toContain('secret');
 		expect(everything).not.toContain('127.0.0.1');
 		expect(everything).not.toContain('::1');
+	});
+});
+
+describe('logging a path and an aborted request', () => {
+	it('logs the label "unknown route" for a path that is not a route, and never the path itself', async () => {
+		const daemon = await start();
+		const marker = 'SECRET-path-4f2a';
+
+		await call(daemon.url, `/${marker}/${'x'.repeat(300)}?q=${marker}`);
+		await call(daemon.url, `/v1/${marker}`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: '{}',
+		});
+		await call(daemon.url, '/v1/schemas');
+
+		const lines = daemon.logLines().filter((entry) => entry.msg === 'request');
+		expect(lines.map((entry) => entry.path)).toEqual(['unknown route', 'unknown route', '/v1/schemas']);
+		expect(lines.slice(0, 2).map((entry) => entry.status)).toEqual([404, 404]);
+		expect(daemon.rawLines.join('\n')).not.toContain(marker);
+	});
+
+	it('logs a request that was cut off before its answer with aborted true and no status', async () => {
+		const daemon = await start();
+		const held = holdRequest(daemon.url, '/v1/validate', { length: 1000, first: '{"strings"' });
+		await sleep(100);
+
+		held.abandon();
+		await waitFor(
+			() => daemon.logLines().some((entry) => entry.msg === 'request' && entry.aborted === true),
+			5000,
+			'the aborted request to be logged',
+		);
+
+		const line = daemon.logLines().find((entry) => entry.msg === 'request' && entry.aborted === true);
+		expect(line).toMatchObject({ method: 'POST', path: '/v1/validate', aborted: true });
+		expect('status' in (line ?? {})).toBe(false);
+		// A request that was answered carries its status and no aborted field.
+		await call(daemon.url, '/v1/health');
+		const answered = daemon.logLines().find((entry) => entry.msg === 'request' && entry.path === '/v1/health');
+		expect(answered).toMatchObject({ status: 200 });
+		expect('aborted' in (answered ?? {})).toBe(false);
 	});
 });
 

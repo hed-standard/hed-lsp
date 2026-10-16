@@ -103,7 +103,7 @@ export async function findSuggestions(
 				}
 			}
 		} catch (error) {
-			log.error(`Warning: Schema search failed: ${error instanceof Error ? error.message : error}`);
+			log.error(`Warning: Schema search failed: ${error instanceof Error ? error.name : typeof error}`);
 		}
 	}
 
@@ -131,7 +131,7 @@ export async function findSuggestions(
 				}
 			}
 		} catch (error) {
-			log.error(`Warning: Semantic search failed: ${error instanceof Error ? error.message : error}`);
+			log.error(`Warning: Semantic search failed: ${error instanceof Error ? error.name : typeof error}`);
 		}
 	}
 
@@ -178,7 +178,7 @@ export async function suggestBatch(
 		} catch (error) {
 			// The position identifies the failing query, so the log line does not repeat the query text.
 			log.error(
-				`[HED] Suggestions failed for query ${index + 1} of ${queries.length}: ${error instanceof Error ? error.message : error}`,
+				`[HED] Suggestions failed for query ${index + 1} of ${queries.length}: ${error instanceof Error ? error.name : typeof error}`,
 			);
 		}
 	}

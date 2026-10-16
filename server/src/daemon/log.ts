@@ -51,6 +51,33 @@ export function engineSink(logger: Logger): LogSink {
 	};
 }
 
+/** The most stack frames kept from an exception. */
+const MAX_FRAMES = 8;
+
+/** A line of a stack that is a frame: it starts with whitespace and then `at `. */
+const FRAME_LINE = /^\s+at /;
+
+/**
+ * The stack frames of an exception, without anything of its message. A stack is the header, the
+ * name and the message, and then one line per frame. A message can run over many lines, and a line
+ * of it can look like a frame, so the header is cut off first, by the length of the message, before
+ * any line is read as a frame. When the message is not in the stack, because it was changed after
+ * the stack was captured, no frame is kept.
+ */
+function stackFrames(error: Error): string[] {
+	const stack = error.stack ?? '';
+	let afterHeader = stack;
+	if (error.message !== '') {
+		const at = stack.indexOf(error.message);
+		afterHeader = at === -1 ? '' : stack.slice(at + error.message.length);
+	}
+	return afterHeader
+		.split('\n')
+		.filter((line) => FRAME_LINE.test(line))
+		.map((line) => line.trim())
+		.slice(0, MAX_FRAMES);
+}
+
 /**
  * What to log about an exception without logging request text. An exception's message can quote
  * the input that caused it, so only its type and its stack frames are kept.
@@ -59,10 +86,5 @@ export function errorDetail(error: unknown): LogFields {
 	if (!(error instanceof Error)) {
 		return { errorType: typeof error };
 	}
-	const frames = (error.stack ?? '')
-		.split('\n')
-		.map((line) => line.trim())
-		.filter((line) => line.startsWith('at '))
-		.slice(0, 8);
-	return { errorType: error.name, frames };
+	return { errorType: error.name, frames: stackFrames(error) };
 }

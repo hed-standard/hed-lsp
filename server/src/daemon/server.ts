@@ -200,7 +200,8 @@ export function itemFailure(
 	return { code: 'INTERNAL_ERROR', message: text.message };
 }
 
-const MAX_LOGGED_PATH = 120;
+/** What the log says in place of the path of a request for a route that does not exist. */
+export const UNKNOWN_ROUTE_LABEL = 'unknown route';
 
 /** Bytes of declared body that cost one unit at the door. */
 export const DOOR_BYTES_PER_UNIT = 4096;
@@ -839,17 +840,20 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 			res.setHeader(name, value);
 		}
 		res.once('close', () => {
+			// A request that was cut off before its answer was written has no status to report.
+			const aborted = !res.writableFinished;
 			logger.info('request', {
 				requestId: ctx.id,
 				method: ctx.method,
-				path: ctx.path.slice(0, MAX_LOGGED_PATH),
-				status: res.statusCode,
+				// The path of a route is a fixed string. Any other path is the client's text, so only a label is logged.
+				path: routes.has(ctx.path) ? ctx.path : UNKNOWN_ROUTE_LABEL,
+				status: aborted ? undefined : res.statusCode,
 				ms: Math.round((performance.now() - ctx.startedAt) * 10) / 10,
 				items: ctx.items,
 				schema: ctx.schemaUsed,
 				semantic: ctx.semanticStatus,
 				error: ctx.errorCode,
-				aborted: res.writableFinished ? undefined : true,
+				aborted: aborted ? true : undefined,
 			});
 		});
 

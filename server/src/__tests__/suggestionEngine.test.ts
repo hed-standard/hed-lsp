@@ -205,11 +205,11 @@ describe('suggestBatch with a failing query', () => {
 		expect(Object.keys(output)).toEqual(['red square', 'modulator']);
 		expect(output['red square']).toContain('Red');
 		expect(output.modulator).toContain('sc:Modulator');
+		// The line names the failing query by its position and the error by its type, not its message.
 		expect(lines.filter((line) => line.includes('Suggestions failed'))).toEqual([
-			expect.stringContaining('Suggestions failed for query 2 of 3'),
+			'[HED] Suggestions failed for query 2 of 3: TypeError',
 		]);
 	});
-
 	it('still rejects when the schema cannot be loaded', async () => {
 		// The engine logs the failed load to stderr; keep that out of the test output.
 		const previousSink = setLogger({ info: () => {}, error: () => {} });
@@ -218,5 +218,27 @@ describe('suggestBatch with a failing query', () => {
 		} finally {
 			setLogger(previousSink);
 		}
+	});
+});
+
+describe('engine log lines', () => {
+	it('logs the type of a failed schema search and not its message, which quotes the schema and the network', async () => {
+		const lines: string[] = [];
+		const previousSink = setLogger({ info: (message) => lines.push(message), error: (message) => lines.push(message) });
+		let result: Awaited<ReturnType<typeof findSuggestions>>;
+		try {
+			// The library 9.9.9 does not exist, so its load fails for real, online with a 404 and offline with
+			// a network error, and the schema search that needs it fails with an error whose message is long.
+			result = await findSuggestions('red square', { schema: '8.4.0,sc:score_9.9.9', top: 10 });
+		} finally {
+			setLogger(previousSink);
+		}
+
+		expect(result.suggestions.length).toBeGreaterThan(0);
+		const warnings = lines.filter((line) => line.startsWith('Warning: Schema search failed'));
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]).toMatch(/^Warning: Schema search failed: \w+$/);
+		expect(warnings[0]).not.toContain('9.9.9');
+		expect(warnings[0]).not.toContain('SCHEMA_LOAD_FAILED');
 	});
 });
