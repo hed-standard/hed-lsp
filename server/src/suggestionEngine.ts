@@ -7,6 +7,7 @@
  * have to re-implement the order or re-load the schema per query.
  */
 
+import type { QueryFormat } from './embeddingConfig.js';
 import { embeddingsManager } from './embeddings.js';
 import { lookupOwn } from './keywordLookup.js';
 import { schemaManager } from './schemaManager.js';
@@ -17,6 +18,8 @@ export interface SuggestionOptions {
 	schema: string;
 	top: number;
 	semantic: boolean;
+	/** How the query is wrapped before embedding; defaults to the raw query. */
+	queryFormat?: QueryFormat;
 }
 
 export interface SuggestionResult {
@@ -76,7 +79,7 @@ export async function findSuggestions(
 	if (opts.semantic && suggestions.length < opts.top) {
 		try {
 			if (embeddingsManager.isAvailable()) {
-				const semanticResults = await embeddingsManager.findSimilar(normalizedQuery, opts.top);
+				const semanticResults = await embeddingsManager.findSimilar(normalizedQuery, opts.top, opts.queryFormat);
 				for (const result of semanticResults) {
 					if (!suggestions.includes(result.tag)) {
 						suggestions.push(result.tag);

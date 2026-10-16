@@ -70,12 +70,11 @@ function parseArgs(argv: string[]): { split: EvalSplit; configs: string[]; out?:
 
 async function runConfig(config: string, pairs: readonly EvalPair[]): Promise<ConfigRun> {
 	const format = FORMATS[config];
-	embeddingsManager.setQueryFormat(format);
 	const semantic: RankScore[] = [];
 	const endToEnd: RankScore[] = [];
 	const failuresBefore = embeddingsManager.embedFailureCount();
 	for (const pair of pairs) {
-		const matches = await embeddingsManager.findSimilar(pair.query, K);
+		const matches = await embeddingsManager.findSimilar(pair.query, K, format);
 		semantic.push(
 			scoreRanking(
 				pair.expected,
@@ -83,7 +82,12 @@ async function runConfig(config: string, pairs: readonly EvalPair[]): Promise<Co
 				K,
 			),
 		);
-		const result = await findSuggestions(pair.query, { schema: EVAL_SCHEMA_VERSION, top: K, semantic: true });
+		const result = await findSuggestions(pair.query, {
+			schema: EVAL_SCHEMA_VERSION,
+			top: K,
+			semantic: true,
+			queryFormat: format,
+		});
 		endToEnd.push(scoreRanking(pair.expected, result.suggestions, K));
 	}
 	// findSimilar turns a failed embed() into "no matches", so count the failures rather than the empty results.
@@ -166,7 +170,6 @@ async function main(): Promise<void> {
 		console.error(`running ${config} (${FORMATS[config]}) over ${pairs.length} ${split} pairs`);
 		runs.push(await runConfig(config, pairs));
 	}
-	embeddingsManager.setQueryFormat('raw');
 
 	const result = report(split, runs) as { rows: Record<string, unknown>[] } & Record<string, unknown>;
 	printTable(result);

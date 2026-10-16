@@ -110,7 +110,6 @@ class EmbeddingsManager {
 	private tagEmbeddings: Map<string, TagEmbedding> = new Map();
 	private keywordEmbeddings: KeywordEmbedding[] = [];
 	private config: EmbeddingConfig = DEFAULT_CONFIG;
-	private queryFormat: QueryFormat = DEFAULT_QUERY_FORMAT;
 	private modelLoaded = false;
 	private embeddingsLoaded = false;
 	private embedFailures = 0;
@@ -401,7 +400,11 @@ class EmbeddingsManager {
 	 * - Tag search finds "bird" close to "Animal" directly
 	 * - Animal gets evidence from both sources → high confidence
 	 */
-	async findSimilar(query: string, topK: number = 10): Promise<SemanticMatch[]> {
+	async findSimilar(
+		query: string,
+		topK: number = 10,
+		format: QueryFormat = DEFAULT_QUERY_FORMAT,
+	): Promise<SemanticMatch[]> {
 		// Try to load pre-computed embeddings first
 		await this.loadEmbeddings();
 
@@ -418,7 +421,7 @@ class EmbeddingsManager {
 		}
 
 		// Generate query embedding for semantic search (lowercase)
-		const queryEmbedding = await this.embed(formatQuery(query.toLowerCase(), this.queryFormat));
+		const queryEmbedding = await this.embed(formatQuery(query.toLowerCase(), format));
 		if (!queryEmbedding) {
 			return [];
 		}
@@ -566,14 +569,6 @@ class EmbeddingsManager {
 	 */
 	setEnabled(enabled: boolean): void {
 		this.config.enabled = enabled;
-	}
-
-	/**
-	 * Select how queries are wrapped before embedding. Used by the eval harness;
-	 * documents (tags and anchors) are always embedded bare.
-	 */
-	setQueryFormat(format: QueryFormat): void {
-		this.queryFormat = format;
 	}
 
 	/**
