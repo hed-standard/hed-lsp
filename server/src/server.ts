@@ -46,11 +46,12 @@ function getHedRegions(document: TextDocument): HedRegion[] {
 // Create a connection using Node's IPC transport
 const connection = createConnection(ProposedFeatures.all);
 
-// Engine log lines go to the console. Under --stdio the LSP library sends console output to the
-// client as log messages; under IPC the console is not patched, so the lines stay on stdout.
+// Engine log lines go to the console as one string each, so the console never applies printf
+// formatting to a path. Under --stdio the LSP library sends console output to the client as log
+// messages; under IPC info lines go to stdout and error lines go to stderr.
 setLogger({
-	info: (...args) => console.log(...args),
-	error: (...args) => console.error(...args),
+	info: (message) => console.log(message),
+	error: (message) => console.error(message),
 });
 
 // Create a document manager

@@ -7,6 +7,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import * as path from 'node:path';
+import * as util from 'node:util';
 import { describe, expect, it } from 'vitest';
 import * as engine from '../engine/index.js';
 import { log, setLogger } from '../engine/log.js';
@@ -112,22 +113,30 @@ describe('engine logging', () => {
 		expect(result.stderr).toContain('[HED Embeddings] Loaded');
 	}, 150000);
 
-	it('passes log arguments to the sink unchanged', () => {
-		const seen: unknown[][] = [];
+	it('formats each message once, so a percent sign in a path survives', () => {
+		const seen: string[] = [];
 		const previous = setLogger({
-			info: (...args) => seen.push(args),
-			error: (...args) => seen.push(args),
+			info: (message) => seen.push(message),
+			error: (message) => seen.push(message),
 		});
 		try {
 			const cause = new Error('boom');
-			log.error('Failed to parse /d/set%d0/x:', cause);
+			log.error('Failed to parse /data/100%data/x:', cause);
 
-			expect(seen).toHaveLength(1);
-			expect(seen[0][0]).toBe('Failed to parse /d/set%d0/x:');
-			expect(seen[0][1]).toBe(cause);
+			expect(seen).toEqual([`Failed to parse /data/100%data/x: ${util.inspect(cause)}`]);
 		} finally {
 			setLogger(previous);
 		}
+	});
+
+	it('writes a path with a percent sign to stderr intact', () => {
+		const built = path.join(__dirname, '..', '..', 'out', 'engine', 'log.js');
+		const script = `require(${JSON.stringify(built)}).log.error('Failed to parse /data/100%data/x:', 'detail');`;
+
+		const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf-8', timeout: 30000 });
+
+		expect(result.status).toBe(0);
+		expect(result.stderr).toBe('Failed to parse /data/100%data/x: detail\n');
 	});
 });
 

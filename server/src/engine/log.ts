@@ -1,18 +1,20 @@
 /**
- * Logging for the engine. The engine writes to stderr by default, because the CLI prints
- * its JSON on stdout. The language server installs a sink that forwards to the console.
+ * Logging for the engine. Each message is formatted into one string before it reaches a sink, so
+ * no printf formatting can change a path that contains a percent sign. The engine writes to stderr
+ * by default, because the CLI prints its JSON on stdout. The language server installs a sink that
+ * forwards to the console.
  */
 
 import * as util from 'node:util';
 
 export interface LogSink {
-	info(...args: unknown[]): void;
-	error(...args: unknown[]): void;
+	info(message: string): void;
+	error(message: string): void;
 }
 
 const stderrSink: LogSink = {
-	info: (...args) => process.stderr.write(`${util.format(...args)}\n`),
-	error: (...args) => process.stderr.write(`${util.format(...args)}\n`),
+	info: (message) => process.stderr.write(`${message}\n`),
+	error: (message) => process.stderr.write(`${message}\n`),
 };
 
 let sink: LogSink = stderrSink;
@@ -25,10 +27,15 @@ export function setLogger(next: LogSink): LogSink {
 }
 
 /**
- * Engine log functions. Arguments reach the sink unchanged, so a sink that formats them the way
- * console does formats them exactly as the engine did before it had a logger.
+ * Join log arguments into one message: strings as they are, anything else inspected, separated by
+ * spaces. This is how the LSP console joins arguments, and it never applies printf substitution.
  */
+function formatMessage(args: unknown[]): string {
+	return args.map((arg) => (typeof arg === 'string' ? arg : util.inspect(arg))).join(' ');
+}
+
+/** Engine log functions. */
 export const log = {
-	info: (...args: unknown[]) => sink.info(...args),
-	error: (...args: unknown[]) => sink.error(...args),
+	info: (...args: unknown[]) => sink.info(formatMessage(args)),
+	error: (...args: unknown[]) => sink.error(formatMessage(args)),
 };
