@@ -6,8 +6,11 @@
  * fixture below, which makes the network fail and changes nothing else.
  */
 
+import { type ChildProcess, spawn } from 'node:child_process';
+import * as fs from 'node:fs';
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import * as path from 'node:path';
 import { type DaemonConfig, loadConfig } from '../daemon/config.js';
 import { createDaemon, type Daemon, type DaemonOptions } from '../daemon/server.js';
 
@@ -311,4 +314,101 @@ export function hasKey(value: unknown, key: string): boolean {
 		return Object.keys(value).some((name) => name === key || hasKey((value as Record<string, unknown>)[name], key));
 	}
 	return false;
+}
+
+/** The compiled daemon module `name`, such as `main.js`. The process tests run what ships. */
+export function compiled(name: string): string {
+	const file = path.join(__dirname, '..', '..', 'out', 'daemon', name);
+	if (!fs.existsSync(file)) {
+		throw new Error(`${file} is missing; run "bun run compile" before this test`);
+	}
+	return file;
+}
+
+/**
+ * The environment of a child process: the PATH and HOME of this process and the given variables,
+ * and no HED_LSP_* from the environment of the test run.
+ */
+export function childEnv(env: Record<string, string> = {}): NodeJS.ProcessEnv {
+	const base: NodeJS.ProcessEnv = { PATH: process.env.PATH };
+	if (process.env.HOME !== undefined) {
+		base.HOME = process.env.HOME;
+	}
+	return { ...base, ...env };
+}
+
+export interface DaemonProcess {
+	child: ChildProcess;
+	/** Every line the process wrote to stderr so far. */
+	lines: string[];
+	/** Resolves with the port from the `listening` line, or rejects if the process exits first. */
+	port(): Promise<number>;
+	/** Resolves when the process has exited, with how, and how long after this call it took. */
+	exited(): Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+}
+
+/**
+ * Run the compiled daemon as a child process on port 0 with the bundled schemas, which run offline.
+ * `env` is added to the environment, and replaces any of those defaults.
+ */
+export function spawnDaemon(env: Record<string, string> = {}): DaemonProcess {
+	const child = spawn(process.execPath, [compiled('main.js')], {
+		env: childEnv({
+			HED_LSP_HOST: '127.0.0.1',
+			HED_LSP_PORT: '0',
+			HED_LSP_SCHEMAS: BUNDLED,
+			HED_LSP_DEFAULT_SCHEMA: BUNDLED,
+			...env,
+		}),
+		stdio: ['ignore', 'ignore', 'pipe'],
+	});
+	const lines: string[] = [];
+	let partial = '';
+	let exit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+	const listeners: (() => void)[] = [];
+	const notify = (): void => {
+		for (const listener of listeners.splice(0)) {
+			listener();
+		}
+	};
+	child.stderr?.setEncoding('utf-8');
+	child.stderr?.on('data', (chunk: string) => {
+		const pieces = (partial + chunk).split('\n');
+		partial = pieces.pop() ?? '';
+		lines.push(...pieces.filter((line) => line !== ''));
+		notify();
+	});
+	child.on('exit', (code, signal) => {
+		exit = { code, signal };
+		notify();
+	});
+	const waitForChange = (): Promise<void> => new Promise((resolve) => listeners.push(resolve));
+	return {
+		child,
+		lines,
+		async port() {
+			for (;;) {
+				for (const line of lines) {
+					try {
+						const entry = JSON.parse(line) as { msg?: string; port?: number };
+						if (entry.msg === 'listening' && typeof entry.port === 'number') {
+							return entry.port;
+						}
+					} catch {
+						// A line that is not JSON cannot be the listening line.
+					}
+				}
+				if (exit) {
+					throw new Error(`the daemon exited (${JSON.stringify(exit)}) before it listened:\n${lines.join('\n')}`);
+				}
+				await waitForChange();
+			}
+		},
+		async exited() {
+			while (!exit) {
+				await waitForChange();
+			}
+			return exit;
+		},
+	};
 }

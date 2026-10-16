@@ -856,7 +856,9 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		},
 	);
 	server.maxConnections = config.maxConnections;
-	server.on('listening', () => semantic.start());
+	// The warm-up starts after the listeners of the caller have run, so a caller that announces the
+	// address, as the entry point does, announces it before the first semantic work begins.
+	server.on('listening', () => setImmediate(() => semantic.start()));
 
 	async function close(graceMs = 10_000): Promise<void> {
 		closing = true;
