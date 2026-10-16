@@ -197,7 +197,7 @@ describe('engine boundary', () => {
 });
 
 describe('daemon boundary', () => {
-	it('covers every daemon module, the entry point and the health probe included', () => {
+	it('covers every daemon module, the entry point, the health probe, and the load harness included', () => {
 		const names = sourceFiles(daemonDir).map((file) => path.basename(file));
 
 		expect(names).toEqual(
@@ -205,6 +205,7 @@ describe('daemon boundary', () => {
 				'config.ts',
 				'healthcheck.ts',
 				'limits.ts',
+				'loadTest.ts',
 				'log.ts',
 				'main.ts',
 				'protocol.ts',
