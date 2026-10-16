@@ -3,7 +3,7 @@
 /**
  * The daemon process. It reads the configuration, listens on HOST and PORT, writes one JSON
  * `listening` line, and then loads the schemas in the background. On SIGTERM or SIGINT it stops
- * accepting, lets the requests in flight finish for up to 10 seconds, and exits 0.
+ * accepting, lets the requests in flight finish for up to 8 seconds, and exits 0.
  *
  * Exit codes: 0 after a signal, 2 for a configuration that is invalid (the message names the
  * variable), and 1 for a failure at run time, such as an address that cannot be bound.
@@ -13,8 +13,12 @@ import { ConfigError, configWarnings, type DaemonConfig, loadConfig, readPackage
 import { createLogger, errorDetail, type Logger } from './log.js';
 import { createDaemon } from './server.js';
 
-/** How long a shutdown waits for requests in flight before it closes their connections. */
-export const SHUTDOWN_GRACE_MS = 10_000;
+/**
+ * How long a shutdown waits for requests in flight before it closes their connections. It is below
+ * the 10 seconds that Docker waits after SIGTERM before it sends SIGKILL, so the daemon exits by
+ * itself, with its connections closed in order, and is not killed in the middle of closing them.
+ */
+export const SHUTDOWN_GRACE_MS = 8_000;
 
 export const EXIT_RUNTIME_FAILURE = 1;
 export const EXIT_INVALID_CONFIG = 2;

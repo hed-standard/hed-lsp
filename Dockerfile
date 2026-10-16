@@ -1,6 +1,6 @@
-# syntax=docker/dockerfile:1
-
-# The HED engine as an HTTP daemon (server/src/daemon). Build for the platform that runs it:
+# The HED engine as an HTTP daemon (server/src/daemon). Both stages are pinned to linux/amd64 with
+# FROM --platform, so the build gives the same image on any host, and the platform flag of the build
+# command is optional:
 #
 #   docker buildx build --platform linux/amd64 --build-arg HED_LSP_COMMIT=$(git rev-parse --short HEAD) \
 #     -t hed-lsp-daemon:local .
@@ -9,7 +9,7 @@
 # digests; to look one up by hand: docker buildx imagetools inspect <image>:<tag>
 
 # Build stage: compile the TypeScript, then keep only the production dependencies.
-FROM oven/bun:1.4.3-debian@sha256:923bedb355f7746666659f71e724998159a5c8c54bd1cb1030e1975a0698415b AS build
+FROM --platform=linux/amd64 oven/bun:1.4.3-debian@sha256:923bedb355f7746666659f71e724998159a5c8c54bd1cb1030e1975a0698415b AS build
 WORKDIR /app
 
 # The manifests first, so the dependency layer is reused until a lockfile or a package.json changes.
@@ -30,7 +30,7 @@ RUN rm -rf node_modules client/node_modules server/node_modules server/out/__tes
     && find server/node_modules/onnxruntime-node/bin/napi-v6 -mindepth 2 -maxdepth 2 ! -path '*/linux/x64' -exec rm -rf {} +
 
 # Runtime stage: Node, which the dependencies target, and none of the build tools.
-FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
+FROM --platform=linux/amd64 node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392
 
 ARG HED_LSP_COMMIT=unknown
 LABEL org.opencontainers.image.title="hed-lsp-daemon" \

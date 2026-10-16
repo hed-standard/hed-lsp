@@ -8,3 +8,11 @@
 .github
 docs
 scripts
+
+# Local files that must not reach the image: environment files, built extensions, agent and project
+# notes, and logs.
+.env*
+*.vsix
+.context
+.claude
+*.log

@@ -13,6 +13,7 @@ import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { SHUTDOWN_GRACE_MS } from '../daemon/main.js';
 import {
 	BUNDLED,
 	call,
@@ -122,6 +123,8 @@ describe('shutting down', () => {
 			expect(Date.now() - sentAt).toBeLessThan(10_000);
 			const messages = proc.lines.map((line) => JSON.parse(line).msg as string);
 			expect(messages).toContain('shutting down');
+			const announced = proc.lines.map((line) => JSON.parse(line)).find((entry) => entry.msg === 'shutting down');
+			expect(announced).toMatchObject({ signal, graceMs: 8000 });
 			expect(messages[messages.length - 1]).toBe('stopped');
 			await expect(call(`http://127.0.0.1:${port}`, '/v1/health')).rejects.toThrow();
 		},
@@ -220,6 +223,25 @@ describe('semantic search in a process without the model', () => {
 			fs.rmSync(emptyHome, { recursive: true, force: true });
 		}
 	}, 120000);
+});
+
+describe('the shutdown grace', () => {
+	it('is 8 seconds, below the 10 seconds that Docker waits after SIGTERM before it sends SIGKILL', () => {
+		expect(SHUTDOWN_GRACE_MS).toBe(8000);
+		expect(SHUTDOWN_GRACE_MS).toBeLessThan(10_000);
+	});
+});
+
+describe('the hed-lsp-daemon command', () => {
+	it('is the compiled entry point, which starts with a Node shebang line like the health probe', () => {
+		const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf-8'));
+		const target = path.resolve(path.join(__dirname, '..', '..'), manifest.bin['hed-lsp-daemon']);
+
+		expect(target).toBe(compiled('main.js'));
+		for (const file of [target, compiled('healthcheck.js')]) {
+			expect(fs.readFileSync(file, 'utf-8').split('\n')[0], file).toBe('#!/usr/bin/env node');
+		}
+	});
 });
 
 describe('the language server', () => {
