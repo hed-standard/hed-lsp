@@ -365,6 +365,9 @@ function endWithinWriteLimits(
 	pump();
 }
 
+/** The longest a close waits, after it has told the work to stop, for the work to stop. */
+export const WORK_STOP_WAIT_MS = 1000;
+
 /** Let other requests and timers run, so a long batch does not hold the event loop. */
 function yieldToEventLoop(): Promise<void> {
 	return new Promise((resolve) => setImmediate(resolve));
@@ -666,6 +669,9 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 	const semanticGate = new SemanticGate(config.semanticConcurrency, config.semanticQueue);
 	// The abort controller of every request that is running, so a close past its grace can stop them.
 	const running = new Set<AbortController>();
+	// The work of every request that has not stopped, including a request that was answered and
+	// abandoned, so a close can wait for it. A slot is held for exactly as long as its work is here.
+	const working = new Set<Promise<unknown>>();
 	let closing = false;
 
 	// Preload runs in the background; every failure is recorded in the registry and the log.
@@ -997,11 +1003,13 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 				retryAfterSeconds: 1,
 			});
 		}
+		const work = Promise.resolve().then(() => route.handler(req, ctx));
+		working.add(work);
 		const release = (): void => {
+			working.delete(work);
 			releaseShared();
 			releaseClient();
 		};
-		const work = Promise.resolve().then(() => route.handler(req, ctx));
 		work.then(release, release);
 		return work;
 	}
@@ -1206,6 +1214,21 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 			});
 			server.closeIdleConnections();
 		});
+		// No connection is left, but the work of a request whose client went away can be. Its own timer is the
+		// only thing that would stop it, so it is told to stop here, and it is waited for, so that nothing of
+		// this daemon is still running when close returns. The wait is bounded in case a step cannot be
+		// interrupted; the work stops between items, and an item takes milliseconds.
+		for (const work of running) {
+			work.abort();
+		}
+		let waitTimer: NodeJS.Timeout | undefined;
+		await Promise.race([
+			Promise.allSettled([...working]),
+			new Promise<void>((resolve) => {
+				waitTimer = setTimeout(resolve, WORK_STOP_WAIT_MS);
+			}),
+		]);
+		clearTimeout(waitTimer);
 		setLogger(previousSink);
 	}
 

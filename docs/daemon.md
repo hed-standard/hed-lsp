@@ -32,6 +32,7 @@ Settings are read once from `HED_LSP_*` environment variables (see [Limits and s
 A bad value stops the daemon before it listens, with a message that names the variable, and exit status 2.
 On SIGTERM or SIGINT the daemon stops accepting connections, lets the requests in flight finish for up to 8 seconds, and exits 0.
 Eight seconds is below the 10 seconds that Docker waits after SIGTERM before it sends SIGKILL.
+Work that is still running when the connections are closed, such as that of a request whose client has gone, is told to stop, and the daemon waits up to one second for it before it exits.
 Exit status 1 means a failure at run time, such as an address that cannot be bound.
 
 ## API reference, version 1

@@ -1345,4 +1345,32 @@ describe('close', () => {
 
 		expect(Date.now() - startedAt).toBeLessThan(1000);
 	});
+
+	it('stops the work of a request whose client has gone, so that nothing runs after close returns', async () => {
+		const daemon = await startDaemon({ HED_LSP_MAX_IN_FLIGHT: '1' });
+		// A client that sends a complete body for more than a second of work and then goes away. Nobody reads
+		// the answer, and without a close that stops it the work would run to the end.
+		const body = busyBody(100);
+		const client = net.connect(Number(new URL(daemon.url).port), '127.0.0.1');
+		client.on('error', () => undefined);
+		client.write(
+			`POST /v1/validate HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+		);
+		// The pause comes first: a probe that arrived before the body could take the only slot instead.
+		await sleep(100);
+		await waitFor(async () => (await call(daemon.url, '/v1/schemas')).status === 503, 5000, 'the work to start');
+		client.destroy();
+
+		const startedAt = Date.now();
+		await daemon.daemon.close(2000);
+		const closedAfter = Date.now() - startedAt;
+		// Processor time of this process over the next 400 ms: work that was left running would use nearly all of it.
+		const before = process.cpuUsage();
+		await sleep(400);
+		const used = process.cpuUsage(before);
+
+		// Told to stop, the work ends after the item it is on, which is milliseconds; left to run it would take the rest of the batch.
+		expect(closedAfter).toBeLessThan(500);
+		expect((used.user + used.system) / 1000).toBeLessThan(100);
+	}, 60_000);
 });
