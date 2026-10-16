@@ -1,32 +1,34 @@
 /**
  * Logging for the engine. The engine writes to stderr by default, because the CLI prints
- * its JSON on stdout. The language server installs a sink that forwards to the client.
+ * its JSON on stdout. The language server installs a sink that forwards to the console.
  */
 
 import * as util from 'node:util';
 
 export interface LogSink {
-	info(message: string): void;
-	warn(message: string): void;
-	error(message: string): void;
+	info(...args: unknown[]): void;
+	error(...args: unknown[]): void;
 }
 
 const stderrSink: LogSink = {
-	info: (message) => process.stderr.write(`${message}\n`),
-	warn: (message) => process.stderr.write(`${message}\n`),
-	error: (message) => process.stderr.write(`${message}\n`),
+	info: (...args) => process.stderr.write(`${util.format(...args)}\n`),
+	error: (...args) => process.stderr.write(`${util.format(...args)}\n`),
 };
 
 let sink: LogSink = stderrSink;
 
-/** Set where engine log lines go. */
-export function setLogger(next: LogSink): void {
+/** Set where engine log lines go. Returns the previous sink, so a caller can restore it. */
+export function setLogger(next: LogSink): LogSink {
+	const previous = sink;
 	sink = next;
+	return previous;
 }
 
-/** Engine log functions. Arguments are formatted the same way console formats them. */
+/**
+ * Engine log functions. Arguments reach the sink unchanged, so a sink that formats them the way
+ * console does formats them exactly as the engine did before it had a logger.
+ */
 export const log = {
-	info: (...args: unknown[]) => sink.info(util.format(...args)),
-	warn: (...args: unknown[]) => sink.warn(util.format(...args)),
-	error: (...args: unknown[]) => sink.error(util.format(...args)),
+	info: (...args: unknown[]) => sink.info(...args),
+	error: (...args: unknown[]) => sink.error(...args),
 };

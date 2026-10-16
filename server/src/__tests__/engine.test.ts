@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as engine from '../engine/index.js';
+import { log, setLogger } from '../engine/log.js';
 import { schemaManager } from '../engine/schemaManager.js';
 import { validateHedString } from '../engine/validation.js';
 
@@ -110,4 +111,22 @@ describe('engine logging', () => {
 		expect(result.stdout).toBe('');
 		expect(result.stderr).toContain('[HED Embeddings] Loaded');
 	}, 150000);
+
+	it('passes log arguments to the sink unchanged', () => {
+		const seen: unknown[][] = [];
+		const previous = setLogger({
+			info: (...args) => seen.push(args),
+			error: (...args) => seen.push(args),
+		});
+		try {
+			const cause = new Error('boom');
+			log.error('Failed to parse /d/set%d0/x:', cause);
+
+			expect(seen).toHaveLength(1);
+			expect(seen[0][0]).toBe('Failed to parse /d/set%d0/x:');
+			expect(seen[0][1]).toBe(cause);
+		} finally {
+			setLogger(previous);
+		}
+	});
 });
