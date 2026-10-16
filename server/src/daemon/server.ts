@@ -107,6 +107,8 @@ interface RequestContext {
 	client: string;
 	/** Aborts when the request times out, so its work stops between items. */
 	signal: AbortSignal;
+	/** The bytes of the request body read so far; the discard of an unread body counts on from here. */
+	body: BodyProgress;
 	items?: number;
 	schemaUsed?: string;
 	semanticStatus?: string;
@@ -237,21 +239,27 @@ function checkContentType(header: string | undefined): void {
 }
 
 /**
- * How much of a refused body is still read and thrown away, as a multiple of the body limit, so
- * the client can finish sending and read the 413. Closing a socket that holds unread data resets
- * the connection, and the client may then never see the response. A client whose body keeps
- * arriving past the bound is cut off. The bound follows the configuration: 2 MiB by default.
+ * How much of a body that is not read is still read and thrown away, as a multiple of the body
+ * limit, so the client can finish sending and read the answer. Closing a socket that holds unread
+ * data resets the connection, and the client may then never see the response. A client whose body
+ * keeps arriving past the bound is cut off. The bound follows the configuration: 2 MiB by default.
  */
 export const DISCARD_FACTOR = 4;
 
-/** The bytes of a refused body that are read and discarded before the connection is cut. */
+/** The bytes of an unread body that are read and discarded before the connection is cut. */
 export function discardLimitBytes(maxBodyBytes: number): number {
 	return DISCARD_FACTOR * maxBodyBytes;
 }
 
+/** How much of a request body has been consumed so far, which the bounded discard counts from. */
+interface BodyProgress {
+	bytes: number;
+}
+
 /**
- * Read and drop the rest of a refused body. `alreadyRead` counts the bytes consumed before the
- * refusal, so `discardLimit` bounds the whole body, not only what comes after the refusal.
+ * Read and drop the rest of a request body that no handler will read. `alreadyRead` counts the
+ * bytes consumed before this call, so `discardLimit` bounds the whole body, not only what comes
+ * after. Past the bound the connection is cut.
  */
 function discardRest(req: http.IncomingMessage, discardLimit: number, alreadyRead: number, onCutoff: () => void): void {
 	let discarded = alreadyRead;
@@ -268,15 +276,14 @@ function discardRest(req: http.IncomingMessage, discardLimit: number, alreadyRea
 /**
  * Read the request body, refusing more than `limit` bytes: by Content-Length before reading a
  * byte, and by counting while streaming for a body that declares no length or lies about it.
- * Nothing past the limit is kept; the rest is discarded as it arrives, until the body as a whole
- * passes `discardLimit` bytes and the connection is cut.
+ * Nothing past the limit is kept. `progress` counts the bytes consumed, so the discard that
+ * follows a refusal continues the count.
  */
 function readBody(
 	req: http.IncomingMessage,
 	limit: number,
-	discardLimit: number,
 	signal: AbortSignal,
-	onCutoff: () => void,
+	progress: BodyProgress,
 ): Promise<Buffer> {
 	const tooLarge = (): ApiError =>
 		new ApiError('PAYLOAD_TOO_LARGE', `the request body is larger than ${limit} bytes`, {
@@ -287,7 +294,6 @@ function readBody(
 	}
 	const declared = req.headers['content-length'];
 	if (declared !== undefined && /^\d+$/.test(declared) && Number(declared) > limit) {
-		discardRest(req, discardLimit, 0, onCutoff);
 		return Promise.reject(tooLarge());
 	}
 	return new Promise((resolve, reject) => {
@@ -308,11 +314,9 @@ function readBody(
 		};
 		const onData = (chunk: Buffer): void => {
 			size += chunk.length;
+			progress.bytes += chunk.length;
 			if (size > limit) {
-				settle(() => {
-					discardRest(req, discardLimit, size, onCutoff);
-					reject(tooLarge());
-				});
+				settle(() => reject(tooLarge()));
 				return;
 			}
 			chunks.push(chunk);
@@ -334,12 +338,11 @@ function readBody(
 async function readJsonObject(
 	req: http.IncomingMessage,
 	limit: number,
-	discardLimit: number,
 	signal: AbortSignal,
-	onCutoff: () => void,
+	progress: BodyProgress,
 ): Promise<Record<string, unknown>> {
 	checkContentType(req.headers['content-type']);
-	const raw = await readBody(req, limit, discardLimit, signal, onCutoff);
+	const raw = await readBody(req, limit, signal, progress);
 	let value: unknown;
 	try {
 		value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw));
@@ -558,9 +561,7 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 
 	/** The JSON object body of a POST, within MAX_BODY_BYTES. */
 	function readBodyOf(req: http.IncomingMessage, ctx: RequestContext): Promise<Record<string, unknown>> {
-		return readJsonObject(req, config.maxBodyBytes, discardLimitBytes(config.maxBodyBytes), ctx.signal, () =>
-			logger.warn('connection closed because a refused body kept arriving', { requestId: ctx.id }),
-		);
+		return readJsonObject(req, config.maxBodyBytes, ctx.signal, ctx.body);
 	}
 
 	async function validateStrings(req: http.IncomingMessage, ctx: RequestContext): Promise<Reply> {
@@ -782,6 +783,7 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 				config.trustedProxies,
 			),
 			signal: work.signal,
+			body: { bytes: 0 },
 		};
 		res.setHeader('X-Request-Id', ctx.id);
 		for (const [name, value] of Object.entries(CORS_HEADERS)) {
@@ -834,7 +836,24 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		if (res.destroyed || res.headersSent) {
 			return;
 		}
+		discardUnreadBody(req, ctx);
 		send(res, reply);
+	}
+
+	/**
+	 * Whatever the answer is, a body that is still arriving and that nobody will read is read and
+	 * dropped so the client can finish sending and see the answer, up to DISCARD_FACTOR times
+	 * MAX_BODY_BYTES counted from the start of the body; past that the connection is cut. This
+	 * covers every refusal that is decided before the body is read, such as an unsupported media
+	 * type, an unknown path, a wrong method, a rate limit, or a daemon that is busy or starting.
+	 */
+	function discardUnreadBody(req: http.IncomingMessage, ctx: RequestContext): void {
+		if (req.complete || req.destroyed) {
+			return;
+		}
+		discardRest(req, discardLimitBytes(config.maxBodyBytes), ctx.body.bytes, () =>
+			logger.warn('connection closed because a refused body kept arriving', { requestId: ctx.id }),
+		);
 	}
 
 	const server = http.createServer(
