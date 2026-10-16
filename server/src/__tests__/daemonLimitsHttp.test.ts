@@ -617,6 +617,72 @@ describe('requests in flight', () => {
 		await waitFor(async () => (await call(url, '/v1/schemas')).status === 200, 5000, 'the slot to be free');
 	});
 
+	it('caps the requests in flight for one client, and still serves another client', async () => {
+		const { url } = await start({ HED_LSP_MAX_IN_FLIGHT: '8', HED_LSP_MAX_IN_FLIGHT_PER_CLIENT: '2' });
+		const greedy = { 'X-Forwarded-For': '203.0.113.1' };
+		const other = { 'X-Forwarded-For': '203.0.113.2' };
+		const held = [1, 2].map(() =>
+			holdRequest(url, '/v1/validate', { length: 1000, first: '{"strings"', headers: greedy }),
+		);
+		await waitFor(
+			async () => (await postJson(url, '/v1/validate', strings(1), greedy)).status === 503,
+			5000,
+			'the client to reach its cap',
+		);
+
+		const refused = await postJson(url, '/v1/validate', strings(1), greedy);
+		const served = await postJson(url, '/v1/validate', strings(1), other);
+		const health = await call(url, '/v1/health', { headers: greedy });
+
+		expect(refused.status).toBe(503);
+		expect(refused.json.error.code).toBe('OVERLOADED');
+		expect(refused.headers['retry-after']).toBe('1');
+		expect(refused.headers['access-control-allow-origin']).toBe('*');
+		expect(served.status).toBe(200);
+		expect(health.status).toBe(200);
+		for (const request of held) {
+			request.abandon();
+		}
+		await waitFor(
+			async () => (await postJson(url, '/v1/validate', strings(1), greedy)).status === 200,
+			5000,
+			'the slots to be free',
+		);
+	});
+
+	it('counts the shared cap over all clients, and gives a client its own slot back when the shared cap refuses it', async () => {
+		const { url } = await start({ HED_LSP_MAX_IN_FLIGHT: '2', HED_LSP_MAX_IN_FLIGHT_PER_CLIENT: '2' });
+		const first = { 'X-Forwarded-For': '203.0.113.1' };
+		const second = { 'X-Forwarded-For': '203.0.113.2' };
+		const heldFirst = holdRequest(url, '/v1/validate', { length: 1000, first: '{"strings"', headers: first });
+		const heldSecond = holdRequest(url, '/v1/validate', { length: 1000, first: '{"strings"', headers: second });
+		await waitFor(
+			async () =>
+				(await postJson(url, '/v1/validate', strings(1), { 'X-Forwarded-For': '203.0.113.3' })).status === 503,
+			5000,
+			'the shared cap to be reached',
+		);
+
+		// The first client is under its own cap of two, and the shared cap refuses it five times.
+		const refusals = [];
+		for (let i = 0; i < 5; i++) {
+			refusals.push((await postJson(url, '/v1/validate', strings(1), first)).status);
+		}
+		heldSecond.abandon();
+		await waitFor(
+			async () => (await postJson(url, '/v1/validate', strings(1), second)).status === 200,
+			5000,
+			'the shared slot to be free',
+		);
+
+		// The first client holds one slot of its two. Had a refusal kept a slot, it would be at its cap now.
+		const again = await postJson(url, '/v1/validate', strings(1), first);
+
+		expect(refusals).toEqual([503, 503, 503, 503, 503]);
+		expect(again.status).toBe(200);
+		heldFirst.abandon();
+	});
+
 	it('frees the slot when a client abandons a half-sent body', async () => {
 		const { url } = await start({ HED_LSP_MAX_IN_FLIGHT: '1' });
 		const held = holdRequest(url, '/v1/validate', { length: 1000, first: '{"strings"' });

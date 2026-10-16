@@ -489,6 +489,9 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		create: (now) => ({
 			items: new TokenBucket(config.rateItemsPerSec, config.rateItemsBurst, now),
 			semantic: new TokenBucket(config.semanticRatePerSec, config.semanticRateBurst, now),
+			// A client that is evicted while its requests run keeps releasing into the entry it took
+			// its slots from, and comes back with fresh slots, which the table size bounds.
+			slots: new SlotLimiter(config.maxInFlightPerClient),
 		}),
 	});
 	const inFlight = new SlotLimiter(config.maxInFlight);
@@ -764,12 +767,24 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		}
 		// The slot is held from here, when the headers have arrived, until the work has stopped, so a
 		// slow body holds it too, and so does a request that timed out until its work notices.
-		const release = inFlight.tryAcquire();
-		if (!release) {
+		// The client's own cap comes first, so a client at its cap takes no slot from the others.
+		const releaseClient = clients.get(ctx.client, clock()).slots.tryAcquire();
+		if (!releaseClient) {
+			throw new ApiError('OVERLOADED', 'too many of your requests are in flight; try again shortly', {
+				retryAfterSeconds: 1,
+			});
+		}
+		const releaseShared = inFlight.tryAcquire();
+		if (!releaseShared) {
+			releaseClient();
 			throw new ApiError('OVERLOADED', 'the daemon is at its limit of requests in flight; try again shortly', {
 				retryAfterSeconds: 1,
 			});
 		}
+		const release = (): void => {
+			releaseShared();
+			releaseClient();
+		};
 		const work = Promise.resolve().then(() => route.handler(req, ctx));
 		work.then(release, release);
 		return work;

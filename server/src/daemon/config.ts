@@ -63,7 +63,10 @@ export interface DaemonConfig {
 	 * so long text, which takes longer to validate, costs more than short text.
 	 */
 	chargeCharsPerUnit: number;
+	/** Requests running at once, all clients together. */
 	maxInFlight: number;
+	/** Requests running at once for one client, so one client cannot take every slot. */
+	maxInFlightPerClient: number;
 	/** Always 1: see `readSemanticConcurrency`. */
 	semanticConcurrency: number;
 	semanticQueue: number;
@@ -384,7 +387,8 @@ export function loadConfig(env: Env = process.env): DaemonConfig {
 		semanticRatePerSec: readPositive(env, 'SEMANTIC_RATE_PER_SEC', 1),
 		semanticRateBurst: readInt(env, 'SEMANTIC_RATE_BURST', 20, 1, MAX_INT),
 		chargeCharsPerUnit: readInt(env, 'CHARGE_CHARS_PER_UNIT', 256, 1, MAX_INT),
-		maxInFlight: readInt(env, 'MAX_IN_FLIGHT', 32, 1, MAX_INT),
+		maxInFlight: readInt(env, 'MAX_IN_FLIGHT', 8, 1, MAX_INT),
+		maxInFlightPerClient: readInt(env, 'MAX_IN_FLIGHT_PER_CLIENT', 4, 1, MAX_INT),
 		semanticConcurrency: readSemanticConcurrency(env),
 		semanticQueue: readInt(env, 'SEMANTIC_QUEUE', 8, 0, MAX_INT),
 		requestTimeoutMs,
