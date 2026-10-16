@@ -45,6 +45,32 @@ describe('embeddingsManager.findByKeyword with prototype-named queries', () => {
 	});
 });
 
+describe('embeddingsManager.findByKeyword against the shipped keyword data', () => {
+	it('returns the targets of an exact keyword', async () => {
+		await embeddingsManager.loadEmbeddings();
+
+		const tags = embeddingsManager.findByKeyword('mouse').map((match) => match.tag);
+
+		expect(tags).toEqual(['Animal', 'Animal-agent', 'Computer-mouse']);
+	});
+
+	it('matches a space-separated query through the hyphen fallback', async () => {
+		await embeddingsManager.loadEmbeddings();
+
+		const tags = embeddingsManager.findByKeyword('k complex').map((match) => match.tag);
+
+		expect(tags).toEqual(['K-complex']);
+	});
+
+	it('trims and lowercases the query before matching', async () => {
+		await embeddingsManager.loadEmbeddings();
+
+		const tags = embeddingsManager.findByKeyword('  K-Complex ').map((match) => match.tag);
+
+		expect(tags).toEqual(['K-complex']);
+	});
+});
+
 describe('provideCompletions with prototype-named HED values', () => {
 	it.each(PROTOTYPE_NAMED_QUERIES)('completes a sidecar value of %s without throwing', async (word) => {
 		const text = `{\n\t"event": {\n\t\t"HED": "${word}"\n\t}\n}`;
