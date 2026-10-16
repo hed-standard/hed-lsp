@@ -61,8 +61,8 @@ graph TB
 
 ### Components
 
-1. **Keyword Embeddings** (457 curated terms in `server/src/anchorKeywords.ts`)
-   - Each keyword points to one or more HED tags
+1. **Keyword Embeddings** (386 curated terms in `server/src/anchorKeywords.ts`)
+   - Each keyword points to one or more HED schema tags; extension words are not targets, because extensions are unbounded words rather than tags
    - Examples: "marmoset" → [Animal, Animal-agent]
    - Acts as "anchors" that vote for tags
 
@@ -185,9 +185,9 @@ const combinedScore = directSimilarity;
 Embeddings are pre-generated to avoid runtime model loading:
 
 ```
-server/data/tag-embeddings.compact.json (~20MB)
+server/data/tag-embeddings.compact.json (~22MB, 2,008 tags and 386 keywords)
 ├── version: "3.0"
-├── modelId: "onnx-community/Qwen3-Embedding-0.6B-ONNX"
+├── modelId: "neuromechanist/Qwen3-Embedding-0.6B-ONNX-Q8"
 ├── schemaVersion: "8.5.0,sc:score_2.1.0,la:lang_1.1.0"
 ├── dimensions: 1024
 ├── tags: [
@@ -257,9 +257,17 @@ flowchart TD
 
 ## Evaluation
 
-The eval set (`server/eval/hed-examples-pairs.json`) pairs 206 BIDS sidecar level descriptions with their HED strings from `hed-examples`. The expected tags are the leaf tags of each string, resolved with the default HED schema. The builder skips strings that fail validation under that schema, and skips strings with no leaf tags (for example, definition-only or label-only strings). Dev and test are split by dataset, so no dataset appears in both.
+The eval set (`server/eval/hed-examples-pairs.json`, format version 2) pairs 206 BIDS sidecar level descriptions with their HED strings, taken from `hed-examples` at commit `336a4fc`. The expected tags are the leaf tags of each string, resolved with the default HED schema (8.5.0). Dev and test are split by dataset.
 
-Run it with `bun run compile`, then:
+The builder skips 56 pairs whose HED string does not validate under that schema, and 57 pairs with no leaf tags, such as definition-only or label-only strings. Most validation failures come from sidecar context that a standalone string cannot resolve, such as definition references and `{column}` placeholders, rather than from invalid annotations. The file records both counts.
+
+Known limits of the set:
+
+- 3 dev and 22 test pairs repeat another pair's query and expected tags. They are kept, because the set was frozen before the dev run.
+- One dataset supplies 48 of the 96 dev pairs and 58 of the 110 test pairs, so pair-level intervals are optimistic.
+- One study (`eeg_ds003645s`) appears in both splits as separate directories. Query text does not overlap between the splits.
+
+Run the dev split with `bun run compile`, then:
 
 ```bash
 node server/out/eval/evalSemantic.js --split dev
@@ -267,21 +275,25 @@ node server/out/eval/evalSemantic.js --split dev
 
 ### Pre-registered experiment: query instruction
 
-Three query formats were compared on the dev split (96 pairs): E0 raw, E1 Qwen's retrieval instruction, and E2 an HED-specific instruction. The gate required E1 or E2 to raise dev recall@10 by at least 2.0 points over E0. The test split was not read, because no variant cleared the gate.
+Three query formats were compared on the dev split (96 pairs): E0 raw, E1 Qwen's retrieval instruction, and E2 an HED-specific instruction. The gate required a variant to raise dev recall@10 by at least 2.0 points over E0. The test split was not read, because no variant cleared the gate.
 
-Semantic-only results (`findSimilar`, top 10), with paired bootstrap 95% intervals against E0:
+Semantic-only results (`findSimilar`, top 10) on the default schema, with paired bootstrap 95% intervals against E0:
 
 | Config | Query format | hit@10 | recall@10 | MRR | Recall@10 vs E0, points (95% CI) |
 |--------|--------------|--------|-----------|-----|----------------------------------|
-| E0 | raw | 32.3% | 16.2% | 0.181 | baseline |
-| E1 | Qwen instruction | 13.5% | 4.9% | 0.078 | -11.2 [-17.3, -5.3] |
-| E2 | HED instruction | 7.3% | 2.4% | 0.027 | -13.7 [-19.9, -8.0] |
+| E0 | raw | 32.3% | 16.3% | 0.198 | baseline |
+| E1 | Qwen instruction | 16.7% | 8.7% | 0.126 | -7.6 [-13.2, -1.9] |
+| E2 | HED instruction | 10.4% | 3.0% | 0.050 | -13.4 [-19.2, -8.1] |
 
-Queries with no semantic candidate at all (dev, 96 queries): E0 0, E1 41, E2 48. Mean candidates per query: E0 9.9, E1 2.7, E2 2.3.
+Queries with no semantic candidate at all (dev, 96 queries): E0 1, E1 33, E2 45. Mean candidates per query: E0 9.8, E1 2.8, E2 2.3.
 
-**Verdict:** neither instruction cleared the gate, so the runtime keeps the raw format and nothing in search behavior changed.
+**Verdict:** neither instruction cleared the gate, so the runtime keeps the raw format and search behavior is unchanged.
 
-**Confound:** the similarity thresholds (0.6 for keyword votes, 0.5 for direct tag matches) were calibrated on raw queries. Instruction formats shift the similarity scale down, so most candidates fall below the thresholds. This experiment therefore measures the instructions together with the fixed thresholds; it does not isolate the instruction alone. A fair comparison needs per-format thresholds calibrated on dev, which is a separate pre-registered experiment.
+An earlier run on schema 8.4.0 (before the extension cleanup and the regeneration) gave the same verdict: E1 -11.2 points and E2 -13.7 points of recall against a 32.3% E0 hit rate. Its numbers are not comparable with the table above.
+
+**Confound 1, thresholds:** the similarity thresholds (0.6 for keyword votes, 0.5 for direct tag matches) were calibrated on raw queries. Instruction formats shift the similarity scale down, so most candidates fall below the thresholds. This experiment therefore measures the instructions together with the fixed thresholds. A fair comparison needs per-format thresholds calibrated on dev, which is a separate pre-registered experiment.
+
+**Confound 2, batch composition:** the stored document vectors come from padded batches of 32, while runtime queries are embedded one at a time. A single-text embedding of a tag name differs from its stored vector by cosine 0.94 to 0.97 on sampled tags. Re-embedding the first 32 tags as a padded batch reproduces the stored vectors exactly, so the stored values depend on batch composition. Regenerating the index for schema 8.5.0 added 14 tags, which regrouped the batches: 1,962 of the 1,994 previously shipped tag vectors moved (mean cosine 0.950 to the old vector). The instruction comparison therefore also depends on how the documents were batched. Embedding each document alone would remove this dependence; that change is not made here.
 
 ## Future Improvements
 
