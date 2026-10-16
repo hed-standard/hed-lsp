@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The default HED schema is 8.5.0 (the `hed.schemaVersion` setting, the `hed-suggest` CLI, suggestions, and the embedding index). The version lives in one module, `server/src/schemaVersion.ts`.
 - The default schema is fetched from GitHub, because hed-validator 4.2.0 does not bundle 8.5.0. If the fetch fails, the server falls back to the bundled 8.4.0 and logs a warning, so validation works offline but lacks the 8.5.0 additions. Regenerating the embedding index and running the 8.5.0 contract tests need network access.
 - The embedding model settings (model id, quantization, pooling, normalization) live in one module shared by the runtime and the generator, and a contract test records which model repositories publish the same weights.
+- The embedding anchor keywords live in one file, `server/src/anchorKeywords.ts`.
+  The generator imports that file instead of keeping its own copy. A new
+  contract test fails when the shipped keyword embeddings drift from it.
 
 ### Fixed
 - Keyword anchors point only at HED schema tags. Anchor targets that were extension words (48 names) are removed, which drops 71 keywords that had no other target. A contract test enforces this.
@@ -25,11 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Completion on a HED value with either name and `hed-suggest` or `hed/suggest`
   with either name as a query now return normally.
 - `hed/suggest` batch results keep a query named `__proto__` as a key.
-
-### Changed
-- The embedding anchor keywords live in one file, `server/src/anchorKeywords.ts`.
-  The generator imports that file instead of keeping its own copy. A new
-  contract test fails when the shipped keyword embeddings drift from it.
+- Suggestion requests that omit `top` now use the default of 10.
+  Before, the missing value overrode the default and skipped the schema search, so results were limited to the keyword matches.
+- `hed-suggest --semantic --json` wrote engine log lines to stdout, mixed into its JSON output.
+  Engine logs now go to stderr, and the language server still sends them to its client.
 
 ## [0.4.0] - 2026-05-21
 
