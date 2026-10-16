@@ -35,6 +35,16 @@ const DEFAULT_OPTIONS: SuggestionOptions = {
 };
 
 /**
+ * Merge caller options over the defaults. Options set to undefined count as absent, because a
+ * JSON request such as hed/suggest passes undefined for fields it omits, and an undefined value
+ * would otherwise overwrite the default (for example, skipping the schema search when top is missing).
+ */
+function withDefaults(options: Partial<SuggestionOptions>): SuggestionOptions {
+	const defined = Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined));
+	return { ...DEFAULT_OPTIONS, ...defined };
+}
+
+/**
  * Find suggestions for a single query using the cascade:
  *   1. keyword mappings (exact word match in SEMANTIC_MAPPINGS),
  *   2. schema substring search,
@@ -49,7 +59,7 @@ export async function findSuggestions(
 	query: string,
 	options: Partial<SuggestionOptions> = {},
 ): Promise<SuggestionResult> {
-	const opts: SuggestionOptions = { ...DEFAULT_OPTIONS, ...options };
+	const opts = withDefaults(options);
 	const normalizedQuery = query.toLowerCase().trim();
 	const suggestions: string[] = [];
 	let source: 'keyword' | 'schema' | 'semantic' = 'schema';
@@ -109,7 +119,7 @@ export async function suggestBatch(
 	queries: string[],
 	options: Partial<SuggestionOptions> = {},
 ): Promise<Record<string, string[]>> {
-	const opts: SuggestionOptions = { ...DEFAULT_OPTIONS, ...options };
+	const opts = withDefaults(options);
 
 	if (queries.length === 0) {
 		return {};

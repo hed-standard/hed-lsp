@@ -50,3 +50,16 @@ describe('engine.validate', () => {
 		expect(engine.schemaManager).toBe(schemaManager);
 	});
 });
+
+describe('suggestion options', () => {
+	it('treats options set to undefined as absent', async () => {
+		const omitted = await engine.suggestBatch(['red square'], {});
+		const undefinedValues = await engine.suggestBatch(['red square'], {
+			schema: undefined,
+			top: undefined,
+			semantic: undefined,
+		});
+
+		expect(undefinedValues).toEqual(omitted);
+	});
+});
