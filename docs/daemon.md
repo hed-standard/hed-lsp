@@ -348,6 +348,7 @@ Its work stops between items, and it keeps its slot until then; a semantic run t
 Node's own request timer is set 5 seconds past the daemon's, so the daemon always answers first.
 
 A request that is refused before its body is read, for whatever reason, does not leave the client free to keep sending.
+This protects a client that keeps its connection alive, which is the default of common client libraries; see [Known limits](#known-limits) for a client that does not.
 The daemon reads and drops up to four times `MAX_BODY_BYTES` of the body, counted from its first byte (2 MiB by default), so a client that sends a little more than the limit still reads the answer, and it closes the connection past that.
 The same holds for a body that nobody reads on a request that is answered, such as a GET with a body.
 The discard has a deadline too: a body that is not complete `BODY_TIMEOUT_MS` after the answer ends the connection, so a body dripped in a byte at a time cannot hold it open.
@@ -472,6 +473,9 @@ The target honors the header only when the address of the machine running the ha
 
 ## Known limits
 
+- The bounded discard of an unread body protects clients that keep the connection alive.
+  A client that sends `Connection: close`, or that gets a close from the daemon (408, `TIMEOUT`, or a shutdown), may see a connection reset instead of the answer when part of its body is still unread, because the operating system resets a connection that is closed with unread data.
+  The staged close of RFC 9112 section 9.6, which stops writing, waits for the client to read the answer, and then closes, is not implemented: Node does not expose it, and taking over the socket would bypass Node's own handling of the connection.
 - The language server has the same quadratic output for a long string in a document: a string of n open parentheses makes about n + 2 diagnostics that each quote the string.
   The daemon bounds its answer, and the language server does not; that is outside this change.
 - If GitHub cannot be reached when the daemon starts, the default schema `8.5.0` is served by the bundled 8.4.0, and the response says so in `used`, until the daemon restarts, because the engine keeps the fallback.
