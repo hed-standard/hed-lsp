@@ -172,9 +172,9 @@ To support additional HED schemas or library schemas:
 
 ### Step 1: Update Schema Loading
 
-In `server/src/schemaManager.ts`:
+In `server/src/schemaVersion.ts`, extend the embedding schema set. The generator and the anchor contract test both read it:
 ```typescript
-const SCHEMA_VERSION = '8.5.0,sc:score_2.1.0,la:lang_1.1.0,my:mylib_1.0.0';
+export const EMBEDDING_SCHEMA_VERSION = `${DEFAULT_HED_SCHEMA},sc:score_2.1.0,la:lang_1.1.0,my:mylib_1.0.0`;
 ```
 
 ### Step 2: Regenerate Embeddings

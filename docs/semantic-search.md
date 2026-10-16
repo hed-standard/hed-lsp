@@ -66,7 +66,7 @@ graph TB
    - Examples: "marmoset" → [Animal, Animal-agent]
    - Acts as "anchors" that vote for tags
 
-2. **Tag Embeddings** (1,994 HED tags)
+2. **Tag Embeddings** (2,008 HED tags)
    - Direct embeddings of tag names
    - Used for similarity matching
 
@@ -287,7 +287,7 @@ Semantic-only results (`findSimilar`, top 10) on the default schema, with paired
 
 Queries with no semantic candidate at all (dev, 96 queries): E0 1, E1 33, E2 45. Mean candidates per query: E0 9.8, E1 2.8, E2 2.3.
 
-**Verdict:** neither instruction cleared the gate, so the runtime keeps the raw format and search behavior is unchanged.
+**Verdict:** neither instruction cleared the gate, so the runtime keeps the raw format. This release does change search results (a regenerated index and cut anchor targets); see the limits below.
 
 An earlier run on schema 8.4.0 (before the extension cleanup and the regeneration) gave the same verdict: E1 -11.2 points and E2 -13.7 points of recall against a 32.3% E0 hit rate. Its numbers are not comparable with the table above.
 

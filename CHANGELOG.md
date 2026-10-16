@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Semantic-search eval set of 206 description-to-HED pairs from `hed-examples`, with a harness that reports hit@10, recall@10, and MRR against the raw baseline. The query-instruction experiment ran on the dev split and was negative under fixed thresholds; search behavior is unchanged. See `docs/semantic-search.md`.
+- Semantic-search eval set of 206 description-to-HED pairs from `hed-examples`, with a harness that reports hit@10, recall@10, and MRR against the raw baseline. The query-instruction experiment ran on the dev split and was negative under fixed thresholds. The verdict is unchanged, but this release regenerates the index and cuts anchor targets, so search results change. See `docs/semantic-search.md`.
 
 ### Changed
 - The default HED schema is 8.5.0 (the `hed.schemaVersion` setting, the `hed-suggest` CLI, suggestions, and the embedding index). The version lives in one module, `server/src/schemaVersion.ts`.

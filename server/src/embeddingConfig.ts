@@ -32,7 +32,7 @@ export const NORMALIZE = true;
  * Repositories that publish a model file byte-identical to `MODEL_ID` with `DTYPE`
  * (verified by SHA-256: `onnx-community/...-ONNX` `model_quantized.onnx` and
  * `model_uint8.onnx` both equal `neuromechanist/...-ONNX-Q8` `model_uint8.onnx`).
- * The shipped embeddings file records `onnx-community` as its model, which is
+ * Files built before the schema 8.5.0 regeneration record `onnx-community`, which is
  * equivalent, so the contract test accepts either id.
  */
 export const EQUIVALENT_MODEL_IDS: readonly string[] = [
