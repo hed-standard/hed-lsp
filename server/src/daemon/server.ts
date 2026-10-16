@@ -200,6 +200,31 @@ export function itemFailure(
 	return { code: 'INTERNAL_ERROR', message: text.message };
 }
 
+/**
+ * Whether an issue from the engine stands for an exception it caught while validating a string,
+ * such as a string nested so deeply that the validator runs out of stack. The engine reports it as an
+ * issue with the code INTERNAL_ERROR and the internal code `internalError`, and the text of the
+ * issue is the exception's message, which can quote the string. Such an issue is never returned.
+ */
+export function isEngineException(issue: ValidationIssue): boolean {
+	return issue.hedCode === 'INTERNAL_ERROR' && issue.internalCode === 'internalError';
+}
+
+/**
+ * The error for one item whose validation threw inside the engine, which reports the exception as
+ * an issue and not as an exception: only the position of the item is logged, and nothing of the
+ * exception is, because all that is left of it is its message, which can quote the string.
+ */
+export function itemFailureWithoutDetail(
+	logger: Logger,
+	requestId: string,
+	index: number,
+	text: ItemFailureText,
+): { code: 'INTERNAL_ERROR'; message: string } {
+	logger.error(text.log, { requestId, index });
+	return { code: 'INTERNAL_ERROR', message: text.message };
+}
+
 /** What the log says in place of the path of a request for a route that does not exist. */
 export const UNKNOWN_ROUTE_LABEL = 'unknown route';
 
@@ -634,7 +659,12 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 				continue;
 			}
 			try {
-				results.push(validateItem(index, await validate(value, { schema: spec }), config, budget));
+				const issues = await validate(value, { schema: spec });
+				results.push(
+					issues.some(isEngineException)
+						? { index, error: itemFailureWithoutDetail(logger, ctx.id, index, VALIDATION_FAILED) }
+						: validateItem(index, issues, config, budget),
+				);
 			} catch (error) {
 				results.push({ index, error: itemFailure(logger, ctx.id, index, error, VALIDATION_FAILED) });
 			}

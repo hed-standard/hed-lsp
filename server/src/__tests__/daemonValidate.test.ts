@@ -1,9 +1,11 @@
 /**
  * Tests for POST /v1/validate: a real server on a real socket with the real engine and the bundled
  * schemas, so they run offline. Responses are compared with `engine.validate` for the same
- * strings. A spec that fails to load is a real one (`8.4.0,sc:score_9.9.9` does not exist). The
- * item-level INTERNAL_ERROR is checked on the function that maps an unexpected failure to its item,
- * because no real string makes the engine throw: it reports parse failures as issues. No mocks.
+ * strings. A spec that fails to load is a real one (`8.4.0,sc:score_9.9.9` does not exist). A string
+ * that makes the validator throw is a real one too: thousands of nested parentheses run it out of
+ * stack, and the engine reports that exception as an issue whose text is the exception's message.
+ * The item-level INTERNAL_ERROR for any other failure is checked on the function that maps an
+ * unexpected failure to its item. No mocks.
  */
 
 import * as http from 'node:http';
@@ -11,7 +13,14 @@ import * as net from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MIN_ISSUE_MESSAGE_CHARS } from '../daemon/config.js';
 import { createLogger } from '../daemon/log.js';
-import { cutMessage, discardLimitBytes, itemFailure, VALIDATION_FAILED, validateItem } from '../daemon/server.js';
+import {
+	cutMessage,
+	discardLimitBytes,
+	isEngineException,
+	itemFailure,
+	VALIDATION_FAILED,
+	validateItem,
+} from '../daemon/server.js';
 import { validate } from '../engine/index.js';
 import {
 	BUNDLED,
@@ -131,7 +140,6 @@ describe('POST /v1/validate results', () => {
 			'   ',
 			'Sensory-event, Item/Marmoset-thing',
 			'Sensory-event, Duration/3 parsecs',
-			'Red, Red',
 		];
 
 		const reply = await postJson(shared.url, '/v1/validate', { strings, schema: BUNDLED });
@@ -272,6 +280,90 @@ describe('POST /v1/validate items', () => {
 			index: 3,
 			errorType: 'Error',
 		});
+	});
+});
+
+describe('POST /v1/validate with a string that makes the validator throw', () => {
+	/** `depth` nested pairs of parentheses around a tag. The validator recurses once per level. */
+	const nested = (depth: number): string => `${'('.repeat(depth)}Event${')'.repeat(depth)}`;
+	/** Deep enough to run the validator out of stack on any Node version, and past the default string limit. */
+	const DEPTH = 4000;
+
+	it('reports the string as INTERNAL_ERROR "validation failed" beside the others, with no exception text', async () => {
+		await withDaemon({ HED_LSP_MAX_STRING_CHARS: '16384' }, async (daemon) => {
+			const hed = nested(DEPTH);
+			// The premise: the engine does not throw, it returns the exception's message as an issue.
+			const engine = await validate(hed, { schema: BUNDLED });
+			expect(engine).toHaveLength(1);
+			expect(engine[0].message).toMatch(/^Validation error: .*call stack/);
+			expect(engine.some(isEngineException)).toBe(true);
+
+			const reply = await postJson(daemon.url, '/v1/validate', { strings: [VALID, hed, INVALID], schema: BUNDLED });
+
+			expect(reply.status).toBe(200);
+			expect(reply.json.results[0]).toEqual(clean(0));
+			expect(reply.json.results[1]).toEqual({
+				index: 1,
+				error: { code: 'INTERNAL_ERROR', message: 'validation failed' },
+			});
+			expect(reply.json.results[2].issues[0].code).toBe('TAG_INVALID');
+			for (const text of [reply.text, daemon.rawLines.join('\n')]) {
+				expect(text).not.toContain('call stack');
+				expect(text).not.toContain('Validation error');
+			}
+			const line = daemon.logLines().find((entry) => entry.msg === 'validation failed for one string');
+			expect(line).toMatchObject({ level: 'error', requestId: reply.headers['x-request-id'], index: 1 });
+			expect(Object.keys(line ?? {}).sort()).toEqual(['index', 'level', 'msg', 'requestId', 'time']);
+		});
+	});
+
+	it('reports a string with a repeated tag the same way, because the validator throws for it', async () => {
+		// The validator does not return an issue for a repeated tag, it throws, and the engine catches the
+		// exception and returns its message as an issue coded INTERNAL_ERROR. The message is not returned.
+		const engine = await validate('Red, Red', { schema: BUNDLED });
+		expect(engine).toHaveLength(1);
+		expect(engine[0].message).toMatch(/^Validation error: .*TAG_EXPRESSION_REPEATED/);
+		expect(isEngineException(engine[0])).toBe(true);
+
+		const reply = await postJson(shared.url, '/v1/validate', { strings: ['Red, Red', 'Red, Blue'], schema: BUNDLED });
+
+		expect(reply.status).toBe(200);
+		expect(reply.json.results[0]).toEqual({
+			index: 0,
+			error: { code: 'INTERNAL_ERROR', message: 'validation failed' },
+		});
+		expect(reply.json.results[1]).toEqual(clean(1));
+		expect(reply.text).not.toContain('Validation error');
+		expect(reply.text).not.toContain('TAG_EXPRESSION_REPEATED');
+	});
+
+	it('tells an exception from the issues of a string that is only invalid', async () => {
+		const ordinary = await validate('(Red, Blue', { schema: BUNDLED });
+		const crashed = await validate(nested(DEPTH), { schema: BUNDLED });
+
+		expect(ordinary.length).toBeGreaterThan(0);
+		expect(ordinary.some(isEngineException)).toBe(false);
+		expect(crashed.every(isEngineException)).toBe(true);
+	});
+
+	it('does the same at the default limit of 4096 characters, where the string is accepted', async () => {
+		const hed = nested(2045);
+		expect(hed.length).toBeLessThanOrEqual(shared.config.maxStringChars);
+		const engine = await validate(hed, { schema: BUNDLED });
+		// How deep the validator goes before it runs out of stack differs with the Node version and the
+		// state of the compiler, so a string this close to the limit may or may not make it throw.
+		const throws = engine.some(isEngineException);
+
+		const reply = await postJson(shared.url, '/v1/validate', { strings: [hed], schema: BUNDLED });
+
+		expect(reply.status).toBe(200);
+		if (throws) {
+			expect(reply.json.results[0]).toEqual({
+				index: 0,
+				error: { code: 'INTERNAL_ERROR', message: 'validation failed' },
+			});
+		}
+		expect(reply.text).not.toContain('call stack');
 	});
 });
 
