@@ -13,6 +13,7 @@ import { schemaManager } from '../engine/schemaManager.js';
 import { validateHedString } from '../engine/validation.js';
 
 const samples = [
+	'Sensory-event, sc:Modulator',
 	'Sensory-event, Visual-presentation, (Red, Square)',
 	'Sensory-event, Not-a-real-tag-xyz',
 	'Sensory-event, (Red, Square',
@@ -36,12 +37,23 @@ describe('engine.validate', () => {
 		expect(invalid.some((issue) => issue.hedCode === 'TAG_INVALID')).toBe(true);
 	});
 
-	it('does not change the schema manager current version', async () => {
+	it('validates each call against the schema it names, concurrently, and keeps the current version', async () => {
 		schemaManager.setCurrentVersion('8.4.0');
 		const before = schemaManager.getCurrentVersion();
+		const hed = 'Sensory-event, sc:Modulator';
 
-		await engine.validate('Sensory-event', { schema: '8.5.0' });
+		// sc:Modulator is invalid under bare 8.4.0 and valid once SCORE is named, so a call that
+		// ignored its schema option would fail here.
+		const pending = [
+			engine.validate(hed, { schema: '8.4.0' }),
+			engine.validate(hed, { schema: '8.4.0,sc:score_2.1.0' }),
+			engine.validate(hed, { schema: '8.4.0' }),
+			engine.validate(hed, { schema: '8.4.0,sc:score_2.1.0' }),
+		];
+		expect(schemaManager.getCurrentVersion()).toBe(before);
 
+		const results = (await Promise.all(pending)).map((issues) => issues.map((issue) => issue.hedCode));
+		expect(results).toEqual([['TAG_NAMESPACE_PREFIX_INVALID'], [], ['TAG_NAMESPACE_PREFIX_INVALID'], []]);
 		expect(schemaManager.getCurrentVersion()).toBe(before);
 	});
 
