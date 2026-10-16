@@ -11,6 +11,8 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ANCHOR_KEYWORDS } from '../anchorKeywords.js';
+import { schemaManager } from '../schemaManager.js';
+import { EMBEDDING_SCHEMA_VERSION } from '../schemaVersion.js';
 
 interface ShippedKeyword {
 	keyword: string;
@@ -41,5 +43,18 @@ describe('shipped keyword embeddings', () => {
 		);
 
 		expect(mismatches, REGENERATE_HINT).toEqual([]);
+	});
+});
+
+describe('anchor targets are HED schema tags', () => {
+	it('all resolve in the embedding schema set, so extension words cannot become suggestions', async () => {
+		const extensions: string[] = [];
+		for (const target of new Set(Object.values(ANCHOR_KEYWORDS).flat())) {
+			if ((await schemaManager.findTag(target, EMBEDDING_SCHEMA_VERSION)) === null) {
+				extensions.push(target);
+			}
+		}
+
+		expect(extensions, 'Anchor targets must be HED schema tags; extensions are unbounded words.').toEqual([]);
 	});
 });

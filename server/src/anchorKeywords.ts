@@ -129,7 +129,7 @@ export const ANCHOR_KEYWORDS: Record<string, string[]> = {
 	punishment: ['Feedback'],
 	reinforcement: ['Reward', 'Feedback'],
 	incentive: ['Reward'],
-	juice: ['Reward', 'Drink'], // common reward in primate studies
+	juice: ['Reward'], // common reward in primate studies
 	sugar: ['Reward', 'Sweet'],
 	sucrose: ['Reward', 'Sweet'],
 	money: ['Reward'],
@@ -293,7 +293,6 @@ export const ANCHOR_KEYWORDS: Record<string, string[]> = {
 	speaker: ['Loudspeaker'],
 	keyboard: ['Keyboard'],
 	joystick: ['Joystick'],
-	trackball: ['Trackball'],
 	touchscreen: ['Touchscreen'],
 
 	// =====================
@@ -312,8 +311,6 @@ export const ANCHOR_KEYWORDS: Record<string, string[]> = {
 	// =====================
 	hand: ['Hand'],
 	finger: ['Finger'],
-	arm: ['Arm'],
-	leg: ['Leg'],
 	foot: ['Foot'],
 	body: ['Body'],
 
@@ -388,31 +385,16 @@ export const ANCHOR_KEYWORDS: Record<string, string[]> = {
 	car: ['Vehicle'],
 	vehicle: ['Vehicle'],
 	// Furniture
-	chair: ['Furniture'],
-	table: ['Furniture'],
-	desk: ['Furniture'],
 	// Food (also as stimuli)
-	food: ['Food'],
-	fruit: ['Fruit'],
-	apple: ['Apple', 'Fruit'],
-	banana: ['Banana', 'Fruit'],
 
 	// =====================
 	// SPATIAL RELATIONS (only non-HED terms)
 	// =====================
-	'left-of': ['Left-of'],
-	'right-of': ['Right-of'],
-	near: ['Near-to'],
 	far: ['Far-from'],
 	adjacent: ['Adjacent-to'],
-	inside: ['Inside'],
-	outside: ['Outside'],
 	'in-front': ['In-front-of'],
-	beside: ['Beside'],
 	center: ['Center-of'],
 	top: ['Top-of'],
-	bottom: ['Bottom-of'],
-	under: ['Under'],
 
 	// =====================
 	// TEMPORAL RELATIONS (only non-HED terms)
@@ -429,7 +411,6 @@ export const ANCHOR_KEYWORDS: Record<string, string[]> = {
 	// EXTENDED BODY PARTS (only non-HED terms)
 	// =====================
 	lips: ['Lip'],
-	jaw: ['Jaw'],
 	scalp: ['Hair'],
 	chest: ['Torso'],
 	back: ['Torso'],
@@ -438,21 +419,12 @@ export const ANCHOR_KEYWORDS: Record<string, string[]> = {
 	// =====================
 	// DATA ARTIFACTS & SIGNAL QUALITY (only non-HED terms)
 	// =====================
-	artifact: ['Artifact'],
-	artefact: ['Artifact'],
-	'noise-artifact': ['Artifact'],
-	'muscle-artifact': ['Artifact'],
-	'electrode-artifact': ['Artifact'],
-	noisy: ['Artifact'],
 	clean: ['Normal'],
-	corrupted: ['Artifact'],
 
 	// =====================
 	// SCORE LIBRARY - EEG/CLINICAL (sc: prefix)
 	// =====================
 	// Sleep stages
-	rem: ['sc:Sleep-stage-R'],
-	'rem-sleep': ['sc:Sleep-stage-R'],
 	nrem: ['sc:Sleep-stage-N1', 'sc:Sleep-stage-N2', 'sc:Sleep-stage-N3'],
 	'stage-1': ['sc:Sleep-stage-N1'],
 	'stage-2': ['sc:Sleep-stage-N2'],
@@ -463,8 +435,6 @@ export const ANCHOR_KEYWORDS: Record<string, string[]> = {
 	'slow-wave-sleep': ['sc:Sleep-stage-N3'],
 	'deep-sleep': ['sc:Sleep-stage-N3'],
 	// Sleep features
-	spindle: ['sc:Sleep-spindle'],
-	'sleep-spindle': ['sc:Sleep-spindle'],
 	'k-complex': ['sc:K-complex'],
 	// EEG rhythms
 	'alpha-rhythm': ['sc:Alpha-activity'],
@@ -476,13 +446,7 @@ export const ANCHOR_KEYWORDS: Record<string, string[]> = {
 	'theta-activity': ['sc:Theta-activity'],
 	'delta-activity': ['sc:Delta-activity'],
 	// Clinical events
-	seizure: ['sc:Seizure'],
-	epileptic: ['sc:Epileptiform-activity'],
-	epileptiform: ['sc:Epileptiform-activity'],
-	'spike-wave': ['sc:Spike-and-wave'],
 	'sharp-wave': ['sc:Sharp-wave'],
-	interictal: ['sc:Interictal-finding'],
-	ictal: ['sc:Ictal-finding'],
 
 	// =====================
 	// ENVIRONMENTAL CONTEXT (only non-HED terms)
@@ -492,39 +456,21 @@ export const ANCHOR_KEYWORDS: Record<string, string[]> = {
 	'virtual-reality': ['Virtual-world'],
 	vr: ['Virtual-world'],
 	ar: ['Augmented-reality'],
-	underwater: ['Underwater'],
-	daytime: ['Daytime'],
-	nighttime: ['Nighttime'],
-	day: ['Daytime'],
-	night: ['Nighttime'],
 
 	// =====================
 	// INFORMATIONAL PROPERTIES (only non-HED terms)
 	// =====================
-	difficult: ['Difficult'],
-	easy: ['Easy'],
-	hard: ['Difficult'],
 	predictable: ['Expected'],
 	unpredictable: ['Unexpected'],
-	meaningless: ['Nonsensical'],
-	nonsense: ['Nonsensical'],
 
 	// =====================
 	// COGNITIVE ACTIONS (only non-HED terms)
 	// =====================
-	decide: ['Decide'],
-	decision: ['Decide'],
-	choose: ['Decide'],
-	choice: ['Decide'],
 	imagining: ['Imagine'],
 	'mental-imagery': ['Imagine'],
 	prediction: ['Predict'],
-	expect: ['Expect'],
-	expecting: ['Expect'],
-	anticipate: ['Expect'],
 	counting: ['Count'],
 	calculate: ['Count'],
-	estimate: ['Estimate'],
 	judgment: ['Judge'],
 	attend: ['Attend-to'],
 	attending: ['Attend-to'],
@@ -532,9 +478,6 @@ export const ANCHOR_KEYWORDS: Record<string, string[]> = {
 	detecting: ['Detect'],
 	recognition: ['Recognize'],
 	categorize: ['Discriminate'],
-	compare: ['Compare'],
-	comparing: ['Compare'],
-	evaluate: ['Evaluate'],
 
 	// =====================
 	// LANGUAGE & LINGUISTIC TERMS (only non-HED terms)
@@ -546,7 +489,6 @@ export const ANCHOR_KEYWORDS: Record<string, string[]> = {
 	morpheme: ['Morpheme'],
 	reading: ['Read'],
 	writing: ['Write'],
-	spelling: ['Spell'],
 	naming: ['Communicate-vocally'],
 	comprehension: ['Hear', 'Read'],
 	language: ['Communicate'],
@@ -564,15 +506,6 @@ export const ANCHOR_KEYWORDS: Record<string, string[]> = {
 	// =====================
 	// VISUAL PROPERTIES (only non-HED terms)
 	// =====================
-	bright: ['High-contrast'],
-	dim: ['Low-contrast'],
-	contrast: ['High-contrast'],
-	luminous: ['High-contrast'],
-	dark: ['Low-contrast'],
-	opaque: ['Opaque'],
-	transparent: ['Transparent'],
-	blurry: ['Blurry'],
-	clear: ['Clear'],
 	monochrome: ['Grayscale'],
 
 	// =====================
@@ -580,10 +513,6 @@ export const ANCHOR_KEYWORDS: Record<string, string[]> = {
 	// =====================
 	circle: ['Ellipse'],
 	circular: ['Ellipse'],
-	line: ['Line'],
-	checkerboard: ['Checkerboard'],
-	grating: ['Grating'],
-	gabor: ['Gabor-patch'],
 	dot: ['Ellipse'],
 
 	// =====================
