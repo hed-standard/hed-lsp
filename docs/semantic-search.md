@@ -178,7 +178,7 @@ const combinedScore = directSimilarity;
 - **Size**: ~600MB (downloaded on first use)
 - **Pooling**: Last token
 - **Normalization**: L2 normalized (cosine = dot product)
-- **Query format**: raw (the query as typed). Documents are embedded bare. See [Evaluation](#evaluation) for the query-instruction experiment.
+- **Query format**: raw (the query, lowercased, with no instruction). Documents are embedded bare. See [Evaluation](#evaluation) for the query-instruction experiment.
 
 ## Pre-computed Embeddings
 

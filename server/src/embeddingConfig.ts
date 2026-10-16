@@ -33,7 +33,7 @@ export const EQUIVALENT_MODEL_IDS: readonly string[] = [
  * always embedded bare; only the query side is formatted. `raw` is the behavior
  * shipped before the alignment experiment.
  *
- * - raw: the query as typed
+ * - raw: the query lowercased, as the runtime has always embedded it (no instruction)
  * - qwen: Qwen3-Embedding's default retrieval instruction
  * - hed: one HED-specific instruction, written before the experiment ran
  */
