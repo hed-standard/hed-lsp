@@ -1014,6 +1014,10 @@ describe('POST /v1/validate body size', () => {
 		});
 	});
 
+	// Explicit limit: the test starts a daemon, sends eight small requests, and closes it. The work takes 4 to 11 ms on an
+	// idle host, in a container too, and close waits at most its 2 s grace and 1 s for work to stop. Under act, in a
+	// Docker VM close to its memory limit, it once took 6.8 s against the 5 s default and could not be reproduced, so
+	// a starved host gets room.
 	it('answers 411 LENGTH_REQUIRED for a chunked POST, whatever its size, without reading it', async () => {
 		await withDaemon({ HED_LSP_MAX_BODY_BYTES: '1000' }, async (daemon) => {
 			const small = JSON.stringify({ strings: [VALID] });
@@ -1042,7 +1046,7 @@ describe('POST /v1/validate body size', () => {
 			const line = daemon.logLines().find((entry) => entry.msg === 'request' && entry.status === 411);
 			expect(line).toMatchObject({ method: 'POST', path: '/v1/validate', error: 'LENGTH_REQUIRED' });
 		});
-	});
+	}, 30_000);
 
 	it('answers 411 for a POST that sends no body and no Content-Length, and accepts Content-Length: 0 as an empty body', async () => {
 		const socket = (headers: string): Promise<string> =>
