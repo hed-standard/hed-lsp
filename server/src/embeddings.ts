@@ -113,6 +113,7 @@ class EmbeddingsManager {
 	private queryFormat: QueryFormat = DEFAULT_QUERY_FORMAT;
 	private modelLoaded = false;
 	private embeddingsLoaded = false;
+	private embedFailures = 0;
 	private dimensions = 1024; // Qwen3-Embedding-0.6B output dimension
 	private loading: Promise<boolean> | null = null;
 	private progressCallback: ProgressCallback | null = null;
@@ -284,7 +285,10 @@ class EmbeddingsManager {
 	async embed(text: string): Promise<number[] | null> {
 		if (!this.modelLoaded) {
 			const loaded = await this.initializeModel();
-			if (!loaded) return null;
+			if (!loaded) {
+				this.embedFailures++;
+				return null;
+			}
 		}
 
 		try {
@@ -297,9 +301,18 @@ class EmbeddingsManager {
 			const embedding = Array.from(output.data as Float32Array);
 			return embedding.slice(0, this.dimensions);
 		} catch (error) {
+			this.embedFailures++;
 			console.error('[HED Embeddings] Embedding failed:', error);
 			return null;
 		}
+	}
+
+	/**
+	 * Number of embed calls that failed since startup. Callers that must not score a
+	 * silent failure (the eval harness) compare this before and after a run.
+	 */
+	embedFailureCount(): number {
+		return this.embedFailures;
 	}
 
 	/**

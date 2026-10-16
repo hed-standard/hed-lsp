@@ -73,12 +73,9 @@ async function runConfig(config: string, pairs: readonly EvalPair[]): Promise<Co
 	embeddingsManager.setQueryFormat(format);
 	const semantic: RankScore[] = [];
 	const endToEnd: RankScore[] = [];
-	let emptySemantic = 0;
+	const failuresBefore = embeddingsManager.embedFailureCount();
 	for (const pair of pairs) {
 		const matches = await embeddingsManager.findSimilar(pair.query, K);
-		if (matches.length === 0) {
-			emptySemantic++;
-		}
 		semantic.push(
 			scoreRanking(
 				pair.expected,
@@ -89,11 +86,10 @@ async function runConfig(config: string, pairs: readonly EvalPair[]): Promise<Co
 		const result = await findSuggestions(pair.query, { schema: EVAL_SCHEMA_VERSION, top: K, semantic: true });
 		endToEnd.push(scoreRanking(pair.expected, result.suggestions, K));
 	}
-	// embed() returns null on failure, which findSimilar reports as no matches. Refuse to score a silent failure.
-	if (emptySemantic > pairs.length / 2) {
-		throw new Error(
-			`${config}: ${emptySemantic}/${pairs.length} queries returned no semantic matches; embedding failed`,
-		);
+	// findSimilar turns a failed embed() into "no matches", so count the failures rather than the empty results.
+	const failed = embeddingsManager.embedFailureCount() - failuresBefore;
+	if (failed > 0) {
+		throw new Error(`${config}: ${failed} query embedding(s) failed; refusing to score this run`);
 	}
 	return { config, format, semantic, endToEnd };
 }
