@@ -52,18 +52,35 @@ describe('engine.validate', () => {
 		expect(engine.embeddingsManager).toBeDefined();
 		expect(engine.schemaManager).toBe(schemaManager);
 	});
+
+	it('treats a blank schema as the default', async () => {
+		const hed = 'Sensory-event, sc:Modulator';
+		const blank = await engine.validate(hed, { schema: '   ' });
+
+		expect(blank).toEqual(await engine.validate(hed, { schema: engine.DEFAULT_HED_SCHEMA }));
+		expect(blank.map((issue) => issue.hedCode)).toEqual(['TAG_NAMESPACE_PREFIX_INVALID']);
+	});
 });
 
 describe('suggestion options', () => {
-	it('treats options set to undefined as absent', async () => {
+	it('treats undefined, null, and blank options as absent', async () => {
 		const omitted = await engine.suggestBatch(['red square'], {});
 		const undefinedValues = await engine.suggestBatch(['red square'], {
 			schema: undefined,
 			top: undefined,
 			semantic: undefined,
 		});
+		// JSON clients send null, not undefined, for a field they leave out.
+		const jsonNulls = await engine.suggestBatch(['red square'], JSON.parse('{"schema":"","top":null,"semantic":null}'));
 
 		expect(undefinedValues).toEqual(omitted);
+		expect(jsonNulls).toEqual(omitted);
+	});
+
+	it('returns schema-stage tags for the default options', async () => {
+		const omitted = await engine.suggestBatch(['red square'], {});
+
+		expect(omitted['red square']).toContain('Red-color');
 	});
 });
 

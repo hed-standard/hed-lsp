@@ -36,13 +36,17 @@ const DEFAULT_OPTIONS: SuggestionOptions = {
 };
 
 /**
- * Merge caller options over the defaults. Options set to undefined count as absent, because a
- * JSON request such as hed/suggest passes undefined for fields it omits, and an undefined value
- * would otherwise overwrite the default (for example, skipping the schema search when top is missing).
+ * Merge caller options over the defaults. An undefined or null field counts as absent, and so does
+ * a blank schema. JSON clients may send null for a field they omit, and a null top would otherwise
+ * return no suggestions.
  */
 function withDefaults(options: Partial<SuggestionOptions>): SuggestionOptions {
-	const defined = Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined));
-	return { ...DEFAULT_OPTIONS, ...defined };
+	return {
+		schema: options.schema?.trim() || DEFAULT_OPTIONS.schema,
+		top: options.top ?? DEFAULT_OPTIONS.top,
+		semantic: options.semantic ?? DEFAULT_OPTIONS.semantic,
+		queryFormat: options.queryFormat ?? undefined,
+	};
 }
 
 /**

@@ -19,7 +19,10 @@ export type { HedTag, HedTagAttributes, ValidationIssue } from './types.js';
 export { hasValidationErrors, validateHedString } from './validation.js';
 
 export interface ValidateOptions {
-	/** Base HED schema version to validate against; defaults to DEFAULT_HED_SCHEMA. */
+	/**
+	 * Schema version to validate against: a base version (8.5.0) or a comma-separated list that
+	 * names libraries (8.4.0,sc:score_2.1.0). Omitted or blank means DEFAULT_HED_SCHEMA.
+	 */
 	schema?: string;
 }
 
@@ -30,6 +33,6 @@ export interface ValidateOptions {
  * changed, so concurrent callers with different versions cannot affect one another.
  */
 export async function validate(hed: string, options: ValidateOptions = {}): Promise<ValidationIssue[]> {
-	const schemas = await schemaManager.getSchema(options.schema ?? DEFAULT_HED_SCHEMA);
+	const schemas = await schemaManager.getSchema(options.schema?.trim() || DEFAULT_HED_SCHEMA);
 	return validateHedString(hed, schemas);
 }
