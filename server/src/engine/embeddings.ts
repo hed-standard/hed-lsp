@@ -222,9 +222,10 @@ class EmbeddingsManager {
 
 		try {
 			// Try compact version first (smaller file), then full version
-			let embeddingsPath = path.join(dataDir(), 'tag-embeddings.compact.json');
+			const dir = dataDir();
+			let embeddingsPath = path.join(dir, 'tag-embeddings.compact.json');
 			if (!fs.existsSync(embeddingsPath)) {
-				embeddingsPath = path.join(dataDir(), 'tag-embeddings.json');
+				embeddingsPath = path.join(dir, 'tag-embeddings.json');
 			}
 			if (fs.existsSync(embeddingsPath)) {
 				const data = fs.readFileSync(embeddingsPath, 'utf-8');
