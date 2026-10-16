@@ -471,6 +471,12 @@ The JSON report has, for each endpoint and for the run, the p50, p95, and p99 la
 `--clients` sends that many distinct `X-Forwarded-For` addresses, so the per-client limits apply to each separately.
 The target honors the header only when the address of the machine running the harness is in its `TRUSTED_PROXIES`; otherwise every request shares one key.
 
+The cost of a semantic request depends on how many of its queries reach the embedding model, and the daemon sends a query there only when its keyword and schema results are fewer than `top` tags.
+`--semantic-top` (1 to 50, default 10) and `--semantic-batch` (1 to 20, default 1) set the `top` and the number of queries of each semantic request.
+On the 206 evaluation queries with semantic search off, 27.2% return fewer than 10 tags and 97.1% return fewer than 50, so the default `top` of 10 understates the cost of the model by a factor of about 3.6.
+`--reach-check` measures this before the run: it sends every corpus query as a suggest request with semantic search off and `top` set to `--semantic-top`, and adds a `reach` object to the report with the number of queries answered, the number below `top`, and their share.
+The check sends as one extra client address, so it does not spend the rate budget of the clients of the run.
+
 ## Known limits
 
 - The bounded discard of an unread body protects clients that keep the connection alive.

@@ -14,6 +14,11 @@
  * seeded generator, so two runs with the same options send the same requests in the same order per
  * worker, though the timing between them differs.
  *
+ * The daemon runs its embedding model only for a query whose keyword and schema results are fewer than
+ * `top` tags, so the cost of a semantic request depends on how many queries reach the model. A
+ * semantic request has `--semantic-top` and `--semantic-batch`, and `--reach-check` measures, with
+ * semantic search off, the share of corpus queries that would reach the model at that `top`.
+ *
  * Exit codes: 0 when the run finished, 2 for bad options, 1 when no request got any answer, which
  * means the target could not be reached.
  */
@@ -35,14 +40,28 @@ export const DEFAULT_CONCURRENCY = 4;
 export const DEFAULT_DURATION_SECONDS = 60;
 export const DEFAULT_MIX = 'suggest=60,validate=30,semantic=10';
 export const DEFAULT_CLIENTS = 1;
+export const DEFAULT_SEMANTIC_TOP = 10;
+export const DEFAULT_SEMANTIC_BATCH = 1;
 
 export const MAX_CONCURRENCY = 1024;
 export const MAX_DURATION_SECONDS = 86_400;
 export const MAX_CLIENTS = 60_000;
+/** The daemon accepts `top` from 1 to 50, and 20 queries in a request that asks for semantic search. */
+export const MAX_SEMANTIC_TOP = 50;
+export const MAX_SEMANTIC_BATCH = 20;
 const MAX_WEIGHT = 1_000_000;
 
 /** Items in one request of each endpoint: queries for suggest, strings for validate. */
 export const BATCH: Readonly<Record<EndpointName, number>> = { suggest: 5, validate: 10, semantic: 1 };
+
+/** Queries in one request of the reach check, below the default limit of 20 for a semantic request. */
+export const REACH_BATCH = 20;
+
+/**
+ * The address the reach check sends as, from the benchmarking block like the load clients but past
+ * every index of `clientAddress`, so the check never spends the rate budget of a client of the run.
+ */
+export const REACH_CLIENT = '198.19.0.1';
 
 /** The seed of the generator that chooses requests; worker `n` uses SEED + n. */
 export const SEED = 1;
@@ -72,14 +91,23 @@ Options:
                      The target uses the header only when this machine's address is one of its
                      trusted proxies (HED_LSP_TRUSTED_PROXIES; the default trusts 127.0.0.1 and ::1).
                      Otherwise it ignores the header, and every request shares one rate-limit key.
+  --semantic-top N   The "top" of each semantic request, 1 to ${MAX_SEMANTIC_TOP} (default ${DEFAULT_SEMANTIC_TOP}).
+                     The daemon runs the embedding model only for a query whose keyword and schema
+                     results are fewer than "top" tags, so a larger value sends more queries to it.
+  --semantic-batch N Queries in each semantic request, 1 to ${MAX_SEMANTIC_BATCH} (default ${DEFAULT_SEMANTIC_BATCH}).
+  --reach-check      Before the run, send each corpus query with semantic search off and report, as
+                     "reach" in the JSON, the share of queries that return fewer than --semantic-top
+                     results. Those are the queries that would reach the embedding model.
   --out FILE         Write the JSON report to FILE instead of standard output
   --corpus FILE      JSON file with a "pairs" array of {"query", "hed"} objects
                      (default: the 206 evaluation pairs in server/eval)
   -h, --help         Show this text
 
-Each suggest request carries ${BATCH.suggest} queries, each validate request ${BATCH.validate} strings, and each
-semantic request ${BATCH.semantic} query. Latency percentiles use the nearest-rank method over the
-answers with a 2xx status; the error rate counts every other outcome, rejections included.
+Each suggest request carries ${BATCH.suggest} queries and each validate request ${BATCH.validate} strings. A semantic
+request carries --semantic-batch queries (default ${DEFAULT_SEMANTIC_BATCH}) with --semantic-top as its "top"
+(default ${DEFAULT_SEMANTIC_TOP}); suggest requests ask for 10 results. Latency percentiles use the nearest-rank
+method over the answers with a 2xx status; the error rate counts every other outcome, rejections
+included.
 `;
 
 /** A bad command line or corpus. The message is written for the person who typed the command. */
@@ -315,22 +343,82 @@ export interface RequestPlan {
 	body: string;
 }
 
-/** The request for one draw of `endpoint`: its items are chosen from the corpus with `random`. */
-export function planRequest(endpoint: EndpointName, corpus: Corpus, random: () => number): RequestPlan {
-	const pick = (items: readonly string[]): string[] =>
-		Array.from({ length: BATCH[endpoint] }, () => items[Math.floor(random() * items.length)]);
+/** The shape of a semantic request: how many queries it carries and the `top` it asks for. */
+export interface SemanticShape {
+	top: number;
+	batch: number;
+}
+
+export const DEFAULT_SEMANTIC_SHAPE: Readonly<SemanticShape> = {
+	top: DEFAULT_SEMANTIC_TOP,
+	batch: DEFAULT_SEMANTIC_BATCH,
+};
+
+/**
+ * The request for one draw of `endpoint`: its items are chosen from the corpus with `random`. A
+ * semantic request has the shape `semantic`; the other endpoints do not depend on it.
+ */
+export function planRequest(
+	endpoint: EndpointName,
+	corpus: Corpus,
+	random: () => number,
+	semantic: Readonly<SemanticShape> = DEFAULT_SEMANTIC_SHAPE,
+): RequestPlan {
+	const pick = (items: readonly string[], size: number): string[] =>
+		Array.from({ length: size }, () => items[Math.floor(random() * items.length)]);
 	switch (endpoint) {
 		case 'validate':
-			return { endpoint, route: '/v1/validate', body: JSON.stringify({ strings: pick(corpus.strings) }) };
+			return {
+				endpoint,
+				route: '/v1/validate',
+				body: JSON.stringify({ strings: pick(corpus.strings, BATCH.validate) }),
+			};
 		case 'suggest':
-			return { endpoint, route: '/v1/suggest', body: JSON.stringify({ queries: pick(corpus.queries), top: 10 }) };
+			return {
+				endpoint,
+				route: '/v1/suggest',
+				body: JSON.stringify({ queries: pick(corpus.queries, BATCH.suggest), top: 10 }),
+			};
 		case 'semantic':
 			return {
 				endpoint,
 				route: '/v1/suggest',
-				body: JSON.stringify({ queries: pick(corpus.queries), top: 10, semantic: true }),
+				body: JSON.stringify({ queries: pick(corpus.queries, semantic.batch), top: semantic.top, semantic: true }),
 			};
 	}
+}
+
+/** What the reach check found: how many corpus queries return fewer than `top` results. */
+export interface ReachReport {
+	/** The `top` the queries were sent with. */
+	top: number;
+	/** Queries in the corpus. */
+	queries: number;
+	/** Queries that came back with a list of suggestions. */
+	answered: number;
+	/** Of those, the queries with fewer than `top` suggestions: the ones that reach the embedder. */
+	belowTop: number;
+	/** `belowTop` over `answered`, to four decimals; null when no query was answered. */
+	share: number | null;
+	/** Queries without an answer: a failed request, or an error on the item. */
+	errors: number;
+}
+
+/**
+ * Tally the reach from the number of suggestions each query returned, in corpus order; null stands
+ * for a query that got no list of suggestions. The share is over the answered queries.
+ */
+export function summarizeReach(top: number, suggestionCounts: readonly (number | null)[]): ReachReport {
+	const counts = suggestionCounts.filter((value): value is number => value !== null);
+	const belowTop = counts.filter((value) => value < top).length;
+	return {
+		top,
+		queries: suggestionCounts.length,
+		answered: counts.length,
+		belowTop,
+		share: counts.length === 0 ? null : round4(belowTop / counts.length),
+		errors: suggestionCounts.length - counts.length,
+	};
 }
 
 /**
@@ -347,12 +435,37 @@ export interface LoadOptions {
 	durationSeconds: number;
 	mix: Mix;
 	clients: number;
+	/** The `top` of a semantic request. Absent means DEFAULT_SEMANTIC_TOP. */
+	semanticTop?: number;
+	/** Queries in a semantic request. Absent means DEFAULT_SEMANTIC_BATCH. */
+	semanticBatch?: number;
+	/** Run the reach check before the load. Absent means no. */
+	reachCheck?: boolean;
 	/** Where the JSON report goes; standard output when absent. */
 	out?: string;
 	corpus: string;
 }
 
-const VALUE_FLAGS = ['--url', '--concurrency', '--duration', '--mix', '--clients', '--out', '--corpus'] as const;
+/** The shape of a semantic request that these options ask for. */
+export function semanticShape(options: Pick<LoadOptions, 'semanticTop' | 'semanticBatch'>): SemanticShape {
+	return {
+		top: options.semanticTop ?? DEFAULT_SEMANTIC_TOP,
+		batch: options.semanticBatch ?? DEFAULT_SEMANTIC_BATCH,
+	};
+}
+
+const VALUE_FLAGS = [
+	'--url',
+	'--concurrency',
+	'--duration',
+	'--mix',
+	'--clients',
+	'--semantic-top',
+	'--semantic-batch',
+	'--out',
+	'--corpus',
+] as const;
+const SWITCH_FLAGS = ['--reach-check'] as const;
 
 function wholeNumber(flag: string, text: string, min: number, max: number): number {
 	const value = Number(text);
@@ -364,10 +477,12 @@ function wholeNumber(flag: string, text: string, min: number, max: number): numb
 
 /**
  * Read the command line. Returns "help" for -h or --help. A flag takes its value as the next
- * argument or after an equals sign, may appear once, and an unknown flag is an error.
+ * argument or after an equals sign, may appear once, and an unknown flag is an error. A switch such
+ * as --reach-check takes no value.
  */
 export function parseArgs(argv: readonly string[]): LoadOptions | 'help' {
 	const values = new Map<string, string>();
+	const switches = new Set<string>();
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === '-h' || arg === '--help') {
@@ -375,6 +490,16 @@ export function parseArgs(argv: readonly string[]): LoadOptions | 'help' {
 		}
 		const equals = arg.indexOf('=');
 		const flag = arg.startsWith('--') && equals !== -1 ? arg.slice(0, equals) : arg;
+		if ((SWITCH_FLAGS as readonly string[]).includes(flag)) {
+			if (flag !== arg) {
+				throw new UsageError(`${flag} takes no value`);
+			}
+			if (switches.has(flag)) {
+				throw new UsageError(`${flag} is given more than once`);
+			}
+			switches.add(flag);
+			continue;
+		}
 		if (!(VALUE_FLAGS as readonly string[]).includes(flag)) {
 			throw new UsageError(`unknown option "${arg}"; run with --help for the options`);
 		}
@@ -410,7 +535,7 @@ export function parseArgs(argv: readonly string[]): LoadOptions | 'help' {
 			`--duration must be a number of seconds above 0 and at most ${MAX_DURATION_SECONDS}, got "${duration}"`,
 		);
 	}
-	return {
+	const options: LoadOptions = {
 		url,
 		concurrency: wholeNumber(
 			'--concurrency',
@@ -424,6 +549,19 @@ export function parseArgs(argv: readonly string[]): LoadOptions | 'help' {
 		out: values.get('--out'),
 		corpus: values.get('--corpus') ?? DEFAULT_CORPUS_PATH,
 	};
+	// These three are set only when the command line names them, and an absent one means its default.
+	const semanticTop = values.get('--semantic-top');
+	if (semanticTop !== undefined) {
+		options.semanticTop = wholeNumber('--semantic-top', semanticTop, 1, MAX_SEMANTIC_TOP);
+	}
+	const semanticBatch = values.get('--semantic-batch');
+	if (semanticBatch !== undefined) {
+		options.semanticBatch = wholeNumber('--semantic-batch', semanticBatch, 1, MAX_SEMANTIC_BATCH);
+	}
+	if (switches.has('--reach-check')) {
+		options.reachCheck = true;
+	}
+	return options;
 }
 
 /** The daemon's answer to /v1/health, or why there was none. */
@@ -489,11 +627,14 @@ function readAnswer(
 	return { errorCode: typeof code === 'string' ? code : 'UNKNOWN' };
 }
 
-function send(agent: http.Agent, url: URL, plan: RequestPlan, client: string): Promise<Sample> {
+/** The end of one POST: the status and body of the answer, or the reason there was none. */
+type Exchange = { status: number; ms: number; body: Buffer } | { status: null; ms: number; errorCode: string };
+
+function post(agent: http.Agent, url: URL, body: string, client: string): Promise<Exchange> {
 	return new Promise((resolve) => {
 		const started = performance.now();
 		let settled = false;
-		const finish = (outcome: Omit<Sample, 'ms'>): void => {
+		const finish = (outcome: { status: number; body: Buffer } | { status: null; errorCode: string }): void => {
 			if (!settled) {
 				settled = true;
 				resolve({ ...outcome, ms: performance.now() - started });
@@ -507,17 +648,14 @@ function send(agent: http.Agent, url: URL, plan: RequestPlan, client: string): P
 				timeout: REQUEST_TIMEOUT_MS,
 				headers: {
 					'Content-Type': 'application/json',
-					'Content-Length': Buffer.byteLength(plan.body),
+					'Content-Length': Buffer.byteLength(body),
 					'X-Forwarded-For': client,
 				},
 			},
 			(response) => {
 				const chunks: Buffer[] = [];
 				response.on('data', (chunk: Buffer) => chunks.push(chunk));
-				response.on('end', () => {
-					const status = response.statusCode ?? 0;
-					finish({ status, ...readAnswer(plan.endpoint, status, Buffer.concat(chunks)) });
-				});
+				response.on('end', () => finish({ status: response.statusCode ?? 0, body: Buffer.concat(chunks) }));
 				response.on('error', () => finish({ status: null, errorCode: 'RESPONSE_ERROR' }));
 				response.on('close', () => {
 					if (!response.complete) {
@@ -533,8 +671,48 @@ function send(agent: http.Agent, url: URL, plan: RequestPlan, client: string): P
 		request.on('error', (error: NodeJS.ErrnoException) =>
 			finish({ status: null, errorCode: error.code ?? 'REQUEST_ERROR' }),
 		);
-		request.end(plan.body);
+		request.end(body);
 	});
+}
+
+async function send(agent: http.Agent, url: URL, plan: RequestPlan, client: string): Promise<Sample> {
+	const exchange = await post(agent, url, plan.body, client);
+	if (exchange.status === null) {
+		return { status: null, ms: exchange.ms, errorCode: exchange.errorCode };
+	}
+	return { status: exchange.status, ms: exchange.ms, ...readAnswer(plan.endpoint, exchange.status, exchange.body) };
+}
+
+/**
+ * The reach check: every corpus query is sent as a suggest request with semantic search off, in
+ * batches of REACH_BATCH, one batch at a time, and the number of suggestions each returned is
+ * tallied. The daemon runs its embedding step only for a query that returns fewer than `top` tags
+ * without it, so this is the share of queries a semantic request would send to the model.
+ */
+export async function runReachCheck(base: URL, corpus: Corpus, top: number): Promise<ReachReport> {
+	const agent = new (transportFor(base).Agent)({ keepAlive: true, maxSockets: 1 });
+	const counts: (number | null)[] = [];
+	try {
+		for (let first = 0; first < corpus.queries.length; first += REACH_BATCH) {
+			const queries = corpus.queries.slice(first, first + REACH_BATCH);
+			const exchange = await post(agent, routeUrl(base, '/v1/suggest'), JSON.stringify({ queries, top }), REACH_CLIENT);
+			let results: unknown;
+			if (exchange.status !== null && exchange.status >= 200 && exchange.status < 300) {
+				try {
+					results = (JSON.parse(exchange.body.toString('utf-8')) as { results?: unknown }).results;
+				} catch {
+					results = undefined;
+				}
+			}
+			for (let offset = 0; offset < queries.length; offset++) {
+				const item = Array.isArray(results) ? (results[offset] as { suggestions?: unknown } | undefined) : undefined;
+				counts.push(Array.isArray(item?.suggestions) ? item.suggestions.length : null);
+			}
+		}
+	} finally {
+		agent.destroy();
+	}
+	return summarizeReach(top, counts);
 }
 
 export interface LoadReport {
@@ -549,20 +727,27 @@ export interface LoadReport {
 		clients: number;
 		corpus: { file: string; queries: number; strings: number };
 		batch: Readonly<Record<EndpointName, number>>;
+		/** The `top` of a semantic request. */
+		semanticTop: number;
 		seed: number;
 	};
 	health: { before: HealthSnapshot; after: HealthSnapshot };
+	/** Present when the run asked for the reach check. */
+	reach?: ReachReport;
 	overall: EndpointReport;
 	endpoints: Partial<Record<EndpointName, EndpointReport>>;
 }
 
 /**
  * Run the load: `concurrency` workers each send one request at a time until `durationSeconds` have
- * passed, and the requests still in flight then finish. Health is read before and after.
+ * passed, and the requests still in flight then finish. Health is read before and after. When the
+ * options ask for the reach check, it runs after the first health read and before the load starts.
  */
 export async function runLoadTest(options: LoadOptions, corpus: Corpus): Promise<LoadReport> {
 	const base = new URL(options.url);
 	const healthBefore = await getHealth(base);
+	const shape = semanticShape(options);
+	const reach = options.reachCheck ? await runReachCheck(base, corpus, shape.top) : undefined;
 	const clients = Array.from({ length: options.clients }, (_, index) => clientAddress(index));
 	const agent = new (transportFor(base).Agent)({ keepAlive: true, maxSockets: options.concurrency });
 	const samples: Record<EndpointName, Sample[]> = { suggest: [], validate: [], semantic: [] };
@@ -575,7 +760,7 @@ export async function runLoadTest(options: LoadOptions, corpus: Corpus): Promise
 			const random = createRandom(SEED + worker);
 			while (performance.now() < deadline) {
 				const endpoint = pickEndpoint(options.mix, random());
-				const plan = planRequest(endpoint, corpus, random);
+				const plan = planRequest(endpoint, corpus, random, shape);
 				const client = clients[Math.floor(random() * clients.length)];
 				samples[endpoint].push(await send(agent, routeUrl(base, plan.route), plan, client));
 			}
@@ -602,10 +787,12 @@ export async function runLoadTest(options: LoadOptions, corpus: Corpus): Promise
 			mix: options.mix,
 			clients: options.clients,
 			corpus: { file: options.corpus, queries: corpus.queries.length, strings: corpus.strings.length },
-			batch: BATCH,
+			batch: { ...BATCH, semantic: shape.batch },
+			semanticTop: shape.top,
 			seed: SEED,
 		},
 		health: { before: healthBefore, after: healthAfter },
+		...(reach ? { reach } : {}),
 		overall: summarizeSamples(Object.values(samples).flat(), elapsedSeconds),
 		endpoints,
 	};
@@ -640,7 +827,14 @@ export async function main(argv: readonly string[]): Promise<number> {
 	} else {
 		process.stdout.write(json);
 	}
-	const { overall } = report;
+	const { overall, reach } = report;
+	if (reach) {
+		const share = reach.share === null ? 'no answers' : `${(reach.share * 100).toFixed(1)}%`;
+		process.stderr.write(
+			`reach at top ${reach.top}: ${share} of ${reach.answered} answered queries return fewer than ${reach.top} results` +
+				`${reach.errors > 0 ? `, ${reach.errors} queries had no answer` : ''}\n`,
+		);
+	}
 	process.stderr.write(
 		`${overall.requests} requests in ${report.elapsedSeconds} s (${overall.throughputRps} per second), ` +
 			`error rate ${overall.errorRate}, p95 ${overall.latencyMs.p95} ms\n`,
