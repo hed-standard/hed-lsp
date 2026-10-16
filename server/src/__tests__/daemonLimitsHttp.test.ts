@@ -740,17 +740,20 @@ describe('the request timeout', () => {
 	const BATCH = { strings: Array.from({ length: 100 }, () => SLOW_STRING) };
 
 	it('answers 503 TIMEOUT with Retry-After 1, then stops the work between items and frees the slot', async () => {
-		// How long the whole batch takes when nothing interrupts it.
+		// How long the whole batch takes on this machine when nothing interrupts it.
 		const baseline = await start({ ...LONG_STRINGS, HED_LSP_MAX_IN_FLIGHT: '1', HED_LSP_MAX_BODY_BYTES: '2000000' });
 		const fullStart = Date.now();
 		expect((await postJson(baseline.url, '/v1/validate', BATCH)).status).toBe(200);
 		const fullMs = Date.now() - fullStart;
-		expect(fullMs).toBeGreaterThan(200);
+		// The timeout is a fraction of that time, so the batch is cut off at the same point on a slow machine
+		// and a fast one. The floor leaves room for the request to arrive before its timer runs out.
+		const timeoutMs = Math.max(20, Math.floor(fullMs / 4));
+		expect(fullMs, 'the batch must outlast the timeout, or there is nothing to cut off').toBeGreaterThan(2 * timeoutMs);
 
 		const daemon = await start({
 			...SHORT_HEADERS,
 			...LONG_STRINGS,
-			HED_LSP_REQUEST_TIMEOUT_MS: '40',
+			HED_LSP_REQUEST_TIMEOUT_MS: String(timeoutMs),
 			HED_LSP_MAX_IN_FLIGHT: '1',
 			HED_LSP_MAX_BODY_BYTES: '2000000',
 		});

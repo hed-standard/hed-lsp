@@ -118,7 +118,7 @@ describe.each(rules)('$name boundary', (rule) => {
 });
 
 describe('engine boundary', () => {
-	it('imports only engine modules, node built-ins, and the two engine dependencies', () => {
+	it('applies its rule to the modules of the engine, the facade and the three it exposes included', () => {
 		const files = sourceFiles(engineDir);
 
 		expect(files.map((file) => path.basename(file))).toEqual(

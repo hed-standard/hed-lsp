@@ -2,8 +2,10 @@
  * Tests for semantic search through POST /v1/suggest with a loaded model. They run only when the
  * model is cached locally (`embeddingsManager.isModelCached()`); otherwise they are reported as
  * skipped, never as passed. The real daemon, model, and shipped embeddings run. The daemon warms
- * the model in the background after it listens, so the first requests here arrive while the state is
- * still loading, which also pins the loading status. No mocks.
+ * the model in the background after it listens, and the suite waits until health reports ready
+ * before it asks for anything. The loading state is not asserted here, because whether a request
+ * arrives before or after the warm-up finishes is a race; the state machine, loading included, is
+ * checked without one in daemonSemanticState.test.ts. No mocks.
  */
 
 import * as fs from 'node:fs';
@@ -20,34 +22,15 @@ const QUERIES = ['xyzzy nonsense', 'a loud bang', 'marmoset eating', 'red square
 
 suite('semantic suggest (model cached)', () => {
 	let daemon: RunningDaemon;
-	let whileLoading: { state: string; status: number; semantic: unknown; results: unknown };
-	let plain: { json: { results: { suggestions: { tag: string }[] }[] } };
 
 	beforeAll(async () => {
-		// Return as soon as the server listens, before the model has loaded.
-		daemon = await startDaemon({ HED_LSP_SEMANTIC: '1', HED_LSP_MODEL_DOWNLOAD: '0' }, { skipReady: true });
-		const state = (await call(daemon.url, '/v1/health')).json.semantic.state;
-		await daemon.daemon.ready;
-		const asked = await postJson(daemon.url, '/v1/suggest', { queries: QUERIES, schema: BUNDLED, semantic: true });
-		whileLoading = {
-			state,
-			status: asked.status,
-			semantic: asked.json.semantic,
-			results: asked.json.results,
-		};
-		plain = (await postJson(daemon.url, '/v1/suggest', { queries: QUERIES, schema: BUNDLED })) as typeof plain;
+		daemon = await startDaemon({ HED_LSP_SEMANTIC: '1', HED_LSP_MODEL_DOWNLOAD: '0' });
+		// The model is cached, so the warm-up that starts after the server listens ends in ready.
 		await waitFor(async () => (await call(daemon.url, '/v1/health')).json.semantic.state === 'ready', 60000, 'ready');
 	}, 90000);
 
 	afterAll(async () => {
 		await daemon.stop();
-	});
-
-	it('warms up after listen, so the first request sees loading and still gets keyword and schema results', () => {
-		expect(whileLoading.state).toBe('loading');
-		expect(whileLoading.status).toBe(200);
-		expect(whileLoading.semantic).toEqual({ requested: true, status: 'loading' });
-		expect(whileLoading.results).toEqual(plain.json.results);
 	});
 
 	it('reports ready in health with no failures, and the health status stays ok', async () => {

@@ -2,8 +2,8 @@
  * Helpers for the daemon tests: a real daemon on a real socket (port 0, loopback) running the real
  * engine, and a small HTTP client built on node:http so a test can control headers, chunking, and
  * early responses exactly. The test configuration names only the bundled schemas, so the tests run
- * offline. Nothing here replaces daemon or engine behavior; the one fixture is the network-failure
- * fixture below, which makes the network fail and changes nothing else.
+ * offline. Nothing here replaces daemon or engine behavior: no stub of the network, the engine, or a
+ * server, and nothing that answers on behalf of a daemon.
  */
 
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -91,42 +91,6 @@ export async function startDaemon(
 		logLines: () => rawLines.map((line) => JSON.parse(line) as Record<string, unknown>),
 		stop: () => daemon.close(2000),
 	};
-}
-
-export interface NetworkFailure {
-	/** Let the stalled fetches fail. Does nothing when the fixture was not asked to stall. */
-	release(): void;
-}
-
-/**
- * The network-failure fixture that the test policy allows: for the duration of `run`, every fetch
- * fails the way a fetch fails with the network down, with a TypeError, which is how hed-validator
- * sees GitHub when it cannot be reached. With `stall`, a fetch hangs, as a hung GitHub request
- * does, until `release()` is called, and then fails. Only the network is replaced: the daemon,
- * the engine, and the validator run as they are. The real fetch is restored in `finally`, so the
- * fixture covers exactly one load and nothing after it.
- */
-export async function withNetworkFailure<T>(
-	run: (network: NetworkFailure) => Promise<T>,
-	options: { stall?: boolean } = {},
-): Promise<T> {
-	const realFetch = globalThis.fetch;
-	let release = (): void => {};
-	const gate = options.stall
-		? new Promise<void>((resolve) => {
-				release = resolve;
-			})
-		: Promise.resolve();
-	globalThis.fetch = (async () => {
-		await gate;
-		throw new TypeError('fetch failed (network-failure fixture)');
-	}) as typeof fetch;
-	try {
-		return await run({ release });
-	} finally {
-		release();
-		globalThis.fetch = realFetch;
-	}
 }
 
 export interface Reply {

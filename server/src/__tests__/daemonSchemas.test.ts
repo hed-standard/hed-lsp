@@ -3,15 +3,20 @@
  * the load timeout, and the backoff. They run the real registry against the real engine and the
  * bundled schemas. A load that fails is a real one: `8.4.0,sc:score_9.9.9` does not exist, so the
  * load fails with a 404 when GitHub is reachable and with a network error when it is not. The clock
- * is a parameter. Only the 8.5.0 cases need the network-failure fixture, which the test policy
- * allows: 8.5.0 is fetched from GitHub, so a stalled or failed fetch is the only way to make it
- * time out or fall back. No mocks.
+ * is a parameter. The timer that races a load is tested on the race helper with a promise that never
+ * settles, because a real load of a bundled schema finishes before even a 1 ms timer fires, and no
+ * real load can be made to outlast a short one. The fallback of 8.5.0 to the bundled 8.4.0 happens
+ * only when GitHub cannot be reached, so it is covered by the offline smoke test
+ * (`scripts/daemon-smoke.sh --offline`, run in CI and in the local `docker run --network none` run),
+ * and not here. No mocks.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../daemon/config.js';
 import { ApiError } from '../daemon/protocol.js';
 import {
+	LoadTimeout,
+	raceTimeout,
 	SCHEMA_BACKOFF_BASE_MS,
 	SCHEMA_BACKOFF_MAX_MS,
 	SchemaRegistry,
@@ -19,15 +24,7 @@ import {
 	schemaBackoffMs,
 } from '../daemon/schemas.js';
 import { type LogSink, schemaManager, setLogger } from '../engine/index.js';
-import {
-	BUNDLED,
-	BUNDLED_WITH_LIBRARIES,
-	call,
-	type RunningDaemon,
-	startDaemon,
-	waitFor,
-	withNetworkFailure,
-} from './daemonHarness.js';
+import { BUNDLED, BUNDLED_WITH_LIBRARIES, call, type RunningDaemon, startDaemon, waitFor } from './daemonHarness.js';
 
 /** A spec that does not exist, so loading it fails for real, whether or not the network is up. */
 const MISSING = '8.4.0,sc:score_9.9.9';
@@ -238,6 +235,47 @@ describe('SchemaRegistry with the real engine', () => {
 	});
 });
 
+describe('raceTimeout', () => {
+	it('rejects with LoadTimeout for a promise that never settles', async () => {
+		const never = new Promise<string>(() => undefined);
+		const startedAt = performance.now();
+
+		const error = await raceTimeout(never, 40).catch((failure: unknown) => failure);
+
+		expect(error).toBeInstanceOf(LoadTimeout);
+		expect((error as Error).message).toBe('schema load timed out after 40 ms');
+		expect(performance.now() - startedAt).toBeGreaterThanOrEqual(35);
+	});
+
+	it('passes on the value or the failure of a promise that settles in time, and leaves no timer behind', async () => {
+		const timers = (): number => process.getActiveResourcesInfo().filter((name) => name === 'Timeout').length;
+		const before = timers();
+
+		await expect(raceTimeout(Promise.resolve('loaded'), 60_000)).resolves.toBe('loaded');
+		await expect(raceTimeout(Promise.reject(new Error('refused')), 60_000)).rejects.toThrow('refused');
+
+		expect(timers()).toBe(before);
+	});
+
+	it('does not stop the work it gave up on: a promise that settles late still has its value', async () => {
+		let finish!: (value: string) => void;
+		const slow = new Promise<string>((resolve) => {
+			finish = resolve;
+		});
+
+		await expect(raceTimeout(slow, 20)).rejects.toBeInstanceOf(LoadTimeout);
+		finish('late');
+
+		await expect(slow).resolves.toBe('late');
+	});
+
+	it('settles by whichever comes first, so a promise that finishes just before the timer wins', async () => {
+		const quick = new Promise<string>((resolve) => setTimeout(() => resolve('in time'), 10));
+
+		await expect(raceTimeout(quick, 2000)).resolves.toBe('in time');
+	});
+});
+
 describe('SchemaRegistry failures', () => {
 	// The backoff is computed from this clock, so the test controls how much time has passed.
 	let clock = 1_000_000;
@@ -327,31 +365,6 @@ describe('SchemaRegistry failures', () => {
 		expect(loadAttempts(MISSING)).toBe(4);
 	});
 
-	it('times out a load that does not finish, and recovers when it finishes late', async () => {
-		// 8.5.0 is fetched from GitHub, so a stalled fetch holds its load past the timer. When the
-		// fetch finally fails, the engine falls back to the bundled 8.4.0 and the spec recovers.
-		await withNetworkFailure(
-			async (network) => {
-				const schemas = registry(
-					{ HED_LSP_SCHEMAS: '8.5.0', HED_LSP_DEFAULT_SCHEMA: '8.5.0', HED_LSP_SCHEMA_LOAD_TIMEOUT_MS: '40' },
-					{ now },
-				);
-
-				const error = await rejected(schemas.ensure('8.5.0'));
-
-				expect(error.code).toBe('SCHEMA_UNAVAILABLE');
-				expect(schemas.list()[0].status).toBe('failed');
-				expect(schemas.defaultReady).toBe(true);
-
-				network.release();
-				await waitFor(() => schemas.list()[0].status === 'loaded', 5000, 'the late load');
-				expect(schemas.list()[0]).toEqual({ spec: '8.5.0', status: 'loaded', used: BUNDLED });
-				expect(schemas.degraded()).toEqual(['8.5.0']);
-			},
-			{ stall: true },
-		);
-	});
-
 	it('rejects an ensure for a spec outside the allowlist as a programming error', async () => {
 		await expect(registry().ensure('9.9.9')).rejects.toThrow(/allowlist/);
 	});
@@ -368,30 +381,6 @@ describe('a daemon with schemas that cannot load', () => {
 	afterEach(async () => {
 		await daemon?.stop();
 		daemon = undefined;
-	});
-
-	it('serves the bundled 8.4.0 for 8.5.0 when the network is down, labels it, and reports degraded', async () => {
-		daemon = await startDaemon(
-			{ HED_LSP_SCHEMAS: `8.5.0;${BUNDLED}`, HED_LSP_DEFAULT_SCHEMA: '8.5.0' },
-			{ autoPreload: false },
-		);
-		const running = daemon;
-
-		// The fixture covers the one preload and is gone before any request is made.
-		await withNetworkFailure(() => running.daemon.preload());
-		await running.daemon.ready;
-
-		const schemas = await call(running.url, '/v1/schemas');
-		const health = await call(running.url, '/v1/health');
-
-		expect(schemas.json.default).toBe('8.5.0');
-		expect(schemas.json.schemas).toEqual([
-			{ spec: '8.5.0', status: 'loaded', used: BUNDLED },
-			{ spec: BUNDLED, status: 'loaded', used: BUNDLED },
-		]);
-		expect(health.status).toBe(200);
-		expect(health.json.status).toBe('degraded');
-		expect(health.json.schemas).toEqual({ default: '8.5.0', degraded: ['8.5.0'] });
 	});
 
 	it('marks a spec that cannot load as failed, with a retry time, and reports degraded', async () => {

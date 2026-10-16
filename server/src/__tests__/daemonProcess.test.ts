@@ -274,18 +274,45 @@ describe('the language server', () => {
 });
 
 describe('listening', () => {
-	it('binds the address it was given, and no other', async () => {
-		const proc = launch();
-		const port = await proc.port();
-
-		const reachable = await new Promise<boolean>((resolve) => {
-			const socket = net.connect(port, '127.0.0.1', () => {
+	/** Whether a TCP connection to `host`:`port` is accepted within two seconds. */
+	function reachable(host: string, port: number): Promise<boolean> {
+		return new Promise((resolve) => {
+			const socket = net.connect({ host, port, timeout: 2000 }, () => {
 				socket.destroy();
 				resolve(true);
 			});
 			socket.on('error', () => resolve(false));
+			socket.on('timeout', () => {
+				socket.destroy();
+				resolve(false);
+			});
 		});
+	}
 
-		expect(reachable).toBe(true);
+	/** The other addresses of this machine: every non-loopback IPv4 one, the IPv6 loopback, and a second IPv4 loopback. */
+	function otherAddresses(): string[] {
+		const external = Object.values(os.networkInterfaces())
+			.flatMap((addresses) => addresses ?? [])
+			.filter((address) => address.family === 'IPv4' && !address.internal)
+			.map((address) => address.address);
+		return [...external, '127.0.0.2', '::1'];
+	}
+
+	it('binds the address it was given, and no other', async () => {
+		const proc = launch();
+		const port = await proc.port();
+
+		const answers = new Map<string, boolean>([['127.0.0.1', await reachable('127.0.0.1', port)]]);
+		for (const host of otherAddresses()) {
+			answers.set(host, await reachable(host, port));
+		}
+
+		// The daemon says what it bound, and only that address accepts the connection.
+		const listening = proc.lines.map((line) => JSON.parse(line)).find((entry) => entry.msg === 'listening');
+		expect(listening).toMatchObject({ host: '127.0.0.1', port });
+		expect(Object.fromEntries(answers)).toEqual({
+			'127.0.0.1': true,
+			...Object.fromEntries(otherAddresses().map((host) => [host, false])),
+		});
 	}, 30000);
 });

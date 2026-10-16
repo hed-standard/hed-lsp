@@ -35,11 +35,33 @@ export interface SchemaRegistryOptions {
 	logger?: Logger;
 }
 
-class LoadTimeout extends Error {
+/** A load that was still running when its timer ran out. */
+export class LoadTimeout extends Error {
 	constructor(ms: number) {
 		super(`schema load timed out after ${ms} ms`);
 		this.name = 'LoadTimeout';
 	}
+}
+
+/**
+ * Settle as `work` does, or reject with LoadTimeout once `ms` milliseconds have passed, whichever
+ * comes first. The timer is cleared as soon as `work` settles, and `work` is not stopped: a load
+ * that outlives its timer still finishes, and a caller that wants its result can attach to `work`.
+ */
+export function raceTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const timer = setTimeout(() => reject(new LoadTimeout(ms)), ms);
+		work.then(
+			(value) => {
+				clearTimeout(timer);
+				resolve(value);
+			},
+			(error: unknown) => {
+				clearTimeout(timer);
+				reject(error);
+			},
+		);
+	});
 }
 
 export class SchemaRegistry {
@@ -186,23 +208,7 @@ export class SchemaRegistry {
 			(used) => this.markLoaded(entry, used),
 			() => undefined,
 		);
-		const race = new Promise<string>((resolve, reject) => {
-			const timer = setTimeout(
-				() => reject(new LoadTimeout(this.config.schemaLoadTimeoutMs)),
-				this.config.schemaLoadTimeoutMs,
-			);
-			work.then(
-				(used) => {
-					clearTimeout(timer);
-					resolve(used);
-				},
-				(error: unknown) => {
-					clearTimeout(timer);
-					reject(error);
-				},
-			);
-		});
-		const flight = race
+		const flight = raceTimeout(work, this.config.schemaLoadTimeoutMs)
 			.catch((error: unknown) => {
 				throw this.markFailed(entry, error);
 			})

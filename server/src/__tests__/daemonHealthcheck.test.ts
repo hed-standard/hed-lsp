@@ -1,27 +1,42 @@
 /**
- * Tests for the Docker health probe, `out/daemon/healthcheck.js`, run as a process against a real
- * daemon and against real servers that answer the way a broken one would: nothing listening, an
- * answer that never comes, and an answer that is not a healthy one. The probe exits 0 only for HTTP
- * 200 with a status of ok or degraded. No mocks.
+ * Tests for the Docker health probe, `out/daemon/healthcheck.js`, run as a process against real
+ * daemons in real states, and against ports with nothing on them. The probe exits 0 only for HTTP 200
+ * with a status of ok or degraded, so each case is a daemon that really is in that state:
+ *
+ * - ready, which answers 200 ok: exit 0;
+ * - degraded, because a library schema that does not exist cannot load: exit 0;
+ * - still starting, because its preload has not begun, which answers 503: exit 1;
+ * - frozen, a real daemon process that was stopped after it listened, so the connection is accepted
+ *   and never answered: exit 1 after about two seconds;
+ * - not running, a port with nothing on it: exit 1;
+ * - a probe whose own configuration is invalid: exit 1.
+ *
+ * The status logic that decides which answers count as healthy is a pure function, `isHealthy`, and
+ * is tested on its own. No stand-in server answers on behalf of a daemon. No mocks.
  */
 
 import { spawn } from 'node:child_process';
-import * as http from 'node:http';
 import * as net from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { checkHealth, isHealthy } from '../daemon/healthcheck.js';
-import { call, childEnv, compiled, type RunningDaemon, startDaemon, waitFor } from './daemonHarness.js';
+import {
+	call,
+	childEnv,
+	compiled,
+	type DaemonProcess,
+	type RunningDaemon,
+	spawnDaemon,
+	startDaemon,
+	waitFor,
+} from './daemonHarness.js';
 
 const running: RunningDaemon[] = [];
-const servers: (net.Server | http.Server)[] = [];
+const spawned: DaemonProcess[] = [];
 
 afterEach(async () => {
 	await Promise.all(running.splice(0).map((daemon) => daemon.stop()));
-	for (const server of servers.splice(0)) {
-		if (server instanceof http.Server) {
-			server.closeAllConnections();
-		}
-		server.close();
+	for (const proc of spawned.splice(0)) {
+		proc.child.kill('SIGKILL');
 	}
 });
 
@@ -44,16 +59,6 @@ async function daemon(...args: Parameters<typeof startDaemon>): Promise<{ daemon
 	return { daemon: started, port: Number(new URL(started.url).port) };
 }
 
-/** A real HTTP server on a free port that answers every request with `answer`. */
-async function answering(
-	answer: (response: http.ServerResponse) => void,
-): Promise<{ port: number; server: http.Server }> {
-	const server = http.createServer((_request, response) => answer(response));
-	servers.push(server);
-	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-	return { port: (server.address() as net.AddressInfo).port, server };
-}
-
 /** A port that was free a moment ago and has nothing on it now. */
 async function closedPort(): Promise<number> {
 	const server = net.createServer();
@@ -65,7 +70,8 @@ async function closedPort(): Promise<number> {
 
 describe('the health probe against a running daemon', () => {
 	it('exits 0 for a daemon that reports ok', async () => {
-		const { port } = await daemon();
+		const { daemon: started, port } = await daemon();
+		expect((await call(started.url, '/v1/health')).json.status).toBe('ok');
 
 		expect((await probe(port)).code).toBe(0);
 	});
@@ -82,8 +88,9 @@ describe('the health probe against a running daemon', () => {
 		expect((await probe(port)).code).toBe(0);
 	}, 30000);
 
-	it('exits 1 for a daemon that is still starting and answers 503', async () => {
+	it('exits 1 for a daemon that is still starting and answers 503, and 0 once it has loaded', async () => {
 		const { daemon: started, port } = await daemon({}, { autoPreload: false });
+		expect((await call(started.url, '/v1/health')).status).toBe(503);
 
 		const result = await probe(port);
 
@@ -93,7 +100,7 @@ describe('the health probe against a running daemon', () => {
 	});
 });
 
-describe('the health probe against a server that is not healthy', () => {
+describe('the health probe against something that cannot answer', () => {
 	it('exits 1 when nothing is listening', async () => {
 		const result = await probe(await closedPort());
 
@@ -101,64 +108,23 @@ describe('the health probe against a server that is not healthy', () => {
 		expect(result.ms).toBeLessThan(2000);
 	});
 
-	it('exits 1 within about two seconds when the connection is accepted and never answered', async () => {
-		const silent = net.createServer(() => undefined);
-		servers.push(silent);
-		await new Promise<void>((resolve) => silent.listen(0, '127.0.0.1', resolve));
-
-		const result = await probe((silent.address() as net.AddressInfo).port);
-
-		expect(result.code).toBe(1);
-		expect(result.ms).toBeGreaterThanOrEqual(1800);
-		expect(result.ms).toBeLessThan(5000);
-	});
-
-	it('exits 1 for an answer that starts but never finishes', async () => {
-		const { port } = await answering((response) => {
-			response.writeHead(200, { 'Content-Type': 'application/json' });
-			response.write('{"status":');
-		});
+	it('exits 1 within about two seconds for a daemon that is frozen: it accepts the connection and never answers', async () => {
+		const proc = spawnDaemon();
+		spawned.push(proc);
+		const port = await proc.port();
+		await waitFor(async () => (await call(`http://127.0.0.1:${port}`, '/v1/health')).status === 200, 15000, 'ready');
+		// A stopped process keeps its listening socket, so the kernel accepts the connection and nothing reads it.
+		process.kill(proc.child.pid as number, 'SIGSTOP');
 
 		const result = await probe(port);
 
 		expect(result.code).toBe(1);
+		expect(result.ms).toBeGreaterThanOrEqual(1800);
 		expect(result.ms).toBeLessThan(5000);
-	});
-
-	it.each([
-		[200, '{"status":"starting"}', 'a 200 that says starting'],
-		[200, 'ok', 'a 200 that is not JSON'],
-		[200, '{"state":"ok"}', 'a 200 without a status'],
-		[200, '', 'an empty 200'],
-		[503, '{"status":"ok"}', 'a 503 that says ok'],
-		[500, '{"status":"degraded"}', 'a 500 that says degraded'],
-		[404, '{"status":"ok"}', 'a 404'],
-	])('exits 1 for %i with body %j (%s)', async (status, body) => {
-		const { port } = await answering((response) => {
-			response.writeHead(status, { 'Content-Type': 'application/json' });
-			response.end(body);
-		});
-
-		expect((await probe(port)).code).toBe(1);
-	});
-
-	it.each(['ok', 'degraded'])('exits 0 for a 200 that says %s', async (status) => {
-		const { port } = await answering((response) => {
-			response.writeHead(200, { 'Content-Type': 'application/json' });
-			response.end(JSON.stringify({ status }));
-		});
-
+		// The probe is not what froze it: once it runs again, the same probe is satisfied.
+		process.kill(proc.child.pid as number, 'SIGCONT');
 		expect((await probe(port)).code).toBe(0);
-	});
-
-	it('exits 1 for an answer larger than it will read', async () => {
-		const { port } = await answering((response) => {
-			response.writeHead(200, { 'Content-Type': 'application/json' });
-			response.end(JSON.stringify({ status: 'ok', padding: 'x'.repeat(200_000) }));
-		});
-
-		expect((await probe(port)).code).toBe(1);
-	});
+	}, 40000);
 
 	it('exits 1 when the configuration it reads is invalid', async () => {
 		const result = await probe(1, { HED_LSP_PORT: 'banana' });
@@ -180,8 +146,13 @@ describe('checkHealth and isHealthy', () => {
 		expect(isHealthy(200, '{"status":"degraded"}')).toBe(true);
 		expect(isHealthy(200, '{"status":"starting"}')).toBe(false);
 		expect(isHealthy(503, '{"status":"ok"}')).toBe(false);
+		expect(isHealthy(500, '{"status":"degraded"}')).toBe(false);
+		expect(isHealthy(404, '{"status":"ok"}')).toBe(false);
 		expect(isHealthy(undefined, '{"status":"ok"}')).toBe(false);
 		expect(isHealthy(200, 'not json')).toBe(false);
+		expect(isHealthy(200, 'ok')).toBe(false);
+		expect(isHealthy(200, '')).toBe(false);
+		expect(isHealthy(200, '{"state":"ok"}')).toBe(false);
 		expect(isHealthy(200, 'null')).toBe(false);
 	});
 });
