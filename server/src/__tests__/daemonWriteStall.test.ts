@@ -143,10 +143,12 @@ describe('connections that move no bytes', () => {
 			expect(request).toMatchObject({ method: 'POST', path: '/v1/validate', aborted: true });
 			expect(request?.requestId).toBe(stall?.requestId);
 
-			// The client sees a closed connection, and never gets the rest of the answer.
+			// The client sees a reset, not a clean close, and never gets the rest of the answer. A plain close
+			// of the socket would let the client read what the kernel still holds and then end without an error.
 			client.resume();
 			await client.closed;
 			expect(client.received()).toBeLessThan(client.expected());
+			expect(client.errorCode()).toBe('ECONNRESET');
 
 			// The daemon is still running and answers a new client.
 			const after = await postJson(daemon.url, '/v1/validate', { strings: [VALID], schema: '8.4.0' });
@@ -161,9 +163,10 @@ describe('connections that move no bytes', () => {
 	it.concurrent('does not cut off a client that reads steadily, although the whole answer takes longer than WRITE_STALL_MS', async () => {
 		const stallMs = 1500;
 		const daemon = await startDaemon({ ...LARGE_ANSWER_LIMITS, HED_LSP_WRITE_STALL_MS: String(stallMs) });
-		// The client reads 1 MB, waits 300 ms, and reads on, so its pauses are short but the answer of
-		// about 11 MB takes it more than twice the stall time. Every pause ends with progress.
-		const client = slowClient(daemon, LARGE_ANSWER, { paced: { everyBytes: 1_000_000, pauseMs: 300 } });
+		// The client reads 1 MB, waits 400 ms, and reads on, so its pauses are short but the answer of
+		// about 11 MB takes it more than twice the stall time: ten pauses of 400 ms are 4 s against the 3 s
+		// that the test asks for, a margin of about a second. Every pause ends with progress.
+		const client = slowClient(daemon, LARGE_ANSWER, { paced: { everyBytes: 1_000_000, pauseMs: 400 } });
 
 		try {
 			await waitFor(() => client.expected() > 0, 30_000, 'the response to start');
