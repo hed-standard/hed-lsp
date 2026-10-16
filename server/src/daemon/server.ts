@@ -5,15 +5,16 @@
  * log. Every request except a GET or HEAD of health without a body pays at the door against its
  * client's rate bucket before anything else happens: one unit for each 4096 bytes of body it
  * declares, whatever its method, and at least one, so refusals, unknown paths, and OPTIONS requests
- * are limited like other traffic. A POST must declare its length, and a request then pays for what it asks, by the length of its text. A
- * charge is for the request, not its result, and nothing is ever refunded. A body is input, not
- * work: a POST that is still sending its body holds one of its client's few pending-body slots,
- * bounded by BODY_TIMEOUT_MS, and no in-flight slot. Every request that reaches a handler except
- * health takes an in-flight slot once its body is complete, or at once when it has none, and keeps
- * it until its work stops. A request is answered with a 503 TIMEOUT when it runs past
- * REQUEST_TIMEOUT_MS, and its work looks for that between items. A response is written in pieces and
- * its connection is reset when the write makes no progress for WRITE_STALL_MS, or has not finished
- * within WRITE_TOTAL_MS whatever its progress. Nothing logged or returned carries request text.
+ * are limited like other traffic. A POST must declare its length, and a request then pays for what
+ * it asks, by the length of its text. A charge is for the request, not its result, and nothing is
+ * ever refunded. A body is input, not work: a POST that is still sending its body holds one of its
+ * client's few pending-body slots, bounded by BODY_TIMEOUT_MS, and no in-flight slot. Every request
+ * that reaches a handler except health takes an in-flight slot once its body is complete, or at
+ * once when it has none, and keeps it until its work stops. A request is answered with a 503
+ * TIMEOUT when it runs past REQUEST_TIMEOUT_MS, and its work looks for that between items. A
+ * response is written in pieces and its connection is reset when the write makes no progress for
+ * WRITE_STALL_MS, or has not finished within WRITE_TOTAL_MS whatever its progress. Nothing logged
+ * or returned carries request text.
  */
 
 import * as crypto from 'node:crypto';
@@ -405,8 +406,8 @@ function checkContentType(header: string | undefined): void {
  * How much of a body that is not read is still read and thrown away, as a multiple of the body
  * limit, so the client can finish sending and read the answer. Closing a socket that holds unread
  * data resets the connection, and the client may then never see the response. A client whose body
- * keeps arriving past the bound is cut off, and so is one whose body is not complete BODY_TIMEOUT_MS
- * after the answer. The bound follows the configuration: 2 MiB by default.
+ * keeps arriving past the bound is cut off, and so is one whose body is not complete
+ * BODY_TIMEOUT_MS after the answer. The bound follows the configuration: 2 MiB by default.
  */
 export const DISCARD_FACTOR = 4;
 
@@ -420,7 +421,7 @@ interface BodyProgress {
 	bytes: number;
 }
 
-/** Why the connection of a discarded body was cut: it kept arriving past the bound, or it was not done in time. */
+/** Why a discarded body lost its connection: it kept arriving past the bound, or was not done in time. */
 type DiscardCutoff = 'bytes' | 'deadline';
 
 /** What bounds the discard of a request body that no handler will read. */
@@ -435,10 +436,10 @@ interface DiscardLimits {
 
 /**
  * Read and drop the rest of a request body that no handler will read. The discard is bounded twice:
- * `limitBytes` bounds the whole body, not only what comes after `alreadyRead`, and `deadlineMs` bounds the
- * time, because the timers that cover a request are over once it is answered, so a body dripped in a
- * byte at a time would otherwise hold the connection for as long as the client likes. Past either
- * bound the connection is cut and `onCutoff` says which.
+ * `limitBytes` bounds the whole body, not only what comes after `alreadyRead`, and `deadlineMs`
+ * bounds the time, because the timers that cover a request are over once it is answered, so a body
+ * dripped in a byte at a time would otherwise hold the connection for as long as the client likes.
+ * Past either bound the connection is cut and `onCutoff` says which.
  */
 function discardRest(req: http.IncomingMessage, limits: DiscardLimits, onCutoff: (why: DiscardCutoff) => void): void {
 	let discarded = limits.alreadyRead;
@@ -715,8 +716,8 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 	 * The door: every request except a GET of health without a body pays against its client's general
 	 * bucket before anything else is done with it, so a flood of refusals, unknown paths, and OPTIONS
 	 * requests is limited like any other traffic. A request pays by the length it declares, whatever
-	 * its method (see `doorCost`), and a charge over the burst is the whole burst. The door is never refunded:
-	 * whatever happens to the request afterward, it has paid at least this. A bucket too empty for it
+	 * its method (see `doorCost`), and a charge over the burst is the whole burst. The door is never
+	 * refunded: whatever happens to the request afterward, it has paid at least this. A bucket too empty for it
 	 * answers 429 with the wait, and takes nothing.
 	 */
 	function admit(ctx: RequestContext, req: http.IncomingMessage): void {
@@ -765,7 +766,7 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 	 * While the body arrives the request holds one pending-body slot of its client, and a request over
 	 * that count is refused at once with 503 OVERLOADED, its body unread, before its media type and
 	 * declared length are looked at. The slot is given back when the body is complete or refused, the
-	 * request is cancelled, or the client goes away, so a slow sender is held by BODY_TIMEOUT_MS and
+	 * request is canceled, or the client goes away, so a slow sender is held by BODY_TIMEOUT_MS and
 	 * the connection cap, and takes nothing from the work that other clients need.
 	 */
 	async function receiveBody(req: http.IncomingMessage, ctx: RequestContext): Promise<void> {
@@ -950,8 +951,8 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 		const route = routes.get(ctx.path);
 		// A route that answers GET answers HEAD the same way, and the response leaves out the body.
 		const method = ctx.method === 'HEAD' && route?.methods.includes('GET') ? 'GET' : ctx.method;
-		// Health is the one exemption: a GET of it with no body pays nothing. Any other request pays at the
-		// door, and so does a GET of health that carries a body, which the daemon would have to discard.
+		// Health is the one exemption: a GET of it with no body pays nothing. Any other request pays at
+		// the door, and so does a GET of health that carries a body, which the daemon would have to discard.
 		if (!(route && !route.limited && method === 'GET' && !declaresBody(req.headers))) {
 			admit(ctx, req);
 		}
@@ -1023,8 +1024,8 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 
 	/**
 	 * Write the reply. A HEAD response has the headers of the GET response, Content-Length included, and no body.
-	 * The write is bounded by WRITE_STALL_MS and WRITE_TOTAL_MS: a client that stops reading, or reads too
-	 * slowly to finish, loses its connection.
+	 * The write is bounded by WRITE_STALL_MS and WRITE_TOTAL_MS: a client that stops reading, or reads
+	 * too slowly to finish, loses its connection.
 	 */
 	function send(res: http.ServerResponse, reply: Reply, headOnly: boolean, ctx: RequestContext): void {
 		const headers: Record<string, string | number> = { 'Cache-Control': 'no-store', ...reply.headers };
@@ -1190,8 +1191,8 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 	// connection, KEEPALIVE_TIMEOUT_MS replaces it, so the keep-alive window is not shortened. It does
 	// not bound a write that has stalled, because Node does not fire it while a write is in progress
 	// until a whole period has passed without the write queue moving: that takes two to three periods.
-	// The write watchdog (WRITE_STALL_MS and WRITE_TOTAL_MS, see endWithinWriteLimits) bounds the write, and this stays as
-	// the backstop for a connection that moves no bytes for another reason.
+	// The write watchdog (WRITE_STALL_MS and WRITE_TOTAL_MS, see endWithinWriteLimits) bounds the
+	// write, and this stays as the backstop for a connection that moves no bytes for another reason.
 	server.timeout = config.requestTimeoutMs + NODE_REQUEST_TIMEOUT_MARGIN_MS;
 	// The warm-up starts after the listeners of the caller have run, so a caller that announces the
 	// address, as the entry point does, announces it before the first semantic work begins.
@@ -1214,10 +1215,10 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 			});
 			server.closeIdleConnections();
 		});
-		// No connection is left, but the work of a request whose client went away can be. Its own timer is the
-		// only thing that would stop it, so it is told to stop here, and it is waited for, so that nothing of
-		// this daemon is still running when close returns. The wait is bounded in case a step cannot be
-		// interrupted; the work stops between items, and an item takes milliseconds.
+		// No connection is left, but the work of a request whose client went away can be. Its own timer
+		// is the only thing that would stop it, so it is told to stop here, and it is waited for, so that
+		// nothing of this daemon is still running when close returns. The wait is bounded in case a step
+		// cannot be interrupted; the work stops between items, and an item takes milliseconds.
 		for (const work of running) {
 			work.abort();
 		}
