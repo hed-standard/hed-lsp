@@ -5,80 +5,19 @@
  * template is parsed by the daemon's own configuration reader. No mocks, no stand-in for a command.
  */
 
-import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../daemon/config.js';
+import { bash, DEPLOY, envFor, ROOT, removeTempDirs, stateDirWith, tempDir } from './scriptHarness.js';
 
-/** The repository root, three levels above server/src/__tests__ and server/out/__tests__ alike. */
-const ROOT = path.resolve(__dirname, '..', '..', '..');
-const DEPLOY = path.join(ROOT, 'deploy', 'hedtools');
 const ENV_EXAMPLE = path.join(DEPLOY, 'hed-lsp.env.example');
 
-const scratch: string[] = [];
-afterAll(() => {
-	for (const dir of scratch.splice(0)) {
-		fs.rmSync(dir, { recursive: true, force: true });
-	}
-});
-
-function tempDir(prefix: string): string {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-	scratch.push(dir);
-	return dir;
-}
-
-/** The first file called `name` on the PATH of this process. */
-function onPath(name: string): string {
-	for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
-		const file = path.join(dir, name);
-		if (dir !== '' && fs.existsSync(file)) {
-			return file;
-		}
-	}
-	throw new Error(`${name} is not on the PATH`);
-}
-
-/**
- * A directory of links to the commands the scripts use before they reach Docker, and no `docker`,
- * so a script that tried to call it would fail with "command not found".
- */
-function pathWithoutDocker(): string {
-	const bin = tempDir('hed-lsp-bin-');
-	for (const name of ['awk', 'cut', 'grep', 'sed', 'sort', 'tail', 'tr']) {
-		fs.symlinkSync(fs.realpathSync(onPath(name)), path.join(bin, name));
-	}
-	return bin;
-}
-
-interface Result {
-	code: number;
-	stdout: string;
-	stderr: string;
-}
-
-/** Run a script with bash and the given environment, and wait for it to exit. */
-function bash(script: string, args: string[], env: Record<string, string>): Promise<Result> {
-	return new Promise((resolve) => {
-		execFile(onPath('bash'), [script, ...args], { env, timeout: 30_000 }, (error, stdout, stderr) => {
-			const code = error ? ((error as { code?: unknown }).code as number | string) : 0;
-			resolve({ code: typeof code === 'number' ? code : -1, stdout, stderr });
-		});
-	});
-}
+afterAll(removeTempDirs);
 
 /** A state directory holding an env file made of the template plus `extra` lines. */
 function stateDir(extra = ''): string {
-	const dir = tempDir('hed-lsp-state-');
-	fs.writeFileSync(path.join(dir, 'hed-lsp.env'), fs.readFileSync(ENV_EXAMPLE, 'utf-8') + extra);
-	return dir;
-}
-
-/** The environment of a script run: no Docker on the PATH, and this state directory. */
-function envFor(dir: string): Record<string, string> {
-	return { PATH: pathWithoutDocker(), HOME: dir, HED_LSP_STATE_DIR: dir };
+	return stateDirWith(fs.readFileSync(ENV_EXAMPLE, 'utf-8') + extra);
 }
 
 const IMAGE_ID = `sha256:${'a1b2c3d4'.repeat(8)}`;
@@ -114,12 +53,16 @@ describe('deploy.sh --dry-run', () => {
 
 	it('accepts the digest of a registry, and prints the settings it read without their values', async () => {
 		const dir = stateDir('HED_LSP_EXAMPLE_VALUE=do-not-print-me\n');
+		const inTemplate = fs
+			.readFileSync(ENV_EXAMPLE, 'utf-8')
+			.split('\n')
+			.filter((line) => /^HED_LSP_\w+=/.test(line)).length;
 
 		const result = await bash(script, ['--dry-run', DIGEST], envFor(dir));
 
 		expect(result.code).toBe(0);
 		expect(result.stdout).toContain(`  ${DIGEST}`);
-		expect(result.stdout).toContain('(11 settings; semantic search off)');
+		expect(result.stdout).toContain(`(${inTemplate + 1} settings; semantic search off)`);
 		expect(result.stdout + result.stderr).not.toContain('do-not-print-me');
 	});
 
@@ -269,13 +212,22 @@ describe('hed-lsp.env.example', () => {
 		.filter((line) => /^HED_LSP_[A-Z0-9_]+=/.test(line))
 		.map((line) => line.split('=') as [string, string]);
 
-	it('lists settings the daemon reads, each with its default, so a fresh copy changes nothing', () => {
-		const fromFile = loadConfig(Object.fromEntries(settings));
+	it('lists documented daemon settings with their defaults, so a fresh copy changes nothing', () => {
+		const daemonSettings = settings.filter(([name]) => name !== 'HED_LSP_IMAGE_ID');
+		const fromFile = loadConfig(Object.fromEntries(daemonSettings));
 		const defaults = loadConfig({});
+		const documented = fs.readFileSync(path.join(ROOT, 'docs', 'daemon.md'), 'utf-8');
 
 		// The image turns the download off with HED_LSP_MODEL_DOWNLOAD=0; the program's own default is on.
 		expect(fromFile).toEqual({ ...defaults, modelDownload: false });
-		expect(settings.length).toBeGreaterThanOrEqual(10);
+		expect(daemonSettings.length).toBeGreaterThanOrEqual(10);
+		for (const [name] of daemonSettings) {
+			expect(documented, name).toContain(`\`${name.replace('HED_LSP_', '')}\``);
+		}
+	});
+
+	it('leaves the image pin of measure.sh empty until the image is known', () => {
+		expect(settings).toContainEqual(['HED_LSP_IMAGE_ID', '']);
 	});
 
 	it('names no setting twice, none the script fixes, and holds no secret', () => {
