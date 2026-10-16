@@ -12,8 +12,8 @@
  * health takes an in-flight slot once its body is complete, or at once when it has none, and keeps
  * it until its work stops. A request is answered with a 503 TIMEOUT when it runs past
  * REQUEST_TIMEOUT_MS, and its work looks for that between items. A response is written in pieces and
- * its connection is reset when the write makes no progress for WRITE_STALL_MS. Nothing logged or
- * returned carries request text.
+ * its connection is reset when the write makes no progress for WRITE_STALL_MS, or has not finished
+ * within WRITE_TOTAL_MS whatever its progress. Nothing logged or returned carries request text.
  */
 
 import * as crypto from 'node:crypto';
@@ -275,11 +275,27 @@ class ClientAborted extends Error {
  */
 export const WRITE_CHUNK_BYTES = 64 * 1024;
 
+/** The two bounds on writing one response, in milliseconds. */
+interface WriteLimits {
+	/** The longest the write may go with no progress. */
+	stallMs: number;
+	/** The longest the whole write may take, from its start, whatever its progress. */
+	totalMs: number;
+}
+
+/** What is reported when a bound is passed and the connection is reset. */
+interface WriteReports {
+	onStall: () => void;
+	onTotal: () => void;
+}
+
 /**
  * End a response whose headers are written, with `body` as its body. When `stallMs` milliseconds
  * pass with no progress, call `onStall` and reset the connection. Node's socket timeout does not fire
  * while a write is in progress, so without this a client that sends a request and then stops reading
- * can hold its connection for two to three timeouts.
+ * can hold its connection for two to three timeouts. When the whole write has not finished within
+ * `totalMs`, call `onTotal` and reset the connection too: a client that reads a piece now and then
+ * makes progress forever without ever stalling.
  *
  * The body is written one piece at a time, waiting for the socket to drain before the next. Progress
  * is a drain, or a piece written out. The watchdog runs only while the response is pending: it
@@ -287,33 +303,36 @@ export const WRITE_CHUNK_BYTES = 64 * 1024;
  * measures the time since the last progress that the event loop saw, so a loop blocked for longer
  * than `stallMs` counts as a stall.
  */
-function endWithinStallLimit(
+function endWithinWriteLimits(
 	res: http.ServerResponse,
 	body: Buffer | undefined,
-	stallMs: number,
-	onStall: () => void,
+	limits: WriteLimits,
+	reports: WriteReports,
 ): void {
 	const socket = res.socket;
-	let timer: NodeJS.Timeout | undefined;
+	let stallTimer: NodeJS.Timeout | undefined;
+	let totalTimer: NodeJS.Timeout | undefined;
 	let done = false;
 	const stop = (): void => {
 		done = true;
-		clearTimeout(timer);
+		clearTimeout(stallTimer);
+		clearTimeout(totalTimer);
 		socket?.off('error', stop);
 	};
+	const reset = (report: () => void): void => {
+		stop();
+		report();
+		if (socket && !socket.destroyed) {
+			// An RST, so the kernel drops what the client never read instead of holding it.
+			socket.resetAndDestroy();
+		}
+	};
 	const arm = (): void => {
-		clearTimeout(timer);
+		clearTimeout(stallTimer);
 		if (done) {
 			return;
 		}
-		timer = setTimeout(() => {
-			stop();
-			onStall();
-			if (socket && !socket.destroyed) {
-				// An RST, so the kernel drops what the client never read instead of holding it.
-				socket.resetAndDestroy();
-			}
-		}, stallMs);
+		stallTimer = setTimeout(() => reset(reports.onStall), limits.stallMs);
 	};
 	const progress = (error?: Error | null): void => (error ? stop() : arm());
 
@@ -322,6 +341,7 @@ function endWithinStallLimit(
 	res.once('close', stop);
 	res.on('drain', arm);
 	arm();
+	totalTimer = setTimeout(() => reset(reports.onTotal), limits.totalMs);
 
 	if (body === undefined || body.length === 0) {
 		res.end();
@@ -995,7 +1015,8 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 
 	/**
 	 * Write the reply. A HEAD response has the headers of the GET response, Content-Length included, and no body.
-	 * The write is bounded by WRITE_STALL_MS: a client that stops reading loses its connection.
+	 * The write is bounded by WRITE_STALL_MS and WRITE_TOTAL_MS: a client that stops reading, or reads too
+	 * slowly to finish, loses its connection.
 	 */
 	function send(res: http.ServerResponse, reply: Reply, headOnly: boolean, ctx: RequestContext): void {
 		const headers: Record<string, string | number> = { 'Cache-Control': 'no-store', ...reply.headers };
@@ -1008,8 +1029,14 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 			headers.Connection = 'close';
 		}
 		res.writeHead(reply.status, headers);
-		endWithinStallLimit(res, headOnly ? undefined : payload, config.writeStallMs, () =>
-			logger.warn('connection closed because a response write stalled', { requestId: ctx.id }),
+		endWithinWriteLimits(
+			res,
+			headOnly ? undefined : payload,
+			{ stallMs: config.writeStallMs, totalMs: config.writeTotalMs },
+			{
+				onStall: () => logger.warn('connection closed because a response write stalled', { requestId: ctx.id }),
+				onTotal: () => logger.warn('connection closed because a response write took too long', { requestId: ctx.id }),
+			},
 		);
 	}
 
@@ -1155,7 +1182,7 @@ export function createDaemon(config: DaemonConfig, options: DaemonOptions = {}):
 	// connection, KEEPALIVE_TIMEOUT_MS replaces it, so the keep-alive window is not shortened. It does
 	// not bound a write that has stalled, because Node does not fire it while a write is in progress
 	// until a whole period has passed without the write queue moving: that takes two to three periods.
-	// The write watchdog (WRITE_STALL_MS, see endWithinStallLimit) bounds the write, and this stays as
+	// The write watchdog (WRITE_STALL_MS and WRITE_TOTAL_MS, see endWithinWriteLimits) bounds the write, and this stays as
 	// the backstop for a connection that moves no bytes for another reason.
 	server.timeout = config.requestTimeoutMs + NODE_REQUEST_TIMEOUT_MARGIN_MS;
 	// The warm-up starts after the listeners of the caller have run, so a caller that announces the

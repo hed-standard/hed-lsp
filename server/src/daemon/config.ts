@@ -85,6 +85,11 @@ export interface DaemonConfig {
 	 * Any chunk of the response written out, or a drain of the socket, is progress.
 	 */
 	writeStallMs: number;
+	/**
+	 * How long writing one response may take in all, from the first byte, whatever its progress. A
+	 * client that reads slowly but steadily is not stalled, so this is what ends such a connection.
+	 */
+	writeTotalMs: number;
 	keepAliveTimeoutMs: number;
 	maxConnections: number;
 	maxClients: number;
@@ -409,6 +414,7 @@ export function loadConfig(env: Env = process.env): DaemonConfig {
 		bodyTimeoutMs: readInt(env, 'BODY_TIMEOUT_MS', 10_000, 1, MAX_INT),
 		headersTimeoutMs,
 		writeStallMs: readInt(env, 'WRITE_STALL_MS', 10_000, 1, MAX_INT),
+		writeTotalMs: readInt(env, 'WRITE_TOTAL_MS', 60_000, 1, MAX_INT),
 		keepAliveTimeoutMs: readInt(env, 'KEEPALIVE_TIMEOUT_MS', 65_000, 1, MAX_INT),
 		maxConnections: readInt(env, 'MAX_CONNECTIONS', 256, 1, MAX_INT),
 		maxClients: readInt(env, 'MAX_CLIENTS', 10_000, 1, MAX_INT),

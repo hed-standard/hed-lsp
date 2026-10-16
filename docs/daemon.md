@@ -291,6 +291,7 @@ The values below are starting values chosen to keep one shared machine safe, and
 | `BODY_TIMEOUT_MS` | `10000` | Time for a request body to arrive in full, counted from the headers |
 | `HEADERS_TIMEOUT_MS` | `10000` | Time for the headers to arrive; at most the request timeout plus 5000 |
 | `WRITE_STALL_MS` | `10000` | Time a response being written may go with no progress before its connection is reset; at least 1 |
+| `WRITE_TOTAL_MS` | `60000` | Time the whole write of one response may take, whatever its progress, before its connection is reset; at least 1 |
 | `KEEPALIVE_TIMEOUT_MS` | `65000` | Idle time before a connection is closed, longer than a proxy's reuse window |
 | `MAX_CONNECTIONS` | `256` | Open connections |
 | `MAX_CLIENTS` | `10000` | Clients tracked for rate limiting |
@@ -350,9 +351,11 @@ The daemon reads and drops up to four times `MAX_BODY_BYTES` of the body, counte
 The same holds for a body that nobody reads on a request that is answered, such as a GET with a body.
 The discard has a deadline too: a body that is not complete `BODY_TIMEOUT_MS` after the answer ends the connection, so a body dripped in a byte at a time cannot hold it open.
 
-A response that is being written is bounded by `WRITE_STALL_MS` (10 seconds).
+A response that is being written is bounded twice, by `WRITE_STALL_MS` (10 seconds) and by `WRITE_TOTAL_MS` (60 seconds).
 The daemon writes the body in pieces of 64 KiB, each after the socket has taken the one before, and when the write makes no progress for that long it resets the connection.
-Progress is a drain of the socket or a piece written out, so a client that reads a large answer slowly but steadily is not cut off, however long the whole answer takes, and a client that sends a request and then stops reading loses its connection after `WRITE_STALL_MS`.
+Progress is a drain of the socket or a piece written out, so a client that reads a large answer slowly but steadily is not stalled, and a client that sends a request and then stops reading loses its connection after `WRITE_STALL_MS`.
+A slow but steady reader makes progress for as long as it likes, so the total bound ends it: a response whose write has not finished `WRITE_TOTAL_MS` after it began is reset, whatever its progress.
+At the defaults the largest answer is about 1.1 MB, so a client has to read at about 20 KB a second or faster to receive it.
 The watchdog runs only while a response is pending; it stops when the response is finished or the connection closes or fails, so it never touches an idle kept-alive connection.
 The operating system's buffers take in the first part of an answer whether or not the client reads it, at least 2.4 MB on a macOS loopback connection, so a write stalls only for an answer larger than the buffers of the two ends.
 

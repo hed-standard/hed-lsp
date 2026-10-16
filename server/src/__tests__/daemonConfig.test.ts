@@ -69,6 +69,7 @@ describe('loadConfig defaults', () => {
 			bodyTimeoutMs: 10000,
 			headersTimeoutMs: 10000,
 			writeStallMs: 10000,
+			writeTotalMs: 60000,
 			keepAliveTimeoutMs: 65000,
 			maxConnections: 256,
 			maxClients: 10000,
@@ -138,6 +139,7 @@ describe('loadConfig overrides', () => {
 			HED_LSP_BODY_TIMEOUT_MS: '5',
 			HED_LSP_HEADERS_TIMEOUT_MS: '2',
 			HED_LSP_WRITE_STALL_MS: '7',
+			HED_LSP_WRITE_TOTAL_MS: '9',
 			HED_LSP_KEEPALIVE_TIMEOUT_MS: '3',
 			HED_LSP_MAX_CONNECTIONS: '4',
 			HED_LSP_MAX_CLIENTS: '2',
@@ -178,6 +180,7 @@ describe('loadConfig overrides', () => {
 			bodyTimeoutMs: 5,
 			headersTimeoutMs: 2,
 			writeStallMs: 7,
+			writeTotalMs: 9,
 			keepAliveTimeoutMs: 3,
 			maxConnections: 4,
 			maxClients: 2,
@@ -190,6 +193,12 @@ describe('loadConfig overrides', () => {
 		expect(loadConfig({ HED_LSP_WRITE_STALL_MS: '1' }).writeStallMs).toBe(1);
 		expect(loadConfig({ HED_LSP_WRITE_STALL_MS: '2147483647' }).writeStallMs).toBe(2_147_483_647);
 		expect(failure({ HED_LSP_WRITE_STALL_MS: '2147483648' }).variable).toBe('HED_LSP_WRITE_STALL_MS');
+	});
+
+	it('accepts a write total of one millisecond, the shortest, and as long as a signed 32-bit timer allows', () => {
+		expect(loadConfig({ HED_LSP_WRITE_TOTAL_MS: '1' }).writeTotalMs).toBe(1);
+		expect(loadConfig({ HED_LSP_WRITE_TOTAL_MS: '2147483647' }).writeTotalMs).toBe(2_147_483_647);
+		expect(failure({ HED_LSP_WRITE_TOTAL_MS: '2147483648' }).variable).toBe('HED_LSP_WRITE_TOTAL_MS');
 	});
 
 	it('accepts true and false for the flags, in any case', () => {
@@ -276,6 +285,11 @@ describe('loadConfig failures', () => {
 		['WRITE_STALL_MS', '1.5'],
 		['WRITE_STALL_MS', 'soon'],
 		['WRITE_STALL_MS', ''],
+		['WRITE_TOTAL_MS', '0'],
+		['WRITE_TOTAL_MS', '-5'],
+		['WRITE_TOTAL_MS', '1.5'],
+		['WRITE_TOTAL_MS', 'soon'],
+		['WRITE_TOTAL_MS', ''],
 		['KEEPALIVE_TIMEOUT_MS', 'soon'],
 		['MAX_CONNECTIONS', '0'],
 		['MAX_CLIENTS', '0'],

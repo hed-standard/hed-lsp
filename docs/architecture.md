@@ -152,6 +152,7 @@ A body is input, not work: while a POST body arrives it holds one of its client'
 The in-flight slots, one for the client and one shared, are taken when the body is complete, or at once when there is none, and held until the work has stopped, so the caps count work that is still running after a timeout.
 Any answer that is sent while the body is still arriving first arranges for the rest of it to be read and dropped, up to four times `MAX_BODY_BYTES` and for at most `BODY_TIMEOUT_MS` after the answer, after which the connection is closed.
 The write of the answer has its own watchdog, `WRITE_STALL_MS`: the body goes out in pieces, each after the socket has drained, and a write that makes no progress for that long has its connection reset, so a client that stops reading cannot hold a connection until Node's socket timeout fires two to three periods later.
+A second bound, `WRITE_TOTAL_MS`, ends a write that is still making progress but has not finished in that time, so a client that reads a little now and then cannot hold the connection either.
 No charge is refunded on any of these exits.
 
 ### Data Flow for Validation

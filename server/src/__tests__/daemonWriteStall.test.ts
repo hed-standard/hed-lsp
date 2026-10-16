@@ -50,6 +50,8 @@ interface SlowClient {
 	received(): number;
 	/** The total size of the response, headers included, from its Content-Length; zero until it is known. */
 	expected(): number;
+	/** The code of the first error of the socket, such as ECONNRESET for a reset, or undefined if there was none. */
+	errorCode(): string | undefined;
 	/** Start reading again without pauses, as a client that was only slow. */
 	resume(): void;
 	closed: Promise<void>;
@@ -61,10 +63,13 @@ function slowClient(daemon: RunningDaemon, body: string, reading: Reading = {}):
 	let received = 0;
 	let expected = 0;
 	let sinceBreak = 0;
+	let errorCode: string | undefined;
 	let stopped = !reading.paced;
 	// An RST or an error ends the connection too, so one promise covers both.
 	const closed = new Promise<void>((resolve) => socket.on('close', () => resolve()));
-	socket.on('error', () => undefined);
+	socket.on('error', (error: NodeJS.ErrnoException) => {
+		errorCode ??= error.code;
+	});
 	socket.on('data', (chunk: Buffer) => {
 		firstDataAt ||= Date.now();
 		received += chunk.length;
@@ -97,6 +102,7 @@ function slowClient(daemon: RunningDaemon, body: string, reading: Reading = {}):
 		firstDataAt: () => firstDataAt,
 		received: () => received,
 		expected: () => expected,
+		errorCode: () => errorCode,
 		resume: () => {
 			stopped = false;
 			socket.resume();
@@ -175,6 +181,53 @@ describe('connections that move no bytes', () => {
 			expect(request).toMatchObject({ method: 'POST', path: '/v1/validate', status: 200 });
 			expect(request?.aborted).toBeUndefined();
 			expect(daemon.rawLines.some((line) => line.includes('write stalled'))).toBe(false);
+		} finally {
+			client.socket.destroy();
+			await daemon.stop();
+		}
+	}, 60_000);
+
+	it.concurrent('resets a client that reads slowly but steadily once the whole write has taken WRITE_TOTAL_MS', async () => {
+		const totalMs = 1000;
+		// The stall bound is far away, so only the total can end this connection. The client reads 1 MB,
+		// waits 400 ms, and reads on: it makes progress all the time and never stalls, and the answer of
+		// about 11 MB would take it several seconds.
+		const daemon = await startDaemon({
+			...LARGE_ANSWER_LIMITS,
+			HED_LSP_WRITE_STALL_MS: '30000',
+			HED_LSP_WRITE_TOTAL_MS: String(totalMs),
+		});
+		expect(daemon.config.writeTotalMs).toBe(totalMs);
+		const client = slowClient(daemon, LARGE_ANSWER, { paced: { everyBytes: 1_000_000, pauseMs: 400 } });
+
+		try {
+			await waitFor(() => client.expected() > 0, 30_000, 'the response to start');
+			await waitFor(
+				() => daemon.rawLines.some((line) => line.includes('"aborted":true')),
+				30_000,
+				'the connection to be reset',
+			);
+			const closedAfter = Date.now() - client.firstDataAt();
+			const total = daemon
+				.logLines()
+				.find((entry) => entry.msg === 'connection closed because a response write took too long');
+			const request = daemon.logLines().find((entry) => entry.msg === 'request' && entry.aborted === true);
+
+			expect(client.expected()).toBeGreaterThan(10_000_000);
+			expect(closedAfter).toBeGreaterThanOrEqual(0.8 * totalMs);
+			expect(closedAfter).toBeLessThan(totalMs + 2500);
+			expect(total).toMatchObject({ level: 'warn' });
+			expect(request?.requestId).toBe(total?.requestId);
+			expect(daemon.rawLines.some((line) => line.includes('write stalled'))).toBe(false);
+
+			// The client sees a reset, and never gets the rest of the answer.
+			client.resume();
+			await client.closed;
+			expect(client.received()).toBeLessThan(client.expected());
+			expect(client.errorCode()).toBe('ECONNRESET');
+
+			// The daemon is still running and answers a new client.
+			expect((await postJson(daemon.url, '/v1/validate', { strings: [VALID], schema: '8.4.0' })).status).toBe(200);
 		} finally {
 			client.socket.destroy();
 			await daemon.stop();
