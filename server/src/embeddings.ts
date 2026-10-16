@@ -9,6 +9,16 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ANCHOR_KEYWORDS } from './anchorKeywords.js';
+import {
+	DEFAULT_QUERY_FORMAT,
+	DTYPE,
+	formatQuery,
+	MODEL_ID,
+	modelCacheDir,
+	NORMALIZE,
+	POOLING,
+	type QueryFormat,
+} from './embeddingConfig.js';
 import { lookupOwn } from './keywordLookup.js';
 
 // Dynamic import for transformers.js (ES module)
@@ -79,8 +89,8 @@ export interface EmbeddingConfig {
 }
 
 const DEFAULT_CONFIG: EmbeddingConfig = {
-	modelId: 'neuromechanist/Qwen3-Embedding-0.6B-ONNX-Q8',
-	dtype: 'uint8', // Matches model_uint8.onnx file name
+	modelId: MODEL_ID,
+	dtype: DTYPE,
 	enabled: false, // Disabled by default - requires ~600MB model download
 };
 
@@ -103,6 +113,7 @@ class EmbeddingsManager {
 	private config: EmbeddingConfig = DEFAULT_CONFIG;
 	private modelLoaded = false;
 	private embeddingsLoaded = false;
+	private embedFailures = 0;
 	private dimensions = 1024; // Qwen3-Embedding-0.6B output dimension
 	private loading: Promise<boolean> | null = null;
 	private progressCallback: ProgressCallback | null = null;
@@ -274,22 +285,34 @@ class EmbeddingsManager {
 	async embed(text: string): Promise<number[] | null> {
 		if (!this.modelLoaded) {
 			const loaded = await this.initializeModel();
-			if (!loaded) return null;
+			if (!loaded) {
+				this.embedFailures++;
+				return null;
+			}
 		}
 
 		try {
 			const output = await extractor(text, {
-				pooling: 'last_token',
-				normalize: true,
+				pooling: POOLING,
+				normalize: NORMALIZE,
 			});
 
 			// Convert to regular array
 			const embedding = Array.from(output.data as Float32Array);
 			return embedding.slice(0, this.dimensions);
 		} catch (error) {
+			this.embedFailures++;
 			console.error('[HED Embeddings] Embedding failed:', error);
 			return null;
 		}
+	}
+
+	/**
+	 * Number of embed calls that failed since startup. Callers that must not score a
+	 * silent failure (the eval harness) compare this before and after a run.
+	 */
+	embedFailureCount(): number {
+		return this.embedFailures;
 	}
 
 	/**
@@ -303,8 +326,8 @@ class EmbeddingsManager {
 
 		try {
 			const output = await extractor(texts, {
-				pooling: 'last_token',
-				normalize: true,
+				pooling: POOLING,
+				normalize: NORMALIZE,
 			});
 
 			// Convert to array of arrays
@@ -378,7 +401,11 @@ class EmbeddingsManager {
 	 * - Tag search finds "bird" close to "Animal" directly
 	 * - Animal gets evidence from both sources → high confidence
 	 */
-	async findSimilar(query: string, topK: number = 10): Promise<SemanticMatch[]> {
+	async findSimilar(
+		query: string,
+		topK: number = 10,
+		format: QueryFormat = DEFAULT_QUERY_FORMAT,
+	): Promise<SemanticMatch[]> {
 		// Try to load pre-computed embeddings first
 		await this.loadEmbeddings();
 
@@ -395,7 +422,7 @@ class EmbeddingsManager {
 		}
 
 		// Generate query embedding for semantic search (lowercase)
-		const queryEmbedding = await this.embed(query.toLowerCase());
+		const queryEmbedding = await this.embed(formatQuery(query.toLowerCase(), format));
 		if (!queryEmbedding) {
 			return [];
 		}
@@ -549,18 +576,17 @@ class EmbeddingsManager {
 	 * Get the cache directory path for the model.
 	 */
 	getCacheDir(): string {
-		const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-		return path.join(homeDir, '.cache', 'huggingface', 'hub');
+		return modelCacheDir();
 	}
 
 	/**
 	 * Delete the cached model to free up disk space.
 	 * Returns true if deletion was successful.
 	 */
-	async deleteCache(): Promise<boolean> {
+	async deleteCache(cacheDir: string = this.getCacheDir()): Promise<boolean> {
 		try {
-			const cacheDir = this.getCacheDir();
-			const modelDir = path.join(cacheDir, `models--${this.config.modelId.replace('/', '--')}`);
+			// Same layout isModelCached checks: <cacheDir>/<org>/<name>.
+			const modelDir = path.join(cacheDir, ...this.config.modelId.split('/'));
 
 			if (fs.existsSync(modelDir)) {
 				fs.rmSync(modelDir, { recursive: true, force: true });
@@ -570,7 +596,7 @@ class EmbeddingsManager {
 				return true;
 			}
 			console.log('[HED Embeddings] No cache to delete');
-			return true;
+			return false;
 		} catch (error) {
 			console.error('[HED Embeddings] Failed to delete cache:', error);
 			return false;
@@ -581,8 +607,8 @@ class EmbeddingsManager {
 	 * Check if the model is cached locally.
 	 */
 	isModelCached(): boolean {
-		const cacheDir = this.getCacheDir();
-		const modelDir = path.join(cacheDir, `models--${this.config.modelId.replace('/', '--')}`);
+		// transformers.js caches under <cacheDir>/<org>/<name>, not the Hub's models--org--name layout.
+		const modelDir = path.join(this.getCacheDir(), ...this.config.modelId.split('/'));
 		return fs.existsSync(modelDir);
 	}
 

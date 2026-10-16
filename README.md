@@ -144,7 +144,7 @@ hed-suggest --semantic "participant action"
 | Option | Description |
 |--------|-------------|
 | `-j, --json` | Output results as JSON |
-| `-s, --schema VER` | Use specific schema version (default: 8.4.0) |
+| `-s, --schema VER` | Use specific schema version (default: 8.5.0) |
 | `-n, --top N` | Return top N suggestions (default: 10) |
 | `--semantic` | Use semantic search with embeddings |
 | `-h, --help` | Show help message |
