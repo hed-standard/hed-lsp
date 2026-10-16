@@ -41,7 +41,7 @@ cd server && bun run test
 flowchart TD
     A[Identify missing term] --> B[Add to server/src/anchorKeywords.ts]
     B --> C[bun run server/scripts/generateEmbeddings.ts]
-    C --> D[bun run compile and cd server && bun run test]
+    C --> D[bun run compile, then cd server and bun run test]
     D --> E[Test in VS Code]
 
     E --> F{Works correctly?}
@@ -125,12 +125,7 @@ Identify common terms used in that field:
 ### Step 2: Map to HED Tags
 
 For each term, find appropriate HED tags:
-```bash
-# Search the schema
-grep -i "your-term" server/data/HEDLatest.json
-```
-
-Or use the HED online tools: https://hedtools.org or browse at https://www.hedtags.org
+Search the HED schema with the HED online tools: https://hedtools.org or browse at https://www.hedtags.org
 
 ### Step 3: Add to the Anchor File
 
@@ -140,12 +135,12 @@ Add the entries to `ANCHOR_KEYWORDS` in `server/src/anchorKeywords.ts`. The gene
 // =====================
 // SLEEP RESEARCH (new category)
 // =====================
-'rem': ['Asleep', 'Agent-cognitive-state'],
-'nrem': ['Asleep', 'Agent-cognitive-state'],
-'slow-wave': ['Asleep', 'Data-feature'],
-'spindle': ['Data-feature'],
-'k-complex': ['Data-feature'],
+'sleep-onset': ['Asleep', 'Agent-cognitive-state'],
+'sleep-stage': ['Asleep', 'Agent-cognitive-state'],
+'slow-oscillation': ['Asleep', 'Data-feature'],
 ```
+
+Check that each key is absent before you add it. Adding a key that already exists makes the file fail `bun run check` with `noDuplicateObjectKeys`.
 
 ### Step 4: Regenerate and Test
 
@@ -197,7 +192,8 @@ The generator automatically includes all tags from all loaded schemas.
 ```typescript
 import { embeddingsManager } from './server/src/embeddings';
 
-// Check deterministic index
+// findByKeyword returns nothing until the tag data is loaded
+await embeddingsManager.loadEmbeddings();
 const result = embeddingsManager.findByKeyword('your-term');
 console.log(result);  // Empty if not found
 ```
