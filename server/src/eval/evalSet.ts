@@ -38,7 +38,8 @@ export interface EvalSet {
 	/** The HED schema the expected tags were resolved against. */
 	schema: string;
 	/** Where the pairs came from: the checkout's name and commit. */
-	source: { name: string; commit: string; description: string };
+	/** `dirty` is true when the checkout had uncommitted changes, so `commit` does not pin the content. */
+	source: { name: string; commit: string; dirty: boolean; description: string };
 	/** Pairs dropped from the source, by reason. */
 	skipped: { parseErrors: number; noLeafTags: number };
 	pairs: EvalPair[];

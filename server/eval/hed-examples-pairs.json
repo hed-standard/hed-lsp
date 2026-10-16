@@ -4,6 +4,7 @@
   "source": {
     "name": "hed-examples",
     "commit": "336a4fccaec59b4924c8f37c50967fa480538ccf",
+    "dirty": true,
     "description": "BIDS sidecar level descriptions paired with HED strings"
   },
   "skipped": {

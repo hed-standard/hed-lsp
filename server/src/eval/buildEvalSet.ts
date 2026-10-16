@@ -27,7 +27,6 @@ interface RawPair {
 
 export interface BuildStats {
 	jsonFiles: number;
-	unreadableFiles: number;
 	uniquePairs: number;
 	skippedParseErrors: number;
 	skippedNoTags: number;
@@ -108,7 +107,6 @@ export async function buildEvalSet(root: string): Promise<{ set: EvalSet; stats:
 	const schemas = await schemaManager.getSchema(EVAL_SCHEMA_VERSION);
 	const stats: BuildStats = {
 		jsonFiles: 0,
-		unreadableFiles: 0,
 		uniquePairs: 0,
 		skippedParseErrors: 0,
 		skippedNoTags: 0,
@@ -180,7 +178,7 @@ export async function buildEvalSet(root: string): Promise<{ set: EvalSet; stats:
 			schema: EVAL_SCHEMA_VERSION,
 			source: {
 				name: 'hed-examples',
-				commit: checkoutCommit(root),
+				...checkoutState(root),
 				description: 'BIDS sidecar level descriptions paired with HED strings',
 			},
 			skipped: { parseErrors: stats.skippedParseErrors, noLeafTags: stats.skippedNoTags },
@@ -190,10 +188,15 @@ export async function buildEvalSet(root: string): Promise<{ set: EvalSet; stats:
 	};
 }
 
-/** The commit of the hed-examples checkout, so the eval set records where it came from. */
-function checkoutCommit(root: string): string {
+/**
+ * The commit of the hed-examples checkout, and whether its working tree differs from that
+ * commit. A dirty tree means the commit alone does not pin the content, so the set says so.
+ */
+function checkoutState(root: string): { commit: string; dirty: boolean } {
 	try {
-		return execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf-8' }).trim();
+		const commit = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf-8' }).trim();
+		const status = execFileSync('git', ['-C', root, 'status', '--porcelain'], { encoding: 'utf-8' });
+		return { commit, dirty: status.trim().length > 0 };
 	} catch {
 		throw new Error(`${root} must be a git checkout so the eval set can record its commit`);
 	}
