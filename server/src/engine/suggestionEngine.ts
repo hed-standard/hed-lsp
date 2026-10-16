@@ -23,10 +23,27 @@ export interface SuggestionOptions {
 	queryFormat?: QueryFormat;
 }
 
+/**
+ * What the semantic step did for one query. `ran`: the step was attempted and every embedding it
+ * needed was computed. `skipped`: the caller did not ask for it, or the keyword and schema steps
+ * already filled `top`. `failed`: the caller asked for it and it was needed, but it did not run to
+ * completion, because the embeddings are not available or an embedding could not be computed. The
+ * step never throws, so this is how a caller learns that a missing semantic result is a failure and
+ * not an empty answer.
+ */
+export type SemanticStep = 'ran' | 'skipped' | 'failed';
+
 export interface SuggestionResult {
 	query: string;
 	suggestions: string[];
 	source: 'keyword' | 'schema' | 'semantic';
+	/** Whether the semantic step ran, was skipped, or failed. */
+	semanticStep: SemanticStep;
+}
+
+/** The message of an error, or the text of any other thrown value, which goes to the log as a line's detail. */
+function errorText(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
 }
 
 const DEFAULT_OPTIONS: SuggestionOptions = {
@@ -61,7 +78,8 @@ function withDefaults(options: Partial<SuggestionOptions> | null | undefined): S
  *
  * The caller is responsible for loading the schema and warming the
  * embedding model. For multi-query workloads prefer `suggestBatch` which
- * does both once per batch.
+ * does both once per batch. The result's `semanticStep` says whether the
+ * semantic step ran, was skipped, or failed.
  */
 export async function findSuggestions(
 	query: string,
@@ -90,13 +108,22 @@ export async function findSuggestions(
 				}
 			}
 		} catch (error) {
-			log.error(`Warning: Schema search failed: ${error instanceof Error ? error.message : error}`);
+			log.errorWithDetail('Warning: Schema search failed', errorText(error));
 		}
 	}
 
+	let semanticStep: SemanticStep = 'skipped';
 	if (opts.semantic && suggestions.length < opts.top) {
+		// Needed and asked for: it stays failed unless the step runs to completion.
+		semanticStep = 'failed';
 		try {
 			if (embeddingsManager.isAvailable()) {
+				// findSimilar reports a failed embedding by returning no matches, which looks like an empty
+				// answer, so a rise in the manager's failure count across the call is how a failure is told
+				// apart. A failure of another semantic call running at the same time is counted here too, so a
+				// caller that needs exact attribution runs one semantic call at a time, as the daemon does
+				// by default.
+				const failuresBefore = embeddingsManager.embedFailureCount();
 				const semanticResults = await embeddingsManager.findSimilar(normalizedQuery, opts.top, opts.queryFormat);
 				for (const result of semanticResults) {
 					if (!suggestions.includes(result.tag)) {
@@ -104,9 +131,12 @@ export async function findSuggestions(
 						source = 'semantic';
 					}
 				}
+				if (embeddingsManager.embedFailureCount() === failuresBefore) {
+					semanticStep = 'ran';
+				}
 			}
 		} catch (error) {
-			log.error(`Warning: Semantic search failed: ${error instanceof Error ? error.message : error}`);
+			log.errorWithDetail('Warning: Semantic search failed', errorText(error));
 		}
 	}
 
@@ -114,6 +144,7 @@ export async function findSuggestions(
 		query,
 		suggestions: [...new Set(suggestions)].slice(0, opts.top),
 		source,
+		semanticStep,
 	};
 }
 
@@ -122,6 +153,10 @@ export async function findSuggestions(
  * (when requested) initializing the embedding model once for the whole
  * batch. Returns a `{ query: [suggestion, ...] }` map matching the JSON
  * shape that `hed-suggest --json` emits today.
+ *
+ * A query that fails is logged and left out of the map, so the other queries still return: an
+ * absent key means the query failed, and an empty list means it found no matches. A failure that
+ * affects the whole request, such as a schema that cannot be loaded, still rejects.
  */
 export async function suggestBatch(
 	queries: string[],
@@ -141,9 +176,14 @@ export async function suggestBatch(
 	}
 
 	const entries: [string, string[]][] = [];
-	for (const query of queries) {
-		const result = await findSuggestions(query, opts);
-		entries.push([query, result.suggestions]);
+	for (const [index, query] of queries.entries()) {
+		try {
+			const result = await findSuggestions(query, opts);
+			entries.push([query, result.suggestions]);
+		} catch (error) {
+			// The position identifies the failing query, so the log line does not repeat the query text.
+			log.errorWithDetail(`[HED] Suggestions failed for query ${index + 1} of ${queries.length}`, errorText(error));
+		}
 	}
 	// Object.fromEntries defines own properties, so a query named `__proto__` stays a key.
 	return Object.fromEntries(entries);

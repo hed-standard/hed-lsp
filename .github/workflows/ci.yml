@@ -102,3 +102,101 @@ jobs:
           name: hed-lsp-vsix
           path: '*.vsix'
           retention-days: 30
+
+  image:
+    name: Daemon image (build and smoke test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Only for a pull request into main (the epic-to-main pull request) and a push to main, though
+    # the workflow also runs for develop. act cannot run this job and its actor is nektos/act, so it
+    # skips the job; the env context, where act sets ACT, is not available in a job-level condition.
+    if: ${{ github.actor != 'nektos/act' && ((github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the image for linux/amd64
+        run: docker build --platform linux/amd64 --build-arg HED_LSP_COMMIT="${GITHUB_SHA::7}" --tag hed-lsp-daemon:ci .
+
+      - name: Smoke test with a published port
+        run: |
+          docker run --detach --name hed-lsp-smoke --publish 127.0.0.1:38530:38530 hed-lsp-daemon:ci
+          HED_LSP_DAEMON_URL=http://127.0.0.1:38530 HED_LSP_DAEMON_CONTAINER=hed-lsp-smoke \
+            HED_LSP_EXPECTED_COMMIT="${GITHUB_SHA::7}" scripts/daemon-smoke.sh
+
+      # With no network the container publishes no port, so the script runs inside it.
+      - name: Smoke test with no network
+        run: |
+          docker run --detach --name hed-lsp-offline --network none hed-lsp-daemon:ci
+          docker cp scripts/daemon-smoke.sh hed-lsp-offline:/tmp/daemon-smoke.sh
+          docker exec --env HED_LSP_DAEMON_URL=http://127.0.0.1:38530 --env HED_LSP_EXPECTED_COMMIT="${GITHUB_SHA::7}" \
+            hed-lsp-offline bash /tmp/daemon-smoke.sh --offline
+
+      - name: Wait for the Docker health check to pass in both containers
+        run: |
+          for name in hed-lsp-smoke hed-lsp-offline; do
+            timeout 120 sh -c "until [ \"\$(docker inspect --format '{{.State.Health.Status}}' $name)\" = healthy ]; do sleep 5; done"
+          done
+
+      - name: Show the container logs
+        if: failure()
+        run: |
+          docker ps --all
+          docker logs hed-lsp-smoke || true
+          docker logs hed-lsp-offline || true
+
+      - name: Save the image that was tested
+        if: github.event_name == 'push'
+        run: docker save --output hed-lsp-daemon.tar hed-lsp-daemon:ci
+
+      # The publish job pushes this image, not a rebuild of it. A week covers a slow approval.
+      - name: Upload the image
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hed-lsp-daemon-image
+          path: hed-lsp-daemon.tar
+          retention-days: 7
+
+  publish-image:
+    name: Publish daemon image (ghcr.io)
+    runs-on: ubuntu-latest
+    needs: image
+    timeout-minutes: 15
+    # The ghcr-publish environment holds required reviewers, so this job waits for an approval.
+    if: ${{ github.actor != 'nektos/act' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    environment: ghcr-publish
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: hed-lsp-daemon-image
+
+      - name: Load the image that passed the smoke tests
+        run: docker load --input hed-lsp-daemon.tar
+
+      - name: Log in to ghcr.io
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: echo "$REGISTRY_TOKEN" | docker login ghcr.io --username "$REGISTRY_USER" --password-stdin
+
+      # Two tags, the package version and the commit, and no latest: deployments pin the digest.
+      - name: Push the image and print its digest
+        run: |
+          version="$(jq --raw-output .version server/package.json)"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/hed-lsp-daemon"
+          docker tag hed-lsp-daemon:ci "$image:$version"
+          docker tag hed-lsp-daemon:ci "$image:sha-${GITHUB_SHA::7}"
+          docker push "$image:$version"
+          docker push "$image:sha-${GITHUB_SHA::7}"
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$image:$version")"
+          echo "Published $digest"
+          { echo '### Published image'; echo; echo "\`$digest\`"; } >> "$GITHUB_STEP_SUMMARY"

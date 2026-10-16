@@ -149,6 +149,20 @@ hed-suggest --semantic "participant action"
 | `--semantic` | Use semantic search with embeddings |
 | `-h, --help` | Show help message |
 
+## HTTP Daemon
+
+The same engine is available over HTTP, for editors, web pages, and services that cannot run a language server.
+`GET /v1/health`, `GET /v1/schemas`, `POST /v1/validate`, and `POST /v1/suggest` return JSON, with public limits and no API keys.
+
+```bash
+cd server
+bun run compile
+node out/daemon/main.js   # listens on 127.0.0.1:38530
+```
+
+A container image is built by CI for `linux/amd64`.
+See [docs/daemon.md](docs/daemon.md) for the API reference, the limits, what is logged, and how to run the image.
+
 ## Development
 
 ```bash
@@ -181,6 +195,7 @@ hed-lsp/
 │       ├── engine/          # Pure engine (no LSP imports): validation, suggestions, schema, embeddings
 │       ├── server.ts        # LSP connection and handlers
 │       ├── cli.ts           # hed-suggest CLI tool
+│       ├── daemon/          # HTTP daemon: v1 API, limits, load harness
 │       ├── diagnostics.ts   # Validation to editor diagnostics
 │       ├── completion.ts    # Autocomplete provider
 │       ├── hover.ts         # Hover documentation

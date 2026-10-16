@@ -97,6 +97,20 @@ const DEFAULT_CONFIG: EmbeddingConfig = {
 };
 
 /**
+ * How the model is loaded. Both fields are optional, and the defaults are what the language server
+ * and the CLI have always done.
+ */
+export interface RuntimeOptions {
+	/**
+	 * Threads ONNX Runtime uses inside one operator, as a positive integer. When unset, ONNX Runtime
+	 * sizes its own pool from the visible cores.
+	 */
+	threads?: number;
+	/** Whether a model that is not cached may be downloaded. Defaults to true. */
+	allowDownload?: boolean;
+}
+
+/**
  * Progress callback for model download.
  */
 export type ProgressCallback = (progress: {
@@ -119,6 +133,23 @@ class EmbeddingsManager {
 	private dimensions = 1024; // Qwen3-Embedding-0.6B output dimension
 	private loading: Promise<boolean> | null = null;
 	private progressCallback: ProgressCallback | null = null;
+	private threads: number | undefined = undefined;
+	private allowDownload = true;
+
+	/**
+	 * Set how the model is loaded. The options apply the next time the model loads; a model that is
+	 * already loaded keeps the options it was loaded with. Each call replaces the previous options,
+	 * so an empty object restores the defaults. Throws a RangeError for a thread count that is not a
+	 * positive integer.
+	 */
+	setRuntimeOptions(options: RuntimeOptions): void {
+		const { threads, allowDownload = true } = options;
+		if (threads !== undefined && (!Number.isInteger(threads) || threads < 1)) {
+			throw new RangeError(`threads must be a positive integer, got ${threads}`);
+		}
+		this.threads = threads;
+		this.allowDownload = allowDownload;
+	}
 
 	/**
 	 * Set a callback to receive progress updates during model download.
@@ -165,6 +196,7 @@ class EmbeddingsManager {
 			const cacheDir = this.getCacheDir();
 			if (transformers.env) {
 				transformers.env.cacheDir = cacheDir;
+				transformers.env.allowRemoteModels = this.allowDownload;
 				log.info(`[HED Embeddings] Cache directory: ${cacheDir}`);
 			}
 
@@ -193,6 +225,7 @@ class EmbeddingsManager {
 			extractor = await pipeline('feature-extraction', this.config.modelId, {
 				dtype: this.config.dtype,
 				progress_callback: progressHandler,
+				...(this.threads === undefined ? {} : { session_options: { intraOpNumThreads: this.threads } }),
 			});
 
 			this.modelLoaded = true;

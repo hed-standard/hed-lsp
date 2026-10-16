@@ -5,10 +5,12 @@
 	"license": "MIT",
 	"main": "./out/server.js",
 	"bin": {
-		"hed-suggest": "./out/cli.js"
+		"hed-suggest": "./out/cli.js",
+		"hed-lsp-daemon": "./out/daemon/main.js"
 	},
 	"scripts": {
 		"compile": "tsc -b",
+		"daemon": "node out/daemon/main.js",
 		"watch": "tsc -b -w",
 		"test": "tsc -b && vitest run",
 		"test:watch": "vitest"

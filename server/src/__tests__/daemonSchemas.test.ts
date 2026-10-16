@@ -1,0 +1,419 @@
+/**
+ * Tests for the schema allowlist: normalization of a request's schema field, per-spec load status,
+ * the load timeout, and the backoff. They run the real registry against the real engine and the
+ * bundled schemas. A load that fails is a real one: `8.4.0,sc:score_9.9.9` does not exist, so the
+ * load fails with a 404 when GitHub is reachable and with a network error when it is not. The clock
+ * is a parameter. The timer that races a load is tested on the race helper with a promise that never
+ * settles, because a real load of a bundled schema finishes before even a 1 ms timer fires, and no
+ * real load can be made to outlast a short one. The fallback of 8.5.0 to the bundled 8.4.0 happens
+ * only when GitHub cannot be reached, so it is covered by the offline smoke test
+ * (`scripts/daemon-smoke.sh --offline`, run in CI and in the local `docker run --network none` run),
+ * and not here. No mocks.
+ */
+
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { loadConfig } from '../daemon/config.js';
+import { ApiError } from '../daemon/protocol.js';
+import {
+	LoadTimeout,
+	raceTimeout,
+	SCHEMA_BACKOFF_BASE_MS,
+	SCHEMA_BACKOFF_MAX_MS,
+	SchemaRegistry,
+	type SchemaRegistryOptions,
+	schemaBackoffMs,
+} from '../daemon/schemas.js';
+import { type LogSink, schemaManager, setLogger } from '../engine/index.js';
+import { BUNDLED, BUNDLED_WITH_LIBRARIES, call, type RunningDaemon, startDaemon, waitFor } from './daemonHarness.js';
+
+/** A spec that does not exist, so loading it fails for real, whether or not the network is up. */
+const MISSING = '8.4.0,sc:score_9.9.9';
+
+function registry(env: Record<string, string> = {}, options: SchemaRegistryOptions = {}): SchemaRegistry {
+	const config = loadConfig({
+		HED_LSP_SCHEMAS: `${BUNDLED};${BUNDLED_WITH_LIBRARIES}`,
+		HED_LSP_DEFAULT_SCHEMA: BUNDLED,
+		...env,
+	});
+	return new SchemaRegistry(config, options);
+}
+
+function thrown(action: () => unknown): ApiError {
+	try {
+		action();
+	} catch (error) {
+		if (error instanceof ApiError) {
+			return error;
+		}
+		throw error;
+	}
+	throw new Error('expected the call to throw an ApiError');
+}
+
+async function rejected(promise: Promise<unknown>): Promise<ApiError> {
+	try {
+		await promise;
+	} catch (error) {
+		if (error instanceof ApiError) {
+			return error;
+		}
+		throw error;
+	}
+	throw new Error('expected the promise to reject with an ApiError');
+}
+
+describe('schemaBackoffMs', () => {
+	it('starts at 30 seconds, doubles, and stops at 10 minutes', () => {
+		expect([1, 2, 3, 4, 5, 6, 7, 20].map(schemaBackoffMs)).toEqual([
+			30_000, 60_000, 120_000, 240_000, 480_000, 600_000, 600_000, 600_000,
+		]);
+		expect(SCHEMA_BACKOFF_BASE_MS).toBe(30_000);
+		expect(SCHEMA_BACKOFF_MAX_MS).toBe(600_000);
+	});
+});
+
+describe('SchemaRegistry.resolve', () => {
+	const schemas = registry();
+
+	it('maps a missing, null, or blank schema to the default', () => {
+		for (const value of [undefined, null, '', '   ', ' , ', []]) {
+			expect(schemas.resolve(value), JSON.stringify(value)).toBe(BUNDLED);
+		}
+	});
+
+	it('maps reordered and array forms of a spec to the allowlisted spec', () => {
+		const forms: unknown[] = [
+			BUNDLED_WITH_LIBRARIES,
+			' 8.4.0 , la:lang_1.1.0, sc:score_2.1.0 ',
+			'la:lang_1.1.0,sc:score_2.1.0,8.4.0',
+			['sc:score_2.1.0', 'la:lang_1.1.0', '8.4.0'],
+			['8.4.0,sc:score_2.1.0', 'la:lang_1.1.0'],
+		];
+		for (const form of forms) {
+			expect(schemas.resolve(form), JSON.stringify(form)).toBe(BUNDLED_WITH_LIBRARIES);
+		}
+		expect(schemas.resolve([BUNDLED])).toBe(BUNDLED);
+	});
+
+	it('refuses a spec outside the allowlist with the allowed list', () => {
+		const outside = [
+			'8.5.0',
+			'8.4.0,sc:score_2.0.0',
+			'8.4.0,sc:score_2.1.0',
+			'SC:score_2.1.0,8.4.0,la:lang_1.1.0',
+			'8.4',
+		];
+		for (const value of outside) {
+			const error = thrown(() => schemas.resolve(value));
+
+			expect(error.code, value).toBe('UNKNOWN_SCHEMA');
+			expect(error.status).toBe(400);
+			expect(error.options.details).toEqual({ allowed: [BUNDLED, BUNDLED_WITH_LIBRARIES] });
+		}
+	});
+
+	it('refuses a spec that repeats a part', () => {
+		expect(thrown(() => schemas.resolve('8.4.0,8.4.0')).code).toBe('UNKNOWN_SCHEMA');
+	});
+
+	it('refuses a value of the wrong type as a malformed request', () => {
+		for (const value of [5, true, {}, [1], ['8.4.0', null]]) {
+			expect(thrown(() => schemas.resolve(value)).code, JSON.stringify(value)).toBe('INVALID_REQUEST');
+		}
+	});
+
+	it('does not let a prototype name pass as a spec', () => {
+		for (const value of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
+			expect(thrown(() => schemas.resolve(value)).code, value).toBe('UNKNOWN_SCHEMA');
+		}
+	});
+});
+
+describe('SchemaRegistry.resolve and long specs', () => {
+	const schemas = registry();
+	const padded = (length: number): string => BUNDLED.padEnd(length, ' ');
+
+	it('accepts a string of exactly 256 characters and refuses one of 257, without parsing it', () => {
+		// Parsed, the 257 padded characters would be the allowlisted 8.4.0; parsed, a string of commas would be
+		// blank and mean the default. Both are refused, so the length is checked first.
+		expect(schemas.resolve(padded(256))).toBe(BUNDLED);
+		for (const value of [padded(257), ','.repeat(257), ` ${','.repeat(256)}`]) {
+			const error = thrown(() => schemas.resolve(value));
+
+			expect(error.code, `${value.length} characters`).toBe('UNKNOWN_SCHEMA');
+			expect(error.status).toBe(400);
+			expect(error.options.details).toEqual({ allowed: [BUNDLED, BUNDLED_WITH_LIBRARIES] });
+		}
+	});
+
+	it('counts an array by its parts joined with commas', () => {
+		// 5 + 1 + 250 = 256 characters joined.
+		expect(schemas.resolve([BUNDLED, ' '.repeat(250)])).toBe(BUNDLED);
+		expect(thrown(() => schemas.resolve([BUNDLED, ' '.repeat(251)])).code).toBe('UNKNOWN_SCHEMA');
+		expect(thrown(() => schemas.resolve(Array.from({ length: 258 }, () => ''))).code).toBe('UNKNOWN_SCHEMA');
+		expect(schemas.resolve(Array.from({ length: 257 }, () => ''))).toBe(BUNDLED);
+	});
+
+	it('never joins or reads a long array as a whole, so parsing does not run', () => {
+		// parseSchemaSpec joins an array of strings; this one counts the joins.
+		class Counting extends Array<string> {
+			joins = 0;
+			override join(separator?: string): string {
+				this.joins++;
+				return super.join(separator);
+			}
+		}
+		const long = new Counting();
+		long.push('a'.repeat(200), 'b'.repeat(200));
+		const short = new Counting();
+		short.push(BUNDLED);
+
+		expect(thrown(() => schemas.resolve(long)).code).toBe('UNKNOWN_SCHEMA');
+		expect(long.joins).toBe(0);
+		expect(schemas.resolve(short)).toBe(BUNDLED);
+		expect(short.joins).toBe(1);
+	});
+
+	it('leaves the wrong type to the type check, however long the array is', () => {
+		expect(thrown(() => schemas.resolve([1, 'a'.repeat(300)])).code).toBe('INVALID_REQUEST');
+		expect(thrown(() => schemas.resolve([...Array.from({ length: 1000 }, () => 'a'), 5])).code).toBe('UNKNOWN_SCHEMA');
+		expect(thrown(() => schemas.resolve({ length: 1000 })).code).toBe('INVALID_REQUEST');
+	});
+});
+
+describe('SchemaRegistry with the real engine', () => {
+	it('preloads the allowlist and reports each spec as loaded with the version used', async () => {
+		const schemas = registry();
+
+		expect(schemas.defaultReady).toBe(false);
+		expect(schemas.list().map((entry) => entry.status)).toEqual(['loading', 'loading']);
+
+		await schemas.preload();
+
+		expect(schemas.defaultReady).toBe(true);
+		expect(schemas.list()).toEqual([
+			{ spec: BUNDLED, status: 'loaded', used: BUNDLED },
+			{ spec: BUNDLED_WITH_LIBRARIES, status: 'loaded', used: BUNDLED_WITH_LIBRARIES },
+		]);
+		expect(schemas.degraded()).toEqual([]);
+		expect(await schemas.ensure(BUNDLED_WITH_LIBRARIES)).toBe(BUNDLED_WITH_LIBRARIES);
+	});
+
+	it('shares one load between concurrent callers', async () => {
+		// A cleared engine cache makes the load visible in the engine's log, which is captured here.
+		schemaManager.clearCache();
+		const loads: string[] = [];
+		const sink: LogSink = {
+			info: () => {},
+			error: (message) => message.startsWith('[HED] Loading') && loads.push(message),
+		};
+		const previous = setLogger(sink);
+		try {
+			const schemas = registry();
+
+			const first = schemas.ensure(BUNDLED);
+			const second = schemas.ensure(BUNDLED);
+			const third = schemas.ensure(BUNDLED);
+
+			expect(second).toBe(first);
+			expect(third).toBe(first);
+			expect(await Promise.all([first, second, third])).toEqual([BUNDLED, BUNDLED, BUNDLED]);
+			expect(loads).toEqual([`[HED] Loading schema: ${BUNDLED}`]);
+		} finally {
+			setLogger(previous);
+		}
+	});
+
+	it('settles the default as soon as the default spec has loaded', async () => {
+		const schemas = registry();
+
+		const settled = schemas.whenDefaultSettled();
+		void schemas.ensure(BUNDLED);
+		await settled;
+
+		expect(schemas.defaultReady).toBe(true);
+	});
+});
+
+describe('raceTimeout', () => {
+	it('rejects with LoadTimeout for a promise that never settles', async () => {
+		const never = new Promise<string>(() => undefined);
+		const startedAt = performance.now();
+
+		const error = await raceTimeout(never, 40).catch((failure: unknown) => failure);
+
+		expect(error).toBeInstanceOf(LoadTimeout);
+		expect((error as Error).message).toBe('schema load timed out after 40 ms');
+		expect(performance.now() - startedAt).toBeGreaterThanOrEqual(35);
+	});
+
+	it('passes on the value or the failure of a promise that settles in time, and leaves no timer behind', async () => {
+		const timers = (): number => process.getActiveResourcesInfo().filter((name) => name === 'Timeout').length;
+		const before = timers();
+
+		await expect(raceTimeout(Promise.resolve('loaded'), 60_000)).resolves.toBe('loaded');
+		await expect(raceTimeout(Promise.reject(new Error('refused')), 60_000)).rejects.toThrow('refused');
+
+		expect(timers()).toBe(before);
+	});
+
+	it('does not stop the work it gave up on: a promise that settles late still has its value', async () => {
+		let finish!: (value: string) => void;
+		const slow = new Promise<string>((resolve) => {
+			finish = resolve;
+		});
+
+		await expect(raceTimeout(slow, 20)).rejects.toBeInstanceOf(LoadTimeout);
+		finish('late');
+
+		await expect(slow).resolves.toBe('late');
+	});
+
+	it('settles by whichever comes first, so a promise that finishes just before the timer wins', async () => {
+		const quick = new Promise<string>((resolve) => setTimeout(() => resolve('in time'), 10));
+
+		await expect(raceTimeout(quick, 2000)).resolves.toBe('in time');
+	});
+});
+
+describe('SchemaRegistry failures', () => {
+	// The backoff is computed from this clock, so the test controls how much time has passed.
+	let clock = 1_000_000;
+	const now = (): number => clock;
+	// The engine's own log, captured so each real load attempt can be counted and stderr stays quiet.
+	let engineLines: string[] = [];
+	let previousSink: LogSink;
+	beforeEach(() => {
+		clock = 1_000_000;
+		schemaManager.clearCache();
+		engineLines = [];
+		previousSink = setLogger({ info: () => {}, error: (message) => engineLines.push(message) });
+	});
+	afterEach(() => {
+		setLogger(previousSink);
+	});
+
+	/** A registry whose only spec, and default, is one that cannot load. */
+	function failing(): SchemaRegistry {
+		return registry({ HED_LSP_SCHEMAS: MISSING, HED_LSP_DEFAULT_SCHEMA: MISSING }, { now });
+	}
+
+	/** How many times the engine has tried to load `spec` so far. */
+	function loadAttempts(spec: string): number {
+		return engineLines.filter((line) => line === `[HED] Loading schema: ${spec}`).length;
+	}
+
+	it('refuses a failed spec during its backoff without loading again, then retries for real', async () => {
+		const schemas = failing();
+
+		const first = await rejected(schemas.ensure(MISSING));
+		expect(first.code).toBe('SCHEMA_UNAVAILABLE');
+		expect(first.status).toBe(503);
+		expect(first.options.retryAfterSeconds).toBe(30);
+		expect(schemas.list()[0]).toEqual({ spec: MISSING, status: 'failed', retryAfterSeconds: 30 });
+		expect(schemas.degraded()).toEqual([MISSING]);
+		expect(schemas.defaultReady).toBe(true);
+		expect(loadAttempts(MISSING)).toBe(1);
+
+		clock += 10_000;
+		const during = await rejected(schemas.ensure(MISSING));
+		expect(during.options.retryAfterSeconds).toBe(20);
+		expect(schemas.list()[0].retryAfterSeconds).toBe(20);
+		expect(loadAttempts(MISSING)).toBe(1);
+
+		clock += 20_000;
+		const again = await rejected(schemas.ensure(MISSING));
+		expect(again.options.retryAfterSeconds).toBe(60);
+		expect(loadAttempts(MISSING)).toBe(2);
+		expect(schemas.list()[0]).toEqual({ spec: MISSING, status: 'failed', retryAfterSeconds: 60 });
+	});
+
+	it('measures its backoff only on its clock: a step back never ends it, and a step forward past it retries', async () => {
+		const schemas = failing();
+		const first = await rejected(schemas.ensure(MISSING));
+		expect(first.options.retryAfterSeconds).toBe(30);
+		expect(loadAttempts(MISSING)).toBe(1);
+
+		// An hour back: still in the backoff, nothing is loaded, and the wait is not shorter.
+		clock -= 3_600_000;
+		const back = await rejected(schemas.ensure(MISSING));
+		expect(back.code).toBe('SCHEMA_UNAVAILABLE');
+		expect(back.options.retryAfterSeconds).toBeGreaterThanOrEqual(30);
+		expect(schemas.list()[0].retryAfterSeconds).toBeGreaterThanOrEqual(30);
+		expect(loadAttempts(MISSING)).toBe(1);
+
+		// The clock is back where it was and 10 seconds on: 20 of the 30 seconds are left.
+		clock += 3_600_000 + 10_000;
+		const restored = await rejected(schemas.ensure(MISSING));
+		expect(restored.options.retryAfterSeconds).toBe(20);
+		expect(loadAttempts(MISSING)).toBe(1);
+
+		// An hour forward is far past the backoff, so the next call loads for real, and fails again with a longer wait.
+		clock += 3_600_000;
+		const retried = await rejected(schemas.ensure(MISSING));
+		expect(retried.options.retryAfterSeconds).toBe(60);
+		expect(loadAttempts(MISSING)).toBe(2);
+	});
+
+	it('doubles the backoff with each consecutive failure', async () => {
+		const schemas = failing();
+
+		const waits: (number | undefined)[] = [];
+		for (let round = 0; round < 4; round++) {
+			waits.push((await rejected(schemas.ensure(MISSING))).options.retryAfterSeconds);
+			clock += 1_000_000;
+		}
+
+		expect(waits).toEqual([30, 60, 120, 240]);
+		expect(loadAttempts(MISSING)).toBe(4);
+	});
+
+	it('rejects an ensure for a spec outside the allowlist as a programming error', async () => {
+		await expect(registry().ensure('9.9.9')).rejects.toThrow(/allowlist/);
+	});
+});
+
+describe('a daemon with schemas that cannot load', () => {
+	let daemon: RunningDaemon | undefined;
+
+	beforeEach(() => {
+		// The engine caches loads for the life of the process, so each case starts clean.
+		schemaManager.clearCache();
+	});
+
+	afterEach(async () => {
+		await daemon?.stop();
+		daemon = undefined;
+	});
+
+	it('marks a spec that cannot load as failed, with a retry time, and reports degraded', async () => {
+		daemon = await startDaemon({ HED_LSP_SCHEMAS: `${BUNDLED};${MISSING}`, HED_LSP_DEFAULT_SCHEMA: BUNDLED });
+		const running = daemon;
+		await waitFor(
+			async () => (await call(running.url, '/v1/schemas')).json.schemas[1].status === 'failed',
+			5000,
+			'the spec to fail',
+		);
+
+		const schemas = await call(running.url, '/v1/schemas');
+		const health = await call(running.url, '/v1/health');
+
+		expect(schemas.json.schemas[0]).toEqual({ spec: BUNDLED, status: 'loaded', used: BUNDLED });
+		expect(schemas.json.schemas[1]).toMatchObject({ spec: MISSING, status: 'failed' });
+		expect(schemas.json.schemas[1].retryAfterSeconds).toBeGreaterThan(0);
+		expect(schemas.json.schemas[1].retryAfterSeconds).toBeLessThanOrEqual(30);
+		expect(health.status).toBe(200);
+		expect(health.json.status).toBe('degraded');
+		expect(health.json.schemas.degraded).toEqual([MISSING]);
+	});
+
+	it('is ready, and degraded, when the default itself cannot load', async () => {
+		daemon = await startDaemon({ HED_LSP_SCHEMAS: MISSING, HED_LSP_DEFAULT_SCHEMA: MISSING });
+
+		const health = await call(daemon.url, '/v1/health');
+
+		expect(health.status).toBe(200);
+		expect(health.json.status).toBe('degraded');
+		expect((await call(daemon.url, '/v1/schemas')).status).toBe(200);
+	});
+});

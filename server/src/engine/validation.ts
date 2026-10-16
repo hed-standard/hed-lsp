@@ -4,7 +4,7 @@
  */
 
 import type { Schemas } from 'hed-validator';
-import { parseHedString } from 'hed-validator';
+import { IssueError, parseHedString } from 'hed-validator';
 import type { ValidationIssue } from './types.js';
 
 /**
@@ -75,6 +75,12 @@ export async function validateHedString(hedString: string, schemas: Schemas): Pr
 		const allIssues = [...syntaxIssues, ...semanticIssues];
 		return allIssues.map((issue) => convertIssue(issue, hedString));
 	} catch (error) {
+		// The validator throws some HED issues instead of returning them, such as a repeated tag
+		// (TAG_EXPRESSION_REPEATED). Such an issue is reported as the validator's issue it is.
+		const thrown = thrownHedIssue(error);
+		if (thrown) {
+			return [convertIssue(thrown, hedString)];
+		}
 		// Return a generic error if parsing fails unexpectedly
 		return [
 			{
@@ -85,6 +91,28 @@ export async function validateHedString(hedString: string, schemas: Schemas): Pr
 			},
 		];
 	}
+}
+
+/**
+ * HED codes that stand for a failure of the validator itself and not for a mistake in the string:
+ * an issue with one of these is not reported as a HED issue, and an issue returned with one of
+ * them is mapped from its internal code instead.
+ */
+const GENERIC_CODES = ['INTERNAL_ERROR', 'GENERICERROR', 'GENERIC_ERROR', 'UNKNOWN'];
+
+/**
+ * The issue carried by an exception that the validator threw to report a mistake in the string, or
+ * undefined for any other exception. The validator throws an IssueError, which carries the issue it
+ * stands for (its HED code, message, and parameters). An IssueError whose issue has no HED code or
+ * only a generic one reports a failure of the validator, such as an internal error it raised, and an
+ * exception of any other type, such as a stack overflow, is not an issue: both stay internal errors.
+ */
+function thrownHedIssue(error: unknown): IssueError['issue'] | undefined {
+	if (!(error instanceof IssueError)) {
+		return undefined;
+	}
+	const hedCode: unknown = error.issue?.hedCode;
+	return typeof hedCode === 'string' && hedCode !== '' && !GENERIC_CODES.includes(hedCode) ? error.issue : undefined;
 }
 
 /**
@@ -148,11 +176,8 @@ function convertIssue(issue: any, hedString: string): ValidationIssue {
 		}
 	}
 
-	// Generic error codes that should be remapped using internal code
-	const genericCodes = ['INTERNAL_ERROR', 'GENERICERROR', 'GENERIC_ERROR', 'UNKNOWN'];
-
 	// If hedCode is generic or missing, try to map from internal code
-	if (!hedCode || genericCodes.includes(hedCode)) {
+	if (!hedCode || GENERIC_CODES.includes(hedCode)) {
 		if (internalCode && internalCodeToHedCode[internalCode]) {
 			hedCode = internalCodeToHedCode[internalCode];
 		} else if (internalCode) {
@@ -210,7 +235,7 @@ function convertIssue(issue: any, hedString: string): ValidationIssue {
 	let message = issue.message || 'Unknown validation error';
 	const genericMessagePatterns = ['[INTERNAL_ERROR]', '[GENERICERROR]', '[GENERIC_ERROR]'];
 	for (const pattern of genericMessagePatterns) {
-		if (!genericCodes.includes(hedCode) && message.includes(pattern)) {
+		if (!GENERIC_CODES.includes(hedCode) && message.includes(pattern)) {
 			// Replace the embedded generic code with our mapped code
 			message = message.replace(pattern, `[${hedCode}]`);
 			message = message.replace(/Unknown HED error "[^"]+"/, `${hedCode.replace(/_/g, ' ').toLowerCase()}`);

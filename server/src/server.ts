@@ -23,7 +23,7 @@ import { provideDefinition } from './definitionProvider.js';
 import { validateDocument } from './diagnostics.js';
 import { parseJsonForHedStrings } from './documentParser.js';
 import { embeddingsManager } from './engine/embeddings.js';
-import { setLogger } from './engine/log.js';
+import { lineText, setLogger } from './engine/log.js';
 import { schemaManager } from './engine/schemaManager.js';
 import { resolveSchemaOption } from './engine/schemaVersion.js';
 import { suggestBatch } from './engine/suggestionEngine.js';
@@ -51,8 +51,8 @@ const connection = createConnection(ProposedFeatures.all);
 // formatting to a path. Under --stdio the LSP library sends console output to the client as log
 // messages; under IPC info lines go to stdout and error lines go to stderr.
 setLogger({
-	info: (message) => console.log(message),
-	error: (message) => console.error(message),
+	info: (message, detail) => console.log(lineText(message, detail)),
+	error: (message, detail) => console.error(lineText(message, detail)),
 });
 
 // Create a document manager

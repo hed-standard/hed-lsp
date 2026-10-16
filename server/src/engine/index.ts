@@ -13,9 +13,16 @@ import type { ValidationIssue } from './types.js';
 import { validateHedString } from './validation.js';
 
 export { embeddingsManager } from './embeddings.js';
+export { type LogSink, setLogger } from './log.js';
 export { schemaManager } from './schemaManager.js';
 export { DEFAULT_HED_SCHEMA, EMBEDDING_SCHEMA_VERSION, FALLBACK_HED_SCHEMA } from './schemaVersion.js';
-export { findSuggestions, type SuggestionOptions, type SuggestionResult, suggestBatch } from './suggestionEngine.js';
+export {
+	findSuggestions,
+	type SemanticStep,
+	type SuggestionOptions,
+	type SuggestionResult,
+	suggestBatch,
+} from './suggestionEngine.js';
 export type { HedTag, HedTagAttributes, ValidationIssue } from './types.js';
 export { hasValidationErrors, validateHedString } from './validation.js';
 
@@ -26,6 +33,16 @@ export interface ValidateOptions {
 	 * DEFAULT_HED_SCHEMA.
 	 */
 	schema?: string | string[];
+}
+
+/**
+ * The schema version actually loaded for a spec, with the same forms as `ValidateOptions.schema`.
+ * It equals the spec unless the bundled fallback stood in for the default, so a caller can report
+ * which version served a request. Partnered library schemas are included, for example
+ * `8.4.0,sc:score_2.1.0,la:lang_1.1.0`. The schema is loaded when it is not cached yet.
+ */
+export function schemaVersionUsed(spec?: string | string[] | null): Promise<string> {
+	return schemaManager.schemaVersionUsed(resolveSchemaOption(spec, DEFAULT_HED_SCHEMA));
 }
 
 /**

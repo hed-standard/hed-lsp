@@ -33,3 +33,14 @@ updates:
     labels:
       - "dependencies"
       - "ci"
+
+  # Base images of the daemon container (Dockerfile)
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    reviewers:
+      - "neuromechanist"
+    labels:
+      - "dependencies"
+      - "docker"

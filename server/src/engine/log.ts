@@ -3,18 +3,27 @@
  * no printf formatting can change a path that contains a percent sign. The engine writes to stderr
  * by default, because the CLI prints its JSON on stdout. The language server installs a sink that
  * forwards to the console.
+ *
+ * A line can carry a detail beside its message: the variable part, such as the message of an error,
+ * which can quote the input that caused it. A sink that prints for people shows it after the message;
+ * a sink that must not log input, such as the daemon's, drops it.
  */
 
 import * as util from 'node:util';
 
 export interface LogSink {
-	info(message: string): void;
-	error(message: string): void;
+	info(message: string, detail?: string): void;
+	error(message: string, detail?: string): void;
+}
+
+/** The text of a line as a sink prints it for people: the message, and `: ` and the detail when there is one. */
+export function lineText(message: string, detail?: string): string {
+	return detail === undefined ? message : `${message}: ${detail}`;
 }
 
 const stderrSink: LogSink = {
-	info: (message) => process.stderr.write(`${message}\n`),
-	error: (message) => process.stderr.write(`${message}\n`),
+	info: (message, detail) => process.stderr.write(`${lineText(message, detail)}\n`),
+	error: (message, detail) => process.stderr.write(`${lineText(message, detail)}\n`),
 };
 
 let sink: LogSink = stderrSink;
@@ -38,4 +47,9 @@ function formatMessage(args: unknown[]): string {
 export const log = {
 	info: (...args: unknown[]) => sink.info(formatMessage(args)),
 	error: (...args: unknown[]) => sink.error(formatMessage(args)),
+	/**
+	 * An error line whose variable part is passed apart from its text. The message of an error can quote
+	 * the input that caused it, so a sink decides whether to print it.
+	 */
+	errorWithDetail: (message: string, detail: string) => sink.error(message, detail),
 };

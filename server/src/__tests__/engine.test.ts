@@ -77,6 +77,48 @@ describe('engine.validate', () => {
 	});
 });
 
+describe('engine.validate when the validator throws', () => {
+	/** `depth` nested pairs of parentheses around a tag. The validator recurses once per level. */
+	const nested = (depth: number): string => `${'('.repeat(depth)}Event${')'.repeat(depth)}`;
+
+	it('reports a repeated tag with the validator code and message, not as an internal error', async () => {
+		// hed-validator throws an IssueError for a repeated tag, where it returns the issues of most other mistakes.
+		const issues = await engine.validate('Sensory-event, Red, Red', { schema: '8.4.0' });
+
+		expect(issues).toHaveLength(1);
+		const [issue] = issues;
+		expect(issue.hedCode).toBe('TAG_EXPRESSION_REPEATED');
+		expect(issue.hedCode).not.toBe('INTERNAL_ERROR');
+		expect(issue.internalCode).toBe('duplicateTag');
+		expect(issue.level).toBe('error');
+		expect(issue.message.startsWith('Validation error:')).toBe(false);
+		expect(issue.message).toContain('[TAG_EXPRESSION_REPEATED]');
+		expect(issue.message).toContain('Duplicate tags');
+	});
+
+	it('reports a repeated tag inside a group the same way', async () => {
+		const issues = await engine.validate('Sensory-event, (Red, Red)', { schema: '8.4.0' });
+
+		expect(issues.map((issue) => issue.hedCode)).toEqual(['TAG_EXPRESSION_REPEATED']);
+	});
+
+	it('returns no issues for the same string without the repeat', async () => {
+		expect(await engine.validate('Sensory-event, Red', { schema: '8.4.0' })).toEqual([]);
+	});
+
+	it('still reports an exception that is not a validator issue as an internal error', async () => {
+		// The validator recurses once per level of nesting and runs out of stack on a string this deep.
+		const issues = await engine.validate(nested(4000), { schema: '8.4.0' });
+
+		expect(issues).toHaveLength(1);
+		const [issue] = issues;
+		expect(issue.hedCode).toBe('INTERNAL_ERROR');
+		expect(issue.internalCode).toBe('internalError');
+		expect(issue.level).toBe('error');
+		expect(issue.message).toMatch(/^Validation error: .*call stack/);
+	});
+});
+
 describe('suggestion options', () => {
 	it('treats undefined, null, and blank options as absent', async () => {
 		const queries = ['red square', 'modulator'];
@@ -156,6 +198,52 @@ describe('engine logging', () => {
 		}
 	});
 
+	it('prints a line with a detail to stderr as the message, a colon, and the detail', () => {
+		const built = path.join(__dirname, '..', '..', 'out', 'engine', 'log.js');
+		const script = `
+			const { log } = require(${JSON.stringify(built)});
+			log.errorWithDetail('Warning: Schema search failed', 'because of 100%d of it');
+			log.error('plain', 'line');
+		`;
+
+		const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf-8', timeout: 30000 });
+
+		expect(result.status).toBe(0);
+		expect(result.stderr).toBe('Warning: Schema search failed: because of 100%d of it\nplain line\n');
+	});
+
+	it('prints the failure lines of the suggestion engine to stderr with the same text as before the detail existed', () => {
+		const dir = path.join(__dirname, '..', '..', 'out', 'engine');
+		// A real failure of each kind, run in a process that has the default sink: a library that does not exist,
+		// so the schema search fails, and a query that is a number, so one query of a batch fails. The expected
+		// text is built from the messages of the real errors, as the engine did before it passed them as details.
+		const script = `
+			const { findSuggestions, suggestBatch } = require(${JSON.stringify(path.join(dir, 'suggestionEngine.js'))});
+			const { schemaManager } = require(${JSON.stringify(path.join(dir, 'schemaManager.js'))});
+			(async () => {
+				const missing = '8.4.0,sc:score_9.9.9';
+				const messages = {};
+				try { await schemaManager.getSchema(missing); } catch (error) { messages.schema = error.message; }
+				try { await findSuggestions(42, { schema: '8.4.0' }); } catch (error) { messages.query = error.message; }
+				process.stderr.write('--- begin\\n');
+				await findSuggestions('red square', { schema: missing, top: 10 });
+				await suggestBatch(['red square', 42, 'modulator'], { schema: '8.4.0,sc:score_2.1.0', top: 5 });
+				process.stderr.write('--- end\\n');
+				process.stdout.write(JSON.stringify(messages));
+			})();
+		`;
+
+		const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf-8', timeout: 120000 });
+
+		expect(result.status, result.stderr).toBe(0);
+		const messages = JSON.parse(result.stdout) as { schema: string; query: string };
+		expect(messages.schema).toContain('SCHEMA_LOAD_FAILED');
+		expect(messages.query).toContain('toLowerCase');
+		const printed = result.stderr.slice(result.stderr.indexOf('--- begin\n'), result.stderr.indexOf('--- end\n'));
+		expect(printed).toContain(`\nWarning: Schema search failed: ${messages.schema}\n`);
+		expect(printed).toContain(`\n[HED] Suggestions failed for query 2 of 3: ${messages.query}\n`);
+	}, 150000);
+
 	it('writes a path with a percent sign to stderr intact', () => {
 		const built = path.join(__dirname, '..', '..', 'out', 'engine', 'log.js');
 		const script = `require(${JSON.stringify(built)}).log.error('Failed to parse /data/100%data/x:', 'detail');`;
@@ -206,5 +294,56 @@ describe('schema loading', () => {
 		}
 
 		expect(loads).toEqual(['[HED] Loading schema: 9.9.9', '[HED] Loading schema: 9.9.9']);
+	});
+});
+
+describe('engine.schemaVersionUsed', () => {
+	// Real loads. The bundled 8.4.0 fallback for 8.5.0 is checked by the container smoke test with
+	// the network off, because forcing it here would need a fake network.
+	it('returns the requested version for a standard schema', async () => {
+		expect(await engine.schemaVersionUsed('8.4.0')).toBe('8.4.0');
+	});
+
+	it('returns the requested version for a standard schema with partnered libraries', async () => {
+		const spec = '8.4.0,sc:score_2.1.0,la:lang_1.1.0';
+
+		expect(await engine.schemaVersionUsed(spec)).toBe(spec);
+	});
+
+	it('accepts a schema given as an array of parts', async () => {
+		expect(await engine.schemaVersionUsed(['8.4.0', 'sc:score_2.1.0'])).toBe('8.4.0,sc:score_2.1.0');
+	});
+
+	it('reports the default, or the bundled fallback when the default cannot load, for a blank spec', async () => {
+		const used = await engine.schemaVersionUsed('   ');
+
+		expect([engine.DEFAULT_HED_SCHEMA, engine.FALLBACK_HED_SCHEMA]).toContain(used);
+		expect(used).toBe(await engine.schemaVersionUsed(engine.DEFAULT_HED_SCHEMA));
+	});
+
+	it('rejects a version that cannot be loaded', async () => {
+		const previous = setLogger({ info: () => {}, error: () => {} });
+		try {
+			await expect(engine.schemaVersionUsed('9.9.9')).rejects.toThrow();
+		} finally {
+			setLogger(previous);
+		}
+	});
+});
+
+describe('engine logging surface', () => {
+	it('re-exports the logger hook and the sink type from the facade', () => {
+		const lines: string[] = [];
+		const sink: engine.LogSink = { info: (message) => lines.push(message), error: (message) => lines.push(message) };
+
+		expect(engine.setLogger).toBe(setLogger);
+		const previous = engine.setLogger(sink);
+		try {
+			log.info('facade', 'sink');
+		} finally {
+			engine.setLogger(previous);
+		}
+
+		expect(lines).toEqual(['facade sink']);
 	});
 });
