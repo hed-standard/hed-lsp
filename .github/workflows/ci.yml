@@ -176,10 +176,10 @@ jobs:
 
       # The deploy scripts of the hedtools host run here against the image that was just tested, on the Docker of
       # the runner, because their Docker paths cannot run anywhere else without a host: deploy.sh and its rollback,
-      # the settings check, a failed deploy and the way back from it, check-client-key.sh, the probe, and a
-      # rehearsal of measure.sh. The smoke containers go first, because they publish the port 38530 that hed-lsp
-      # publishes too. Every step uses the real scripts and a real daemon; the one neighbor is a plain HTTP server.
-      # The last two steps remove what these made.
+      # the settings check, a failed deploy and the way back from it, check-client-key.sh, the probe, a rehearsal of
+      # measure.sh, and the stop of a measurement by SIGTERM. The smoke containers go first, because they publish the
+      # port 38530 that hed-lsp publishes too. Every step uses the real scripts and a real daemon; the one neighbor
+      # is a plain HTTP server. The last two steps remove what these made.
       - name: Prepare the deploy checks
         run: |
           set -euo pipefail
@@ -320,6 +320,44 @@ jobs:
           curl -fsS http://127.0.0.1:38530/v1/health | jq -e --arg commit "${IMAGE_COMMIT::7}" '.commit == $commit'
           # The rollback replaced a healthy container too, so the image it left is on record in turn.
           if [ "$(tr -d '[:space:]' < "$HED_LSP_STATE_DIR/previous-image-id")" != "$OTHER_IMAGE_ID" ]; then echo "the record is not the second image"; exit 1; fi
+
+      # The stop path of a measurement: SIGTERM, as from `kill` or a closing terminal, must stop the probe and remove
+      # the load container, whatever the harness is doing. This runs before the failed deploy, because it needs the
+      # container that runs to be the image that the env file pins, and the rollback step leaves it so.
+      - name: Stop a measurement with SIGTERM
+        run: |
+          set -euo pipefail
+          bun -e "Bun.serve({ port: 38999, hostname: '127.0.0.1', fetch: () => new Response('ok') })" > /dev/null 2>&1 &
+          neighbor=$!
+          trap 'kill "$neighbor" 2> /dev/null || true' EXIT
+          timeout 30 sh -c 'until curl -fsS -o /dev/null http://127.0.0.1:38999/; do sleep 0.5; done'
+          export HED_LSP_PROBE_TARGETS='neighbor=loopback=http://127.0.0.1:38999/'
+          deploy/hedtools/measure.sh --rehearsal 60 s0-c4 > "$RUNNER_TEMP/stopped-measure.txt" 2>&1 &
+          measure=$!
+          deadline=$((SECONDS + 60))
+          until docker container inspect hed-lsp-load > /dev/null 2>&1; do
+            if ! kill -0 "$measure" 2> /dev/null; then echo "measure.sh ended before it started the load container"; cat "$RUNNER_TEMP/stopped-measure.txt"; exit 1; fi
+            if [ "$SECONDS" -ge "$deadline" ]; then echo "no load container within 60 s"; cat "$RUNNER_TEMP/stopped-measure.txt"; exit 1; fi
+            sleep 0.5
+          done
+          kill -TERM "$measure"
+          status=0
+          wait "$measure" || status=$?
+          cat "$RUNNER_TEMP/stopped-measure.txt"
+          # 143 is the status of the SIGTERM trap, so measure.sh ended by the signal and not for another reason.
+          if [ "$status" != 143 ]; then echo "measure.sh ended with status $status after SIGTERM, not 143"; exit 1; fi
+          grep -F 'SIGTERM, stopping the probe and the load' "$RUNNER_TEMP/stopped-measure.txt"
+          # Removing the container and ending the probe take a moment after measure.sh has gone.
+          deadline=$((SECONDS + 10))
+          while docker container inspect hed-lsp-load > /dev/null 2>&1 || pgrep -f neighbor-probe > /dev/null; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "something of the measurement still runs 10 s after SIGTERM"
+              docker ps --all
+              pgrep -fl neighbor-probe || true
+              exit 1
+            fi
+            sleep 0.5
+          done
 
       # The failed deploy, and the way back from it. The rollback step leaves the first image running, so the setup
       # deploys the second one again: it runs, healthy, with the first on record. Then the first image is deployed
