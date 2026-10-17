@@ -16,3 +16,7 @@ scripts
 .context
 .claude
 *.log
+
+# Saved images: the image job writes hed-lsp-daemon.tar (about 390 MB) to the workspace before it builds the
+# second image, and nothing in a build reads a tarball, so it must not be sent into the build context.
+*.tar
