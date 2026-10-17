@@ -270,6 +270,51 @@ describe.skipIf(!(haveCurl && haveJq))('neighbor-probe.sh', () => {
 	}, 60_000);
 
 	it.each([
+		['the daemon itself', 'hed-lsp'],
+		['a container of another service', 'osa'],
+		['an empty name', ''],
+		['a name with a semicolon', 'hed-lsp-load;rm'],
+		['a name that starts with a dash', '-hed-lsp-x'],
+		['a name with the prefix and nothing after it', 'hed-lsp-'],
+	])('refuses to kill %s: --abort-container %j', async (_label, name) => {
+		const result = await bash(script, ['--abort-container', name, '--target', 'x=loopback=http://127.0.0.1:1/'], env());
+
+		expect(result.code).toBe(2);
+		expect(result.stdout).toBe('');
+		expect(result.stderr).toContain('--abort-container may name only a container whose name starts with hed-lsp-');
+		expect(result.stderr).toContain(`refusing '${name}'`);
+	});
+
+	it('accepts a container whose name starts with hed-lsp-, and runs on', async () => {
+		const daemon = await startDaemon();
+		const out = path.join(tempDir('hed-lsp-probe-'), 'summary.json');
+		try {
+			const result = await bash(
+				script,
+				[
+					'--interval',
+					'1',
+					'--duration',
+					'1',
+					'--abort-container',
+					'hed-lsp-load',
+					'--target',
+					`daemon=loopback=${daemon.url}/v1/health`,
+					'--out',
+					out,
+				],
+				env(),
+			);
+
+			expect(result.stderr).toBe('');
+			expect(result.code).toBe(0);
+			expect(JSON.parse(fs.readFileSync(out, 'utf-8')).aborted).toBe(false);
+		} finally {
+			await daemon.stop();
+		}
+	}, 60_000);
+
+	it.each([
 		[['--target', 'no-kind=http://x/'], 'a target is NAME=KIND=URL'],
 		[['--target', 'x=cdn=http://x/'], 'a target is NAME=KIND=URL'],
 		[['--interval', '0'], '--interval must be above 0'],
@@ -310,6 +355,43 @@ describe('measure.sh', () => {
 		expect(result.stdout).toContain('bun scripts/check-load-report.ts --profile s0 TIME-s0-c4.json');
 		// The probe runs beside the load and kills the harness container on a breach.
 		expect(result.stdout).toContain('neighbor-probe.sh --abort-container hed-lsp-load --out ');
+	});
+
+	it('bounds the probe by the length of its step, for the case that the script is killed and cannot clean up', async () => {
+		const full = await bash(script, ['--dry-run', 's0-c4', 's1-soak'], withPin(IMAGE));
+		const rehearsal = await bash(script, ['--dry-run', '--rehearsal', '5', 's0-c4'], withPin(IMAGE));
+
+		const probe = (text: string, step: string): string | undefined =>
+			text
+				.split('\n')
+				.find((line) => line.includes('neighbor-probe.sh') && line.includes(`TIME-${step}.neighbors.json`));
+		expect(probe(full.stdout, 's0-c4')).toMatch(/--tsv \S+ --duration 360 ?$/);
+		expect(probe(full.stdout, 's1-soak')).toMatch(/--tsv \S+ --duration 2100 ?$/);
+		expect(probe(rehearsal.stdout, 's0-c4')).toMatch(/--tsv \S+ --duration 305 ?$/);
+	});
+
+	it('says that it stops the probe and the load on Ctrl-C, on a signal, and on exit', async () => {
+		const result = await bash(script, ['--dry-run', 's0-c4'], withPin(IMAGE));
+
+		expect(result.stdout).toContain(
+			'On Ctrl-C, SIGTERM, SIGHUP, or any exit, it stops the probe and the sampler and runs: docker kill hed-lsp-load',
+		);
+	});
+
+	// What the traps do to a running probe and a running container needs Docker and the host, so it is
+	// rehearsed there (step 10 of the runbook: start a rehearsal, press Ctrl-C, look for leftovers). This
+	// only keeps the pieces from being dropped: the traps for the four ways out, the kill of the load
+	// container, and a harness that is waited for, because a trap waits for a foreground command to end.
+	it('keeps the traps, the kill of the load container, and the waited-for harness in the script', () => {
+		const source = fs.readFileSync(script, 'utf-8');
+
+		expect(source).toMatch(/^trap cleanup EXIT$/m);
+		expect(source).toMatch(/^trap '[^']*exit 130' INT$/m);
+		expect(source).toMatch(/^trap '[^']*exit 143' TERM$/m);
+		expect(source).toMatch(/^trap '[^']*exit 129' HUP$/m);
+		expect(source).toMatch(/docker kill "\$LOAD_CONTAINER"/);
+		expect(source).toMatch(/"\$\{HARNESS\[@\]\}" >"\$base\.json" &\n\s+HARNESS_PID=\$!\n\s+wait "\$HARNESS_PID"/);
+		expect(source.indexOf('trap cleanup EXIT')).toBeGreaterThan(source.indexOf('the container $LOAD_CONTAINER exists'));
 	});
 
 	it('runs a group in the order of the plan, with the options of each step', async () => {

@@ -11,6 +11,10 @@
 # loopback port, and hedtools through Apache. KIND is `loopback` or `apache`; giving --target replaces
 # the defaults, and HED_LSP_PROBE_TARGETS (space-separated NAME=KIND=URL) replaces them for a rehearsal.
 #
+# --abort-container NAME may name only a container whose name starts with hed-lsp-, such as hed-lsp-load,
+# so that the probe can never be told to kill the daemon hed-lsp or a container of another service. Any
+# other name is refused at the start with exit status 2.
+#
 # It aborts at once, kills the container named by --abort-container (the load generator), prints the
 # reason, and exits 1, on any of:
 #   - a target that does not answer 200;
@@ -32,6 +36,8 @@ set -euo pipefail
 INTERVAL=2
 DURATION=0
 ABORT_CONTAINER=""
+# The only containers the probe may kill: the load generators of this deployment, never hed-lsp itself.
+ABORT_CONTAINER_RE='^hed-lsp-[A-Za-z0-9][A-Za-z0-9_.-]*$'
 OUT=""
 TSV=""
 TARGETS=()
@@ -63,7 +69,11 @@ while [ "$#" -gt 0 ]; do
 			case "$1" in
 				--interval) INTERVAL="$2" ;;
 				--duration) DURATION="$2" ;;
-				--abort-container) ABORT_CONTAINER="$2" ;;
+				--abort-container)
+					[[ $2 =~ $ABORT_CONTAINER_RE ]] ||
+						die "--abort-container may name only a container whose name starts with hed-lsp-, such as hed-lsp-load; refusing '$2'"
+					ABORT_CONTAINER="$2"
+					;;
 				--out) OUT="$2" ;;
 				--tsv) TSV="$2" ;;
 				--target) TARGETS+=("$2") ;;

@@ -34,8 +34,13 @@
 # Every step runs deploy/hedtools/neighbor-probe.sh beside the load, which stops the harness at the first
 # sign of harm to the other services on the host. Run in a quiet window, after telling their owners.
 #
-# Stopping a run: Ctrl-C ends the harness, which runs with --init so that it receives the signal. The
-# emergency stop, from another terminal, is: docker kill hed-lsp-load
+# Stopping a run: Ctrl-C, SIGTERM, SIGHUP, and any exit of this script stop the neighbor probe and the
+# memory sampler and run `docker kill hed-lsp-load`, so nothing is left running after it. Only a SIGKILL
+# cannot be caught; then the probe and the sampler end by themselves, 300 s after the step would have
+# ended, and the harness ends at the duration of its step. The emergency stop, from another terminal, is:
+#   docker kill hed-lsp-load
+# The harness container also starts with --init, so that it passes a Ctrl-C or `docker stop` on to the
+# harness; without it the harness is PID 1 and ignores them.
 #
 # Environment:
 #   HED_LSP_STATE_DIR         Directory of the env file and results (default ~/hed-lsp-state).
@@ -62,10 +67,18 @@ CONTAINER="hed-lsp"
 LOAD_CONTAINER="hed-lsp-load"
 CLIENTS=64
 SETTLE_SECONDS=20
+# How long past its step the probe and the sampler may run, as a bound when this script cannot clean up.
+GUARD_SECONDS=300
 
 DRY_RUN=0
 REHEARSAL=""
 STEPS=()
+# What the exit trap stops: the probe and the sampler of the step that runs, and its harness container.
+PROBE_PID=""
+SAMPLE_PID=""
+HARNESS_PID=""
+LOAD_RUNNING=0
+INTERRUPTED=""
 
 die() {
 	printf 'measure.sh: %s\n' "$*" >&2
@@ -146,10 +159,15 @@ quote() {
 	done
 }
 
+# step_seconds STEP: how long the harness runs the step.
+step_seconds() {
+	echo "${REHEARSAL:-$(step_field "$1" seconds)}"
+}
+
 # harness_command STEP: the docker command of the load harness; its standard output is the report.
 harness_command() {
 	local step="$1" seconds extra
-	seconds="${REHEARSAL:-$(step_field "$step" seconds)}"
+	seconds="$(step_seconds "$step")"
 	extra="$(step_field "$step" extra)"
 	# --init puts a small init process at the top of the container, which passes Ctrl-C and `docker stop` on
 	# to the harness; without it the harness is PID 1 and ignores them.
@@ -171,12 +189,14 @@ if [ "$DRY_RUN" = 1 ]; then
 	echo "Image under test: $IMAGE (from HED_LSP_IMAGE_ID in $ENV_FILE)"
 	echo "Before each step it checks that the container $CONTAINER runs this image, that its health is ok,"
 	echo "and that semantic search is in the state the step needs."
+	echo "On Ctrl-C, SIGTERM, SIGHUP, or any exit, it stops the probe and the sampler and runs: docker kill $LOAD_CONTAINER"
 	for step in "${STEPS[@]}"; do
 		echo
 		echo "# $step: profile $(step_field "$step" profile), semantic search $(step_field "$step" semantic), $(step_field "$step" concurrency) concurrent"
 		harness_command "$step"
 		printf '+ '
-		quote "${PROBE[@]}" --out "$RESULTS_DIR/TIME-$step.neighbors.json" --tsv "$RESULTS_DIR/TIME-$step.probe.tsv"
+		quote "${PROBE[@]}" --out "$RESULTS_DIR/TIME-$step.neighbors.json" --tsv "$RESULTS_DIR/TIME-$step.probe.tsv" \
+			--duration "$(($(step_seconds "$step") + GUARD_SECONDS))"
 		printf '\n+ '
 		quote "${HARNESS[@]}"
 		printf '> %s\n' "$RESULTS_DIR/TIME-$step.json"
@@ -221,11 +241,12 @@ number_or_null() {
 	if [[ ${1:-} =~ $NUMBER_RE ]]; then printf '%s' "$1"; else printf 'null'; fi
 }
 
-# sample_loop FILE SECONDS: every SECONDS, the memory of the container and the memory available on the host.
+# sample_loop FILE SECONDS LIMIT: every SECONDS, the memory of the container and the memory available on
+# the host, for at most LIMIT seconds, so that a sampler whose parent was killed ends by itself.
 sample_loop() {
-	local file="$1" every="$2" usage available
+	local file="$1" every="$2" stop=$((SECONDS + $3)) usage available
 	: >"$file"
-	while true; do
+	while [ "$SECONDS" -lt "$stop" ]; do
 		usage="$(to_mib "$(docker stats --no-stream --format '{{.MemUsage}}' "$CONTAINER" 2>/dev/null | cut -d' ' -f1)")"
 		available="-"
 		if [ -r /proc/meminfo ]; then available="$(awk '/^MemAvailable:/ { printf "%d", $2 / 1024 }' /proc/meminfo)"; fi
@@ -254,7 +275,7 @@ recovery_seconds() {
 }
 
 run_step() {
-	local step="$1" semantic_want state base started probe_pid sample_pid code=0 recovery="" every=10
+	local step="$1" semantic_want state base started code=0 recovery="" every=10 guard
 	semantic_want="$(step_field "$step" semantic)"
 
 	if [ "$(health_field .status)" != "ok" ]; then
@@ -273,30 +294,42 @@ run_step() {
 	base="$RESULTS_DIR/$started-$step${REHEARSAL:+-rehearsal}"
 	harness_command "$step"
 	[ -z "$REHEARSAL" ] || every=2
-	echo "== $step: ${REHEARSAL:-$(step_field "$step" seconds)} s, $(step_field "$step" concurrency) concurrent, results in $base.*"
+	guard=$(($(step_seconds "$step") + GUARD_SECONDS))
+	echo "== $step: $(step_seconds "$step") s, $(step_field "$step" concurrency) concurrent, results in $base.*"
 
-	# The probe first, and the load only once the probe has taken its first round.
-	"${PROBE[@]}" --out "$base.neighbors.json" --tsv "$base.probe.tsv" &
-	probe_pid=$!
+	# The probe first, and the load only once the probe has taken its first round. The exit trap stops
+	# whatever of this is running, and --duration bounds the probe if the trap cannot run.
+	"${PROBE[@]}" --out "$base.neighbors.json" --tsv "$base.probe.tsv" --duration "$guard" &
+	PROBE_PID=$!
 	local waited=0
-	while [ "$({ wc -l <"$base.probe.tsv"; } 2>/dev/null || echo 0)" -lt 1 ] && kill -0 "$probe_pid" 2>/dev/null && [ "$waited" -lt 30 ]; do
+	while [ "$({ wc -l <"$base.probe.tsv"; } 2>/dev/null || echo 0)" -lt 1 ] && kill -0 "$PROBE_PID" 2>/dev/null && [ "$waited" -lt 30 ]; do
 		sleep 1
 		waited=$((waited + 1))
 	done
-	if ! kill -0 "$probe_pid" 2>/dev/null; then
-		wait "$probe_pid" || true
+	if ! kill -0 "$PROBE_PID" 2>/dev/null; then
+		wait "$PROBE_PID" || true
+		PROBE_PID=""
 		die "the neighbor probe stopped before the load started: $(jq -r '.reason // "no reason"' "$base.neighbors.json" 2>/dev/null)"
 	fi
-	sample_loop "$base.samples.tsv" "$every" &
-	sample_pid=$!
+	sample_loop "$base.samples.tsv" "$every" "$guard" &
+	SAMPLE_PID=$!
 
-	"${HARNESS[@]}" >"$base.json" || code=$?
+	# The harness runs as a background job that this script waits for: a trapped signal ends a wait at once,
+	# but it would wait for a foreground command to finish first, up to 30 minutes for the soak.
+	LOAD_RUNNING=1
+	"${HARNESS[@]}" >"$base.json" &
+	HARNESS_PID=$!
+	wait "$HARNESS_PID" || code=$?
+	LOAD_RUNNING=0
+	HARNESS_PID=""
 	if [ "$step" = "s0-overload" ]; then recovery="$(recovery_seconds)"; fi
 
-	kill -TERM "$probe_pid" "$sample_pid" 2>/dev/null || true
+	kill -TERM "$PROBE_PID" "$SAMPLE_PID" 2>/dev/null || true
 	local probe_status=0
-	wait "$probe_pid" || probe_status=$?
-	wait "$sample_pid" 2>/dev/null || true
+	wait "$PROBE_PID" || probe_status=$?
+	wait "$SAMPLE_PID" 2>/dev/null || true
+	PROBE_PID=""
+	SAMPLE_PID=""
 	# The probe writes its summary on SIGTERM, and a breach before that has already aborted it.
 	[ -s "$base.neighbors.json" ] || echo '{"aborted":true,"reason":"the probe wrote no summary"}' >"$base.neighbors.json"
 
@@ -338,6 +371,30 @@ finish_step() {
 	echo "   done: $(jq -r '"\(.overall.requests) requests, error rate \(.overall.errorRate), p95 \(.overall.latencyMs.p95) ms"' "$base.json")"
 	echo "   judge on a machine with Bun:  bun scripts/check-load-report.ts --profile $(step_field "$step" profile) $(basename "$base").json"
 }
+
+# cleanup: on every exit, stop what this run started. It is installed only here, after the refusals above,
+# so that a second run that stops at "the container hed-lsp-load exists" never kills the load of the first.
+cleanup() {
+	local status=$?
+	trap '' INT TERM HUP
+	trap - EXIT
+	if [ -n "$INTERRUPTED" ]; then
+		printf 'measure.sh: %s, stopping the probe and the load\n' "$INTERRUPTED" >&2
+	fi
+	if [ -n "$PROBE_PID" ]; then kill -TERM "$PROBE_PID" 2>/dev/null || true; fi
+	if [ -n "$SAMPLE_PID" ]; then kill -TERM "$SAMPLE_PID" 2>/dev/null || true; fi
+	if [ "$LOAD_RUNNING" = 1 ]; then
+		docker kill "$LOAD_CONTAINER" >/dev/null 2>&1 || true
+		if [ -n "$HARNESS_PID" ]; then kill "$HARNESS_PID" 2>/dev/null || true; fi
+	fi
+	# Let the probe write its summary before this script is gone.
+	if [ -n "$PROBE_PID" ]; then wait "$PROBE_PID" 2>/dev/null || true; fi
+	exit "$status"
+}
+trap cleanup EXIT
+trap 'INTERRUPTED=SIGINT; exit 130' INT
+trap 'INTERRUPTED=SIGTERM; exit 143' TERM
+trap 'INTERRUPTED=SIGHUP; exit 129' HUP
 
 for index in "${!STEPS[@]}"; do
 	if [ "$index" -gt 0 ]; then

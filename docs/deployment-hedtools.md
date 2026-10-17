@@ -248,8 +248,12 @@ docker run --rm --init --name hed-lsp-load --network host --cpus 0.2 --memory 25
 
 Its report goes to standard output, because the cache volume and the bind mounts belong to different users, and `measure.sh` writes it to `~/hed-lsp-state/results/`.
 `--clients 64` is honored because the daemon trusts the path from the harness.
-Ctrl-C ends a run: the harness container starts with `--init`, so that it receives the signal.
-The emergency stop, from another terminal, is `docker kill hed-lsp-load`, which ends the harness at once.
+Ctrl-C ends a run, and so do `kill` (SIGTERM), a hangup, and any other exit of `measure.sh`: it then stops the neighbor probe and the memory sampler and runs `docker kill hed-lsp-load`, so nothing is left running.
+The harness container also starts with `--init`, so that it passes Ctrl-C and `docker stop` on to the harness.
+The emergency stop, from another terminal, is `docker kill hed-lsp-load`, which ends the harness at once; the probe sees the harness end and `measure.sh` stops it.
+Only `kill -9` of `measure.sh` cannot be caught: then the harness ends at the duration of its step, and the probe and the sampler end by themselves 5 minutes after the step would have ended.
+
+Rehearse the stop before the first real run: start `measure.sh --rehearsal 30 s0-c4`, press Ctrl-C after a few seconds, and check that nothing is left with `docker ps --filter name=hed-lsp-load` and `pgrep -fl neighbor-probe`, which must print nothing.
 
 Copy the results to a machine with Bun and judge them:
 
@@ -579,6 +583,8 @@ It aborts at once, kills the harness container, and exits 1 on any of these:
 
 It passes if the loopback probes keep p95 at or below 150 ms, the Apache probe keeps p95 at or below 300 ms, and all Docker health stays healthy.
 A neighbor that restarts for its own reasons, such as an automatic update of its image, also stops the run; run again.
+
+The probe kills only a container whose name starts with `hed-lsp-` (`measure.sh` names `hed-lsp-load`), and it refuses any other name at its start, so it can never be told to kill `hed-lsp` itself or a container of another service.
 
 ### Recalibration
 
