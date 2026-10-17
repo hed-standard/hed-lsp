@@ -8,6 +8,8 @@
 
 import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
+import * as http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import * as path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { startDaemon } from './daemonHarness.js';
@@ -36,6 +38,47 @@ const TRUSTING = { ...DEFAULT_RATES, HED_LSP_TRUSTED_PROXIES: '127.0.0.1' };
 /** A daemon that trusts no one, so it ignores X-Forwarded-For, as it does behind a proxy that is not trusted. */
 const NOT_TRUSTING = { ...DEFAULT_RATES, HED_LSP_TRUSTED_PROXIES: '' };
 
+/**
+ * A real HTTP forwarder in front of a daemon that holds every answer for `delayMs`, as a slow network
+ * does. The request goes through at once, so the daemon charges it when it arrives, and the client
+ * sees the next chance to send only `delayMs` later; X-Forwarded-For passes through untouched.
+ */
+async function startDelayProxy(target: string, delayMs: number): Promise<{ url: string; stop: () => Promise<void> }> {
+	const upstream = new URL(target);
+	const server = http.createServer((request, response) => {
+		const forward = http.request(
+			{
+				host: upstream.hostname,
+				port: upstream.port,
+				method: request.method,
+				path: request.url,
+				headers: request.headers,
+			},
+			(answer) => {
+				setTimeout(() => {
+					response.writeHead(answer.statusCode ?? 502, answer.headers);
+					answer.pipe(response);
+				}, delayMs);
+			},
+		);
+		forward.on('error', () => {
+			response.writeHead(502);
+			response.end();
+		});
+		request.pipe(forward);
+	});
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+	const { port } = server.address() as AddressInfo;
+	return {
+		url: `http://127.0.0.1:${port}`,
+		stop: () =>
+			new Promise<void>((resolve) => {
+				server.close(() => resolve());
+				server.closeAllConnections();
+			}),
+	};
+}
+
 describe.skipIf(!haveCurl)('check-client-key.sh', () => {
 	const script = path.join(DEPLOY, 'check-client-key.sh');
 	const env = (): Record<string, string> => ({ PATH: pathWithoutDocker(), HOME: tempDir('hed-lsp-home-') });
@@ -47,9 +90,11 @@ describe.skipIf(!haveCurl)('check-client-key.sh', () => {
 
 			expect(result.stderr).toBe('');
 			expect(result.code).toBe(0);
-			expect(result.stdout).toContain('expected: the 1st is 200 and the 12th is 429');
-			expect(result.stdout).toMatch(/got: {6}200( 200){9} 429 429\n/);
-			expect(result.stdout).toContain('expected: 200, a client of its own');
+			expect(result.stdout).toContain('expected: 200 for the first, and a 429 within 40 requests');
+			// Requests are sent until the first 429, so the count in between is not fixed.
+			expect(result.stdout).toMatch(/got: {6}200( 200)+ 429\n/);
+			expect(result.stdout).toContain('expected: 200 for all, a client of its own');
+			expect(result.stdout).toMatch(/got: {6}200 200 200\n/);
 			expect(result.stdout).toContain('all checks passed');
 		} finally {
 			await daemon.stop();
@@ -63,7 +108,7 @@ describe.skipIf(!haveCurl)('check-client-key.sh', () => {
 
 			expect(result.code).toBe(1);
 			expect(result.stdout).toContain('ok    the limit is reached');
-			expect(result.stdout).toContain('got:      429');
+			expect(result.stdout).toMatch(/got: {6}(?:200|429) 429 429\n/);
 			expect(result.stdout).toContain('FAIL  a different address is not limited');
 			expect(result.stdout).toContain('every client shares one key');
 			expect(result.stdout).toContain('1 checks failed');
@@ -80,7 +125,7 @@ describe.skipIf(!haveCurl)('check-client-key.sh', () => {
 			const fails = await bash(script, ['proxy', '--url', honoring.url], env());
 
 			expect(passes.code).toBe(0);
-			expect(passes.stdout).toContain('expected: 429, because the header does not choose the key');
+			expect(passes.stdout).toContain('expected: a 429 among them, because the header does not choose the key');
 			expect(passes.stdout).toContain('ok    a spoofed address does not escape the limit');
 			expect(fails.code).toBe(1);
 			expect(fails.stdout).toContain('FAIL  a spoofed address does not escape the limit');
@@ -103,7 +148,7 @@ describe.skipIf(!haveCurl)('check-client-key.sh', () => {
 			expect(alone.code).toBe(0);
 			expect(alone.stdout).toContain('ok    the limit is per real address');
 			expect(second.code).toBe(1);
-			expect(second.stdout).toContain('got:      429');
+			expect(second.stdout).toMatch(/got: {6}(?:200|429) 429 429\n/);
 			expect(second.stdout).toContain('share a key');
 		} finally {
 			await shared.stop();
@@ -111,12 +156,35 @@ describe.skipIf(!haveCurl)('check-client-key.sh', () => {
 		}
 	}, 60_000);
 
+	it('direct: still passes when every request takes 170 ms longer, which refills the bucket between requests', async () => {
+		// The case that broke a fixed count of 12 requests: at this pace the bucket refills 17 units
+		// between requests, so the limit comes later, and the check must send requests until it does.
+		const daemon = await startDaemon(TRUSTING);
+		const slow = await startDelayProxy(daemon.url, 170);
+		try {
+			const result = await bash(script, ['direct', '--no-docker', '--url', slow.url], env());
+
+			expect(result.stderr).toBe('');
+			expect(result.code).toBe(0);
+			const statuses = /got: {6}(200(?: 200)+ 429)\n/.exec(result.stdout)?.[1]?.split(' ') ?? [];
+			// On loopback the 429 is the 11th answer, so a longer run shows that the check went on to find it.
+			expect(statuses.length).toBeGreaterThan(11);
+			expect(statuses.length).toBeLessThanOrEqual(40);
+			expect(result.stdout).toMatch(/got: {6}200 200 200\n/);
+			expect(result.stdout).toContain('all checks passed');
+		} finally {
+			await slow.stop();
+			await daemon.stop();
+		}
+	}, 120_000);
+
 	it('says that nothing answered when the address is closed, and does not call it a spent limit', async () => {
 		const result = await bash(script, ['direct', '--no-docker', '--url', 'http://127.0.0.1:1'], env());
 
 		expect(result.code).toBe(1);
 		expect(result.stdout).toContain('no answer from http://127.0.0.1:1');
-		expect(result.stdout).toContain('got:      000 000');
+		// The flood stops at the first request that gets no answer, in place of waiting for 40 of them.
+		expect(result.stdout).toMatch(/got: {6}000\n/);
 	}, 60_000);
 
 	it.each([

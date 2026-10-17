@@ -16,15 +16,24 @@
 #          1. the gateway of the Docker network is the address the daemon trusts;
 #          2. a connection held open from this host shows that gateway as its remote address in
 #             /proc/net/tcp of the container;
-#          3. 12 requests of 100 strings with X-Forwarded-For: --first (cost 100 units each against the
-#             1000 burst) end in 429, and a 13th with X-Forwarded-For: --second passes at once.
+#          3. requests of 100 strings with X-Forwarded-For: --first (cost 100 units each against the 1000
+#             burst) are sent until the first 429, at most 40, and then 3 requests in a row with
+#             X-Forwarded-For: --second must all pass.
 #          Checks 1 and 2 need Docker; --no-docker runs check 3 alone.
 # proxy    The daemon behind Apache (URL such as https://hedtools.org/hed-lsp). Apache removes the client's
-#          X-Forwarded-For header, so a spoofed value must have no effect: 12 requests with --first end in
-#          429, and a 13th with --second is limited too. With --hold SECONDS the script then keeps this
-#          address at its limit, so that `other` can run from a second address in that time.
-# other    Run from a second address while `proxy --hold` runs from the first, with the same URL: one
-#          request, whatever X-Forwarded-For says, must pass, which shows that the limit is per real address.
+#          X-Forwarded-For header, so a spoofed value must have no effect: requests with --first are sent
+#          until the first 429, at most 40, and then 3 requests in a row with --second must include a 429.
+#          With --hold SECONDS the script then keeps this address at its limit, so that `other` can run
+#          from a second address in that time.
+# other    Run from a second address while `proxy --hold` runs from the first, with the same URL: 3 requests
+#          in a row, whatever X-Forwarded-For says, must all pass, which shows that the limit is per real
+#          address.
+#
+# The result does not depend on how fast the requests go. A bucket refills 100 units a second, so a slow
+# connection spends it later, and the number of requests before the first 429 is not fixed (about 10 on
+# loopback, about 13 at 170 ms a request); that is why the requests are sent until the first 429, and why
+# a check of a limited key looks at 3 requests in a row: the bucket of a limited key may have refilled
+# enough for the first of them, and cannot for the next.
 #
 # The addresses default to 203.0.113.1 and 203.0.113.2, from a block that is set aside for documentation
 # and never routed. Wait 10 seconds between runs, so that the bucket of --first has refilled.
@@ -117,23 +126,46 @@ status() {
 		-H "X-Forwarded-For: $1" --data-binary "$BODY" "$URL/v1/validate" 2>/dev/null || true
 }
 
-# flood ADDRESS: 12 requests in a row; sets STATUSES to their statuses.
+# flood ADDRESS: requests in a row until the first 429, at most FLOOD_LIMIT, or until one gets no answer;
+# sets STATUSES to their statuses. How many it takes depends on how fast they go, so the count is not fixed.
+FLOOD_LIMIT=40
 flood() {
+	local code
 	STATUSES=""
-	for _ in $(seq 1 12); do
-		STATUSES="$STATUSES$(status "$1") "
+	for _ in $(seq 1 "$FLOOD_LIMIT"); do
+		code="$(status "$1")"
+		STATUSES="$STATUSES$code "
+		if [ "$code" = "429" ] || [ "$code" = "000" ]; then break; fi
 	done
 	STATUSES="${STATUSES% }"
 }
 
-# limit_reached: pass when the first of STATUSES is 200 and the last is 429.
+# follow ADDRESS: FOLLOW_COUNT requests in a row, right after a flood; sets STATUSES to their statuses.
+FOLLOW_COUNT=3
+follow() {
+	local code
+	STATUSES=""
+	for _ in $(seq 1 "$FOLLOW_COUNT"); do
+		code="$(status "$1")"
+		STATUSES="$STATUSES$code "
+		if [ "$code" = "000" ]; then break; fi
+	done
+	STATUSES="${STATUSES% }"
+}
+
+# limit_reached: pass when the first of STATUSES is 200 and the last is 429, whatever the count between.
 limit_reached() {
-	if [ "${STATUSES%% *}" = "200" ] && [ "$(last_word "$STATUSES")" = "429" ]; then
+	local first last
+	first="${STATUSES%% *}"
+	last="$(last_word "$STATUSES")"
+	if [ "$first" = "200" ] && [ "$last" = "429" ]; then
 		ok "the limit is reached"
-	elif [ "${STATUSES%% *}" = "000" ]; then
+	elif [ "$first" = "000" ]; then
 		bad "the limit is reached (no answer from $URL)"
+	elif [ "$last" = "429" ]; then
+		bad "the limit is reached (the first request was already refused: wait 10 seconds between runs, so that the bucket has refilled)"
 	else
-		bad "the limit is reached (wait 10 seconds between runs, so that the bucket has refilled)"
+		bad "the limit is reached (no 429 in $FLOOD_LIMIT requests: are the rate limits raised, or does each request take about a second?)"
 	fi
 }
 
@@ -194,20 +226,37 @@ check_peer() {
 	esac
 }
 
+# all_are CODE: every status of STATUSES is CODE, and there are FOLLOW_COUNT of them.
+all_are() {
+	local words word
+	read -r -a words <<<"$STATUSES"
+	[ "${#words[@]}" -eq "$FOLLOW_COUNT" ] || return 1
+	for word in "${words[@]}"; do
+		[ "$word" = "$1" ] || return 1
+	done
+}
+
+# has_status CODE: CODE is one of STATUSES.
+has_status() {
+	case " $STATUSES " in
+		*" $1 "*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
 # Check 3 of direct: the header is honored, one key for each address in it.
 check_honored() {
-	local n
 	echo "3. X-Forwarded-For is honored: a limit for each address in it"
 	flood "$FIRST"
-	echo "     12 requests of 100 strings with X-Forwarded-For: $FIRST"
-	echo "       expected: the 1st is 200 and the 12th is 429"
+	echo "     requests of 100 strings with X-Forwarded-For: $FIRST, until the first 429 (at most $FLOOD_LIMIT)"
+	echo "       expected: 200 for the first, and a 429 within $FLOOD_LIMIT requests"
 	echo "       got:      $STATUSES"
 	limit_reached
-	n="$(status "$SECOND")"
-	echo "     a 13th request with X-Forwarded-For: $SECOND"
-	echo "       expected: 200, a client of its own"
-	echo "       got:      $n"
-	if [ "$n" = "200" ]; then
+	follow "$SECOND"
+	echo "     $FOLLOW_COUNT requests in a row with X-Forwarded-For: $SECOND"
+	echo "       expected: 200 for all, a client of its own"
+	echo "       got:      $STATUSES"
+	if all_are 200; then
 		ok "a different address is not limited"
 	else
 		bad "a different address is not limited (a 429 means every client shares one key, as when the peer is not trusted)"
@@ -216,18 +265,17 @@ check_honored() {
 
 # The proxy mode: the header is replaced by Apache, so a spoofed value changes nothing.
 check_ignored() {
-	local n
 	echo "X-Forwarded-For has no effect behind Apache: the limit is per real address"
 	flood "$FIRST"
-	echo "     12 requests of 100 strings with X-Forwarded-For: $FIRST"
-	echo "       expected: the 1st is 200 and the 12th is 429"
+	echo "     requests of 100 strings with X-Forwarded-For: $FIRST, until the first 429 (at most $FLOOD_LIMIT)"
+	echo "       expected: 200 for the first, and a 429 within $FLOOD_LIMIT requests"
 	echo "       got:      $STATUSES"
 	limit_reached
-	n="$(status "$SECOND")"
-	echo "     a 13th request with a different X-Forwarded-For: $SECOND"
-	echo "       expected: 429, because the header does not choose the key"
-	echo "       got:      $n"
-	if [ "$n" = "429" ]; then
+	follow "$SECOND"
+	echo "     $FOLLOW_COUNT requests in a row with a different X-Forwarded-For: $SECOND"
+	echo "       expected: a 429 among them, because the header does not choose the key"
+	echo "       got:      $STATUSES"
+	if has_status 429; then
 		ok "a spoofed address does not escape the limit"
 	else
 		bad "a spoofed address does not escape the limit"
@@ -243,13 +291,12 @@ check_ignored() {
 }
 
 check_other() {
-	local n
 	echo "A second address is not limited by the first one"
-	n="$(status "$FIRST")"
-	echo "     one request of 100 strings with X-Forwarded-For: $FIRST"
-	echo "       expected: 200, because the limit is per real address and this address has sent nothing"
-	echo "       got:      $n"
-	if [ "$n" = "200" ]; then
+	follow "$FIRST"
+	echo "     $FOLLOW_COUNT requests in a row of 100 strings with X-Forwarded-For: $FIRST"
+	echo "       expected: 200 for all, because the limit is per real address and this address has sent nothing"
+	echo "       got:      $STATUSES"
+	if all_are 200; then
 		ok "the limit is per real address"
 	else
 		bad "the limit is per real address (a 429 here means the two addresses share a key; was 'proxy --hold' running from the other address?)"

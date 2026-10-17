@@ -221,7 +221,9 @@ The client key is verified three ways, and `check-client-key.sh direct` prints w
 
 1. `docker network inspect hed-lsp` shows the gateway 172.30.56.1.
 2. While a connection from the host is held open, `docker exec hed-lsp cat /proc/net/tcp` shows the remote address in hexadecimal, and it decodes to the gateway.
-3. Twelve requests of 100 strings with `X-Forwarded-For: 203.0.113.1` (100 units each against the burst of 1000) end in 429, and a 13th with `203.0.113.2` passes at once.
+3. Requests of 100 strings with `X-Forwarded-For: 203.0.113.1` (100 units each against the burst of 1000) are sent until the first 429, at most 40, and then three requests in a row with `203.0.113.2` all pass.
+   The count before the 429 is not fixed, because the bucket refills 100 units a second: about 10 on loopback, and 13 when every answer takes 170 ms longer.
+   The `proxy` mode likewise looks at three requests in a row from the second address, which must include a 429, and `other` needs all three to pass; one request would depend on how much the bucket refilled in between.
 
 Run it again after any Docker or kernel upgrade.
 Any local user of the host can spoof a key through loopback, because the loopback connection comes through the trusted gateway.
