@@ -10,7 +10,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { childEnv, compiled, startDaemon } from './daemonHarness.js';
-import { findOnPath, removeTempDirs, run, SCRIPTS, tempDir } from './scriptHarness.js';
+import { bash, DEPLOY, findOnPath, pathWithoutDocker, removeTempDirs, run, SCRIPTS, tempDir } from './scriptHarness.js';
 
 afterAll(removeTempDirs);
 
@@ -500,11 +500,15 @@ describe.skipIf(!bun)('check-load-report.ts', () => {
 				aborted: false,
 				reason: null,
 				samples: 150,
+				targetsAreDefault: true,
 				targets: {
 					osa: { kind: 'loopback', p95Ms: 40, maxMs: 90 },
+					hedit: { kind: 'loopback', p95Ms: 20, maxMs: 60 },
 					hedtools: { kind: 'loopback', p95Ms: 150, maxMs: 200 },
-					apache: { kind: 'apache', p95Ms: 300, maxMs: 500 },
+					'hedtools-apache': { kind: 'apache', p95Ms: 300, maxMs: 500 },
 				},
+				dockerChecked: true,
+				dockerContainers: ['osa', 'osa-dev', 'hedit', 'hedit-dev', 'hedtools', 'hedtools_dev', 'hed-lsp'],
 				dockerHealthy: true,
 			},
 		};
@@ -584,8 +588,8 @@ describe.skipIf(!bun)('check-load-report.ts', () => {
 			[
 				'the Apache path over 300 ms',
 				's0',
-				(h: any) => (h.neighbors.targets.apache.p95Ms = 300.1),
-				'neighbor apache p95',
+				(h: any) => (h.neighbors.targets['hedtools-apache'].p95Ms = 300.1),
+				'neighbor hedtools-apache p95',
 			],
 			[
 				'an unhealthy neighbor',
@@ -602,15 +606,175 @@ describe.skipIf(!bun)('check-load-report.ts', () => {
 			expect(verdictOf(results, criterion)).toBe('fail');
 		});
 
-		it('fails for a value that is missing, and skips the host memory when the host has no /proc', async () => {
+		it('takes the summary of the real probe: its default targets are the four the checker requires, and Docker was not checked', async () => {
+			// No Docker on the PATH. The probe writes the summary that measure.sh would put in the host file, whether
+			// it stopped at its first default target (nothing listens on the port of osa on most machines) or not.
+			const out = path.join(dir, 'probe-summary.json');
+			const probe = await bash(path.join(DEPLOY, 'neighbor-probe.sh'), ['--duration', '1', '--out', out], {
+				PATH: pathWithoutDocker(),
+				HOME: tempDir('hed-lsp-home-'),
+			});
+			const summary = JSON.parse(fs.readFileSync(out, 'utf-8'));
+			const host = { ...good, neighbors: summary };
+
+			const results = await withHost('s0', host);
+
+			expect(probe.code).toBeLessThanOrEqual(1);
+			expect(summary.targetsAreDefault).toBe(true);
+			expect(verdictOf(results, 'neighbor targets')).toBe('pass');
+			expect(results.find((r) => r.criterion === 'neighbor targets')?.detail).toBe(
+				'judged osa, hedit, hedtools, hedtools-apache, the defaults of the probe',
+			);
+			expect(verdictOf(results, 'Docker health of the neighbors')).toBe('fail');
+			expect(results.find((r) => r.criterion === 'Docker health of the neighbors')?.detail).toContain(
+				'Docker health was not checked',
+			);
+		});
+
+		it('fails for a value that is missing', async () => {
 			const host = JSON.parse(JSON.stringify(good));
 			delete host.container.memoryPeakMiB;
-			host.hostAvailableMinMiB = null;
 
 			const results = await withHost('s0', host);
 
 			expect(verdictOf(results, 'container memory peak')).toBe('fail');
-			expect(verdictOf(results, 'host available memory')).toBe('skip');
+		});
+
+		it('fails a run on a host without /proc, which measured no memory, and skips it only for a rehearsal', async () => {
+			const host = JSON.parse(JSON.stringify(good));
+			host.hostAvailableMinMiB = null;
+			const rehearsal = { ...host, rehearsal: true };
+			const file = path.join(dir, 'no-proc.host.json');
+			fs.writeFileSync(file, JSON.stringify(rehearsal));
+
+			const run = await withHost('s0', host);
+			const practice = (await check(['--rehearsal', '--profile', 's0', '--host', file, '--json', mixed])).results;
+
+			expect(verdictOf(run, 'host available memory')).toBe('fail');
+			expect(verdictOf(practice, 'host available memory')).toBe('skip');
+		});
+
+		describe('the neighbors', () => {
+			const detail = (results: Verdict[], criterion: string): string =>
+				results.find((r) => r.criterion === criterion)?.detail ?? '';
+
+			it('passes when the probe watched all four, with their default targets, and says which it judged', async () => {
+				const results = await withHost('s0', good);
+
+				expect(verdictOf(results, 'neighbor targets')).toBe('pass');
+				expect(detail(results, 'neighbor targets')).toBe(
+					'judged osa, hedit, hedtools, hedtools-apache, the defaults of the probe',
+				);
+				for (const name of ['osa', 'hedit', 'hedtools', 'hedtools-apache']) {
+					expect(verdictOf(results, `neighbor ${name} p95`)).toBe('pass');
+				}
+				expect(detail(results, 'Docker health of the neighbors')).toContain('7 containers, all healthy');
+			});
+
+			it.each(['osa', 'hedit', 'hedtools', 'hedtools-apache'])(
+				'fails a host run whose probe did not watch %s',
+				async (name) => {
+					const host = JSON.parse(JSON.stringify(good));
+					delete host.neighbors.targets[name];
+
+					const results = await withHost('s0', host);
+
+					expect(verdictOf(results, 'neighbor targets')).toBe('fail');
+					expect(detail(results, 'neighbor targets')).toContain(`the probe did not watch ${name}`);
+				},
+			);
+
+			it('fails a host run whose probe watched other targets than its defaults, or does not say', async () => {
+				const replaced = JSON.parse(JSON.stringify(good));
+				replaced.neighbors.targetsAreDefault = false;
+				const silent = JSON.parse(JSON.stringify(good));
+				delete silent.neighbors.targetsAreDefault;
+
+				const a = await withHost('s0', replaced);
+				const b = await withHost('s0', silent);
+
+				expect(verdictOf(a, 'neighbor targets')).toBe('fail');
+				expect(detail(a, 'neighbor targets')).toContain('HED_LSP_PROBE_TARGETS');
+				expect(verdictOf(b, 'neighbor targets')).toBe('fail');
+				expect(detail(b, 'neighbor targets')).toContain('does not say whether its targets are the defaults');
+			});
+
+			it('judges a neighbor by the kind it must have: a loopback neighbor given as Apache gets no extra time', async () => {
+				const host = JSON.parse(JSON.stringify(good));
+				host.neighbors.targets.osa = { kind: 'apache', p95Ms: 200, maxMs: 250 };
+
+				const results = await withHost('s0', host);
+
+				expect(verdictOf(results, 'neighbor targets')).toBe('fail');
+				expect(detail(results, 'neighbor targets')).toContain('osa has the wrong kind of target');
+				expect(verdictOf(results, 'neighbor osa p95')).toBe('fail');
+				expect(detail(results, 'neighbor osa p95')).toContain('at most 150 ms');
+			});
+
+			it('fails when Docker health was never checked, whatever dockerHealthy says', async () => {
+				const unchecked = JSON.parse(JSON.stringify(good));
+				unchecked.neighbors.dockerChecked = false;
+				unchecked.neighbors.dockerHealthy = true;
+				const silent = JSON.parse(JSON.stringify(good));
+				delete silent.neighbors.dockerChecked;
+
+				const a = await withHost('s0', unchecked);
+				const b = await withHost('s0', silent);
+
+				expect(verdictOf(a, 'Docker health of the neighbors')).toBe('fail');
+				expect(detail(a, 'Docker health of the neighbors')).toContain('Docker health was not checked');
+				expect(verdictOf(b, 'Docker health of the neighbors')).toBe('fail');
+				expect(detail(b, 'Docker health of the neighbors')).toContain('does not say whether Docker health was checked');
+			});
+
+			it('fails a host run whose Docker check did not watch the containers osa, hedit, and hedtools', async () => {
+				const host = JSON.parse(JSON.stringify(good));
+				host.neighbors.dockerContainers = ['hed-lsp', 'osa-dev'];
+
+				const results = await withHost('s0', host);
+
+				expect(verdictOf(results, 'Docker health of the neighbors')).toBe('fail');
+				expect(detail(results, 'Docker health of the neighbors')).toContain(
+					'did not watch the containers osa, hedit, hedtools; it watched hed-lsp, osa-dev',
+				);
+			});
+
+			it('lets a rehearsal watch other targets and containers, and still needs Docker to have been checked', async () => {
+				const rehearsal = JSON.parse(JSON.stringify(good));
+				rehearsal.rehearsal = true;
+				rehearsal.neighbors.targetsAreDefault = false;
+				rehearsal.neighbors.targets = { 'hed-lsp': { kind: 'loopback', p95Ms: 12, maxMs: 30 } };
+				rehearsal.neighbors.dockerContainers = ['hed-lsp'];
+				const unchecked = JSON.parse(JSON.stringify(rehearsal));
+				unchecked.neighbors.dockerChecked = false;
+				const files = ['practice', 'practice-unchecked'].map((name, i) => {
+					const file = path.join(dir, `${name}.host.json`);
+					fs.writeFileSync(file, JSON.stringify([rehearsal, unchecked][i]));
+					return file;
+				});
+
+				const [a, b] = await Promise.all(
+					files.map((file) => check(['--rehearsal', '--profile', 's0', '--host', file, '--json', mixed])),
+				);
+
+				expect(verdictOf(a.results, 'neighbor targets')).toBe('pass');
+				expect(detail(a.results, 'neighbor targets')).toContain('a rehearsal may watch other targets');
+				expect(verdictOf(a.results, 'neighbor hed-lsp p95')).toBe('pass');
+				expect(verdictOf(a.results, 'Docker health of the neighbors')).toBe('pass');
+				expect(verdictOf(b.results, 'Docker health of the neighbors')).toBe('fail');
+			});
+
+			it('fails a probe that watched no target at all, in a rehearsal too', async () => {
+				const host = JSON.parse(JSON.stringify(good));
+				host.rehearsal = true;
+				host.neighbors.targets = {};
+				const file = path.join(dir, 'no-targets.host.json');
+				fs.writeFileSync(file, JSON.stringify(host));
+
+				const result = await check(['--rehearsal', '--profile', 's0', '--host', file, '--json', mixed]);
+
+				expect(verdictOf(result.results, 'neighbor targets')).toBe('fail');
+			});
 		});
 
 		it('fails every host criterion in one line when there is no host file, and finds it beside the report', async () => {
@@ -631,7 +795,15 @@ describe.skipIf(!bun)('check-load-report.ts', () => {
 			rehearsal,
 			container: { memoryPeakMiB: 300, oomKilled: false, restartCount: 0 },
 			hostAvailableMinMiB: 4096,
-			neighbors: { aborted: false, samples: 5, targets: {}, dockerHealthy: true },
+			neighbors: {
+				aborted: false,
+				samples: 5,
+				targetsAreDefault: false,
+				targets: { 'hed-lsp': { kind: 'loopback', p95Ms: 12 } },
+				dockerChecked: true,
+				dockerContainers: ['hed-lsp'],
+				dockerHealthy: true,
+			},
 		});
 		const judged = async (rehearsalFlag: boolean, marked: unknown) => {
 			const hostFile = path.join(dir, `rehearsal-${Math.random().toString(36).slice(2)}.host.json`);

@@ -564,7 +564,7 @@ p95 and p99 are the 95th and 99th percentiles of the latency, by the nearest-ran
 | Container memory | S0 peak at most 600 MiB, S1 peak at most 3 GiB, no out-of-memory (OOM) kill, restart count 0 |
 | Soak | Memory drift at most 10% between minute 5 and the end |
 | Host available memory | At least 1.5 GiB throughout |
-| Neighbors | The probe within its thresholds, and Docker health stays healthy |
+| Neighbors | The probe within its thresholds, all four neighbors watched with the default targets, Docker health checked (containers `osa`, `hedit`, and `hedtools` among those watched), and every container healthy |
 | Semantic correctness | #70 and #71 fixed, which a report cannot show |
 
 `check-load-report.ts` exits 0 when every criterion passes, 1 when one fails, and 2 for a file it cannot read.
@@ -588,6 +588,9 @@ It aborts at once, kills the harness container, and exits 1 on any of these:
 - a container that stopped, restarted, was killed for lack of memory, or reports unhealthy.
 
 It passes if the loopback probes keep p95 at or below 150 ms, the Apache probe keeps p95 at or below 300 ms, and all Docker health stays healthy.
+The checker judges the neighbors `osa`, `hedit`, `hedtools`, and `hedtools-apache` by name, and a host run fails without all four, so a run that watched something else cannot pass.
+It also fails Docker health that was not checked, which is when Docker did not answer or no container was running at the start, and a probe that was given other targets than its defaults.
+`HED_LSP_PROBE_TARGETS` and `--target` replace the defaults and are for a rehearsal: `measure.sh` refuses `HED_LSP_PROBE_TARGETS` without `--rehearsal`, and the checker accepts other targets only with `--rehearsal`.
 A neighbor that restarts for its own reasons, such as an automatic update of its image, also stops the run; run again.
 
 The probe kills only a container whose name starts with `hed-lsp-` (`measure.sh` names `hed-lsp-load`), and it refuses any other name at its start, so it can never be told to kill `hed-lsp` itself or a container of another service.

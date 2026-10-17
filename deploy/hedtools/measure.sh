@@ -52,6 +52,10 @@
 #                             HED_LSP_HARNESS_URL and HED_LSP_PROBE_TARGETS, is for a rehearsal on a machine
 #                             where the host network is not the machine's own, such as Docker Desktop.
 #   HED_LSP_HARNESS_CPUS      CPU limit of the harness container (default 0.2).
+#   HED_LSP_PROBE_TARGETS     Replaces the neighbors that the probe watches (NAME=KIND=URL, space-separated). It
+#                             is for a rehearsal only: without --rehearsal, measure.sh refuses to start, because
+#                             a run that watched other targets did not protect the neighbors, and
+#                             check-load-report.ts fails the files of such a run.
 
 set -euo pipefail
 
@@ -114,6 +118,10 @@ done
 if [ -n "$REHEARSAL" ]; then
 	REHEARSAL_RE='^[1-9][0-9]*$'
 	[[ $REHEARSAL =~ $REHEARSAL_RE ]] || die "--rehearsal must be a whole number of seconds above 0, got '$REHEARSAL'"
+fi
+# The neighbors are the point of the probe; only a rehearsal may watch something else.
+if [ -z "$REHEARSAL" ] && [ -n "${HED_LSP_PROBE_TARGETS:-}" ]; then
+	die "HED_LSP_PROBE_TARGETS replaces the neighbors that the probe watches, which only a rehearsal may do; add --rehearsal, or unset it"
 fi
 NUMBER_RE='^[0-9]+(\.[0-9]+)?$'
 [[ $HARNESS_CPUS =~ $NUMBER_RE ]] || die "HED_LSP_HARNESS_CPUS must be a number, got '$HARNESS_CPUS'"

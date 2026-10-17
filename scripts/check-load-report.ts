@@ -57,6 +57,18 @@ export const LIMITS = {
 	clientsFor429: 64,
 } as const;
 
+/**
+ * The services that share the host with the daemon, under the names that neighbor-probe.sh gives them, and
+ * for the first three the Docker container that must be watched. A run that watched anything else did not
+ * protect them, so a host run fails without all four; a rehearsal may watch other targets.
+ */
+export const NEIGHBORS: readonly { name: string; kind: 'loopback' | 'apache'; container?: string }[] = [
+	{ name: 'osa', kind: 'loopback', container: 'osa' },
+	{ name: 'hedit', kind: 'loopback', container: 'hedit' },
+	{ name: 'hedtools', kind: 'loopback', container: 'hedtools' },
+	{ name: 'hedtools-apache', kind: 'apache' },
+];
+
 type Verdict = 'pass' | 'fail' | 'skip';
 
 export interface Result {
@@ -341,6 +353,104 @@ function runKindResult(host: Json, rehearsal: boolean): Result {
 	);
 }
 
+/** The criteria on the summary of the neighbor probe, which the host file holds. */
+function neighborResults(neighbors: Json, rehearsal: boolean, need: (criterion: string) => Result): Result[] {
+	const results: Result[] = [];
+	const aborted = get(neighbors, 'aborted');
+	results.push(
+		aborted === false
+			? pass('neighbor probe', `no breach in ${num(get(neighbors, 'samples')) ?? '?'} samples`)
+			: fail('neighbor probe', `aborted: ${String(get(neighbors, 'reason') ?? 'no reason given')}`),
+	);
+
+	// Which targets the probe watched, and whether they were the neighbors.
+	const found = get(neighbors, 'targets');
+	const targets: Json = isObject(found) ? found : {};
+	const names = Object.keys(targets);
+	const missing = NEIGHBORS.filter((n) => !names.includes(n.name)).map((n) => n.name);
+	const wrongKind = NEIGHBORS.filter((n) => names.includes(n.name) && get(targets[n.name], 'kind') !== n.kind).map(
+		(n) => n.name,
+	);
+	const defaults = get(neighbors, 'targetsAreDefault');
+	const judged = `judged ${names.join(', ') || 'no target'}`;
+	if (names.length === 0) {
+		results.push(fail('neighbor targets', 'the probe watched no target'));
+	} else if (rehearsal) {
+		const other = missing.length > 0 ? ', and a rehearsal may watch other targets than the neighbors' : '';
+		results.push(pass('neighbor targets', `${judged}${other}`));
+	} else {
+		const problems: string[] = [];
+		if (missing.length > 0) {
+			problems.push(`the probe did not watch ${missing.join(', ')}`);
+		}
+		if (wrongKind.length > 0) {
+			problems.push(`${wrongKind.join(', ')} has the wrong kind of target`);
+		}
+		if (defaults === false) {
+			problems.push('the probe was given other targets than its defaults (--target or HED_LSP_PROBE_TARGETS)');
+		} else if (defaults !== true) {
+			problems.push('the probe summary does not say whether its targets are the defaults');
+		}
+		results.push(
+			problems.length === 0
+				? pass('neighbor targets', `${judged}, the defaults of the probe`)
+				: fail('neighbor targets', `${problems.join('; ')}; ${judged}`),
+		);
+	}
+	for (const [name, target] of Object.entries(targets)) {
+		// A host run judges a neighbor by the kind it must have, whatever the summary says.
+		const kind = rehearsal
+			? get(target, 'kind')
+			: (NEIGHBORS.find((n) => n.name === name)?.kind ?? get(target, 'kind'));
+		const p95 = num(get(target, 'p95Ms'));
+		const max = kind === 'apache' ? LIMITS.apacheP95Ms : LIMITS.loopbackP95Ms;
+		results.push(
+			p95 === undefined
+				? need(`neighbor ${name} p95`)
+				: check(`neighbor ${name} p95`, p95 <= max, `${p95} ms`, `at most ${max} ms`),
+		);
+	}
+
+	// Docker health counts only when it was checked, and a host run must have watched the containers.
+	const criterion = 'Docker health of the neighbors';
+	const checked = get(neighbors, 'dockerChecked');
+	const healthy = get(neighbors, 'dockerHealthy');
+	const containers = get(neighbors, 'dockerContainers');
+	const watched = Array.isArray(containers) ? containers.filter((c): c is string => typeof c === 'string') : [];
+	const unwatched = rehearsal
+		? []
+		: NEIGHBORS.flatMap((n) => (n.container !== undefined && !watched.includes(n.container) ? [n.container] : []));
+	if (checked !== true) {
+		results.push(
+			fail(
+				criterion,
+				checked === false
+					? 'Docker health was not checked: the probe ran without Docker, or saw no running container'
+					: 'the probe summary does not say whether Docker health was checked',
+			),
+		);
+	} else if (typeof healthy !== 'boolean') {
+		results.push(need(criterion));
+	} else if (unwatched.length > 0) {
+		results.push(
+			fail(
+				criterion,
+				`the probe did not watch the containers ${unwatched.join(', ')}; it watched ${watched.join(', ')}`,
+			),
+		);
+	} else {
+		results.push(
+			check(
+				criterion,
+				healthy,
+				healthy ? `${watched.length} containers, all healthy` : 'a container was not healthy',
+				'all healthy',
+			),
+		);
+	}
+	return results;
+}
+
 /** The criteria on the host file that measure.sh writes. */
 export function evaluateHost(profile: Profile, host: Json | undefined, rehearsal = false): Result[] {
 	const need = (criterion: string): Result => fail(criterion, 'the host file has no value for it');
@@ -372,7 +482,9 @@ export function evaluateHost(profile: Profile, host: Json | undefined, rehearsal
 	const available = get(host, 'hostAvailableMinMiB');
 	results.push(
 		available === null
-			? skip('host available memory', 'the host does not expose /proc/meminfo')
+			? rehearsal
+				? skip('host available memory', 'a rehearsal on a machine without /proc/meminfo')
+				: fail('host available memory', 'the host does not expose /proc/meminfo, so the memory left was not measured')
 			: num(available) === undefined
 				? need('host available memory')
 				: check(
@@ -415,38 +527,7 @@ export function evaluateHost(profile: Profile, host: Json | undefined, rehearsal
 	}
 
 	const neighbors = get(host, 'neighbors');
-	if (!isObject(neighbors)) {
-		results.push(need('neighbors'));
-	} else {
-		const aborted = get(neighbors, 'aborted');
-		results.push(
-			aborted === false
-				? pass('neighbor probe', `no breach in ${num(get(neighbors, 'samples')) ?? '?'} samples`)
-				: fail('neighbor probe', `aborted: ${String(get(neighbors, 'reason') ?? 'no reason given')}`),
-		);
-		const targets = get(neighbors, 'targets');
-		for (const [name, target] of isObject(targets) ? Object.entries(targets) : []) {
-			const kind = get(target, 'kind');
-			const p95 = num(get(target, 'p95Ms'));
-			const max = kind === 'apache' ? LIMITS.apacheP95Ms : LIMITS.loopbackP95Ms;
-			results.push(
-				p95 === undefined
-					? need(`neighbor ${name} p95`)
-					: check(`neighbor ${name} p95`, p95 <= max, `${p95} ms`, `at most ${max} ms`),
-			);
-		}
-		const healthy = get(neighbors, 'dockerHealthy');
-		results.push(
-			typeof healthy === 'boolean'
-				? check(
-						'Docker health of the neighbors',
-						healthy,
-						healthy ? 'all healthy' : 'a container was not healthy',
-						'all healthy',
-					)
-				: need('Docker health of the neighbors'),
-		);
-	}
+	results.push(...(isObject(neighbors) ? neighborResults(neighbors, rehearsal, need) : [need('neighbors')]));
 	return results;
 }
 

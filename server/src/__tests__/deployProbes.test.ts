@@ -262,8 +262,13 @@ describe.skipIf(!(haveCurl && haveJq))('neighbor-probe.sh', () => {
 				expect(target.p95Ms).toBeLessThanOrEqual(target.maxMs);
 				expect(target.maxMs).toBeLessThan(1000);
 			}
-			// Docker was not on the PATH, so its checks did not run and nothing was unhealthy.
-			expect(summary.dockerHealthy).toBe(true);
+			// Docker was not on the PATH, so its health was not checked, and the summary says so: health that was
+			// never checked is null and not true, and no container was watched.
+			expect(summary.dockerChecked).toBe(false);
+			expect(summary.dockerHealthy).toBeNull();
+			expect(summary.dockerContainers).toEqual([]);
+			// The targets were given with --target, so they are not the defaults.
+			expect(summary.targetsAreDefault).toBe(false);
 			const lines = fs.readFileSync(tsv, 'utf-8').trim().split('\n');
 			expect(lines).toHaveLength(summary.samples * 2);
 			expect(lines.every((line) => line.split('\t')[2] === '200')).toBe(true);
@@ -278,6 +283,38 @@ describe.skipIf(!(haveCurl && haveJq))('neighbor-probe.sh', () => {
 				expect(summary.targets[name].p95Ms).toBe(times[Math.ceil(0.95 * times.length) - 1]);
 				expect(summary.targets[name].maxMs).toBe(times[times.length - 1]);
 			}
+		} finally {
+			await daemon.stop();
+		}
+	}, 60_000);
+
+	it('says that targets from HED_LSP_PROBE_TARGETS are not the defaults either, and keeps the defaults when none are given', async () => {
+		const daemon = await startDaemon();
+		const dir = tempDir('hed-lsp-probe-');
+		try {
+			const replaced = path.join(dir, 'replaced.json');
+			const fromEnv = await bash(script, ['--interval', '1', '--duration', '1', '--out', replaced], {
+				...env(),
+				HED_LSP_PROBE_TARGETS: `daemon=loopback=${daemon.url}/v1/health`,
+			});
+			// The summary lists all four neighbors in the order of the runbook, whether the probe stopped at the
+			// first of them (nothing listens on the loopback port of osa on most machines) or ran for its second.
+			const defaults = path.join(dir, 'defaults.json');
+			const withDefaults = await bash(script, ['--interval', '1', '--duration', '1', '--out', defaults], env());
+
+			expect(fromEnv.code).toBe(0);
+			const changed = JSON.parse(fs.readFileSync(replaced, 'utf-8'));
+			expect(changed.targetsAreDefault).toBe(false);
+			expect(Object.keys(changed.targets)).toEqual(['daemon']);
+			const kept = JSON.parse(fs.readFileSync(defaults, 'utf-8'));
+			expect(kept.targetsAreDefault).toBe(true);
+			expect(Object.entries(kept.targets).map(([name, target]) => [name, (target as { kind: string }).kind])).toEqual([
+				['osa', 'loopback'],
+				['hedit', 'loopback'],
+				['hedtools', 'loopback'],
+				['hedtools-apache', 'apache'],
+			]);
+			expect(withDefaults.code).toBeLessThanOrEqual(1);
 		} finally {
 			await daemon.stop();
 		}
@@ -483,6 +520,22 @@ describe('measure.sh', () => {
 			'--duration 120 --mix suggest=60,validate=30,semantic=10 --clients 64 --semantic-top 10 --semantic-batch 10',
 		);
 		expect(s1.stdout).toContain('--concurrency 1 --duration 1800');
+	});
+
+	it('refuses HED_LSP_PROBE_TARGETS outside a rehearsal, because a run that watched other targets protected no neighbor', async () => {
+		const targets = 'daemon=loopback=http://127.0.0.1:1/health';
+
+		const real = await bash(script, ['--dry-run', 's0-c4'], { ...withPin(IMAGE), HED_LSP_PROBE_TARGETS: targets });
+		const rehearsal = await bash(script, ['--dry-run', '--rehearsal', '5', 's0-c4'], {
+			...withPin(IMAGE),
+			HED_LSP_PROBE_TARGETS: targets,
+		});
+
+		expect(real.code).toBe(1);
+		expect(real.stdout).toBe('');
+		expect(real.stderr).toContain('HED_LSP_PROBE_TARGETS replaces the neighbors that the probe watches');
+		expect(real.stderr).toContain('add --rehearsal, or unset it');
+		expect(rehearsal.code).toBe(0);
 	});
 
 	it('shortens every step for a rehearsal, and names the files so', async () => {

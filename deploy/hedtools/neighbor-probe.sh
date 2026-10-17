@@ -10,6 +10,8 @@
 # default to the services that share the host: osa and hedit on their loopback ports, hedtools on its
 # loopback port, and hedtools through Apache. KIND is `loopback` or `apache`; giving --target replaces
 # the defaults, and HED_LSP_PROBE_TARGETS (space-separated NAME=KIND=URL) replaces them for a rehearsal.
+# The summary says whether the targets are the defaults (targetsAreDefault), so that a run that watched
+# other targets than the neighbors is never taken for one that watched them.
 #
 # --abort-container NAME may name only a container whose name starts with hed-lsp-, such as hed-lsp-load,
 # so that the probe can never be told to kill the daemon hed-lsp or a container of another service. Any
@@ -26,7 +28,9 @@
 # On the way out, by --duration, SIGINT, or SIGTERM, it writes a JSON summary to --out (default standard
 # output): per target the count, the p95 and the maximum in milliseconds, and the counters of the host.
 # The summary is judged by scripts/check-load-report.ts: loopback targets p95 of at most 150 ms, Apache
-# targets at most 300 ms, and every container healthy.
+# targets at most 300 ms, and every container healthy. Docker health counts only when it was checked:
+# dockerChecked is true when Docker answered and at least one container was running at the start, and
+# dockerContainers names the containers that were watched; dockerHealthy is null when it was not checked.
 #
 # Memory, swap, and pressure come from /proc, so on a host without it those checks are skipped and the
 # summary holds null for them. --tsv FILE keeps every sample: time, target, status, milliseconds.
@@ -41,6 +45,7 @@ ABORT_CONTAINER_RE='^hed-lsp-[A-Za-z0-9][A-Za-z0-9_.-]*$'
 OUT=""
 TSV=""
 TARGETS=()
+TARGETS_ARE_DEFAULT=true
 
 PROBE_TIMEOUT_SECONDS=3
 SLOW_MS=1000
@@ -76,7 +81,10 @@ while [ "$#" -gt 0 ]; do
 					;;
 				--out) OUT="$2" ;;
 				--tsv) TSV="$2" ;;
-				--target) TARGETS+=("$2") ;;
+				--target)
+					TARGETS+=("$2")
+					TARGETS_ARE_DEFAULT=false
+					;;
 			esac
 			shift
 			;;
@@ -95,6 +103,7 @@ command -v jq >/dev/null 2>&1 || die "jq is required"
 if [ "${#TARGETS[@]}" -eq 0 ]; then
 	if [ -n "${HED_LSP_PROBE_TARGETS:-}" ]; then
 		read -r -a TARGETS <<<"$HED_LSP_PROBE_TARGETS"
+		TARGETS_ARE_DEFAULT=false
 	else
 		TARGETS=(
 			"osa=loopback=http://127.0.0.1:38528/health"
@@ -124,6 +133,7 @@ ABORTED=false
 REASON=""
 ROUNDS=0
 DOCKER_HEALTHY=true
+DOCKER_CHECKED=false
 MIN_AVAILABLE=""
 MAX_SWAP_RATE=""
 MAX_PRESSURE=""
@@ -156,7 +166,10 @@ percentiles() {
 }
 
 write_summary() {
-	local targets="{}" i name kind n non200 p95 max stats
+	local targets="{}" i name kind n non200 p95 max stats containers healthy
+	containers="$(jq -n '$ARGS.positional' --args ${INITIAL_NAMES[@]+"${INITIAL_NAMES[@]}"})"
+	# Health that was never checked is not health: it is null, not true.
+	if [ "$DOCKER_HEALTHY" = false ]; then healthy=false; elif [ "$DOCKER_CHECKED" = true ]; then healthy=true; else healthy=null; fi
 	for i in "${!NAMES[@]}"; do
 		name="${NAMES[$i]}"
 		kind="${KINDS[$i]}"
@@ -170,11 +183,13 @@ write_summary() {
 			'$all + {($name): {kind: $kind, n: $n, p95Ms: $p95, maxMs: $max, non200: $non200}}')"
 	done
 	jq -n --argjson aborted "$ABORTED" --arg reason "$REASON" --argjson samples "$ROUNDS" \
-		--argjson targets "$targets" --argjson healthy "$DOCKER_HEALTHY" \
+		--argjson targets "$targets" --argjson healthy "$healthy" --argjson dockerChecked "$DOCKER_CHECKED" \
+		--argjson containers "$containers" --argjson defaults "$TARGETS_ARE_DEFAULT" \
 		--argjson available "${MIN_AVAILABLE:-null}" --argjson swap "${MAX_SWAP_RATE:-null}" \
 		--argjson pressure "${MAX_PRESSURE:-null}" \
 		'{tool: "hed-lsp-neighbor-probe", aborted: $aborted, reason: (if $reason == "" then null else $reason end),
-		  samples: $samples, targets: $targets, dockerHealthy: $healthy, hostAvailableMinMiB: $available,
+		  samples: $samples, targetsAreDefault: $defaults, targets: $targets, dockerChecked: $dockerChecked,
+		  dockerContainers: $containers, dockerHealthy: $healthy, hostAvailableMinMiB: $available,
 		  swapInPagesPerSecMax: $swap, cpuPressureSomeAvg10Max: $pressure}' >"${OUT:-/dev/stdout}"
 }
 
@@ -276,6 +291,7 @@ check_docker() {
 			abort "$name reports unhealthy"
 		fi
 	done
+	if [ "${#INITIAL_NAMES[@]}" -gt 0 ]; then DOCKER_CHECKED=true; fi
 }
 
 START=$SECONDS
