@@ -374,14 +374,19 @@ sudo apachectl -M 2>/dev/null | grep -E 'proxy_module|proxy_http_module|headers_
 sudo apachectl configtest
 
 # 2. Back up the virtual host file. 'sudo apachectl -S' names the file and line of the hedtools.org :443 virtual host.
+#    That name may be a symbolic link (a2ensite makes one), and 'cp -a' copies a link as a link, so the backup
+#    would point at the live file. Resolve it first, and use "$VHOST" in every command below and in the rollback.
 sudo apachectl -S 2>&1 | grep -A2 'hedtools.org'
-sudo cp -a <virtual host file> <virtual host file>.bak-$(date +%F)
+VHOST=$(readlink -f <virtual host file>)
+ls -l "$VHOST"                      # a regular file, not a link
+sudo cp -a "$VHOST" "$VHOST.bak-$(date +%F)"
 
 # 3. Install the snippet with the tester addresses in place of the placeholders, and add one Include line to the :443 virtual host only.
+#    The delimiter of sed is |, so that an address with a prefix length, such as 203.0.113.0/24, works.
 sudo install -d -m 755 /etc/apache2/snippets
-sed 's/<tester-1>/<address 1>/; s/<tester-2>/<address 2>/' ~yahya/hed-lsp/deploy/hedtools/apache-hed-lsp.conf \
+sed 's|<tester-1>|<address 1>|; s|<tester-2>|<address 2>|' ~yahya/hed-lsp/deploy/hedtools/apache-hed-lsp.conf \
   | sudo tee /etc/apache2/snippets/hed-lsp.conf > /dev/null
-sudoedit <virtual host file>        # add: Include /etc/apache2/snippets/hed-lsp.conf
+sudoedit "$VHOST"                   # add: Include /etc/apache2/snippets/hed-lsp.conf
 
 # 4. Check, then reload gracefully.
 sudo apachectl configtest           # Syntax OK
@@ -408,9 +413,13 @@ sudo systemctl reload apache2
 
 ### Rollback of the route
 
-Restore the backup of the virtual host file, or comment out the `Include` line, then:
+Restore the backup of the virtual host file, or comment out the `Include` line, then check and reload.
+`VHOST` is the real file that Stage 1 backed up and edited.
+In a new shell, resolve it again, from the file named by `sudo apachectl -S`:
 
 ```bash
+VHOST=$(readlink -f <virtual host file>)
+sudo cp -a "$VHOST.bak-<date of the backup>" "$VHOST"    # the restore; or: sudoedit "$VHOST", and comment out the Include line
 sudo apachectl configtest
 sudo systemctl reload apache2
 ```
@@ -595,7 +604,7 @@ This is the text for this runbook and, later, for the notice in the client.
 | Emergency kill (no `sudo`) | `docker stop hed-lsp`. Apache answers 503, the clients fall back to local, and it stays stopped across reboots | 1 to 10 s |
 | Image | `deploy.sh <previous image ID or digest>`. The cache volume is untouched. The last image is also tagged `hed-lsp-daemon:previous` | 15 to 30 s |
 | Flag | `HED_LSP_SEMANTIC=0` in the settings file, then `deploy.sh` again | 10 to 20 s |
-| Route | Restore the virtual host backup, or comment out the `Include` line, then `sudo apachectl configtest` and `sudo systemctl reload apache2`. Requests then get a 404 | Under 5 s |
+| Route | Restore the virtual host backup over `"$VHOST"` (the resolved real file, see [Rollback of the route](#rollback-of-the-route)), or comment out the `Include` line there, then `sudo apachectl configtest` and `sudo systemctl reload apache2`. Requests then get a 404 | Under 5 s |
 | Full removal | `docker rm -f hed-lsp`, `docker network rm hed-lsp`, `docker volume rm hed-lsp-cache`, remove the snippet and the `Include` line, reload | About 1 minute |
 
 The previous image stays tagged on the host, with a gzipped tarball of it in `~/hed-lsp-state/images/`, and the last two are kept.
