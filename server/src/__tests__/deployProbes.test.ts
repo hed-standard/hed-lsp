@@ -79,6 +79,49 @@ async function startDelayProxy(target: string, delayMs: number): Promise<{ url: 
 	};
 }
 
+/** How the n-th request, counting from 1, is answered by a scripted server. */
+interface Answer {
+	/** The HTTP status; 200 when absent. */
+	status?: number;
+	/** How long the server holds the answer back; none when absent. */
+	delayMs?: number;
+}
+
+/**
+ * A real HTTP server on a real socket, whose answers follow a script: it holds the n-th answer back for the
+ * delay that `plan(n)` gives and then sends the status that it gives. Nothing about the client is faked; this
+ * is the slow, failing, or silent neighbor that the probe has to notice.
+ */
+async function startScriptedServer(
+	plan: (n: number) => Answer,
+): Promise<{ url: string; requests: () => number; stop: () => Promise<void> }> {
+	let count = 0;
+	const timers = new Set<NodeJS.Timeout>();
+	const server = http.createServer((_request, response) => {
+		const { status = 200, delayMs = 0 } = plan(++count);
+		const timer = setTimeout(() => {
+			timers.delete(timer);
+			response.writeHead(status, { 'Content-Type': 'application/json' });
+			response.end('{}');
+		}, delayMs);
+		timers.add(timer);
+	});
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+	const { port } = server.address() as AddressInfo;
+	return {
+		url: `http://127.0.0.1:${port}`,
+		requests: () => count,
+		stop: () =>
+			new Promise<void>((resolve) => {
+				for (const timer of timers) {
+					clearTimeout(timer);
+				}
+				server.close(() => resolve());
+				server.closeAllConnections();
+			}),
+	};
+}
+
 describe.skipIf(!haveCurl)('check-client-key.sh', () => {
 	const script = path.join(DEPLOY, 'check-client-key.sh');
 	const env = (): Record<string, string> => ({ PATH: pathWithoutDocker(), HOME: tempDir('hed-lsp-home-') });
@@ -433,6 +476,216 @@ describe.skipIf(!(haveCurl && haveJq))('neighbor-probe.sh', () => {
 		expect(result.code).toBe(2);
 		expect(result.stderr).toContain(message);
 	});
+});
+
+/** The numbers of a probe summary that the thresholds are about. */
+interface ProbeSummary {
+	aborted: boolean;
+	reason: string | null;
+	samples: number;
+	targets: Record<string, { n: number; p95Ms: number | null; maxMs: number | null; non200: number }>;
+	hostAvailableMinMiB: number | null;
+	swapInPagesPerSecMax: number | null;
+	cpuPressureSomeAvg10Max: number | null;
+}
+
+describe.skipIf(!(haveCurl && haveJq))('the thresholds of neighbor-probe.sh, against a real server', () => {
+	const script = path.join(DEPLOY, 'neighbor-probe.sh');
+	const env = (): Record<string, string> => ({ PATH: pathWithoutDocker(), HOME: tempDir('hed-lsp-home-') });
+
+	/** Run the probe against one scripted target, and return what it did. */
+	async function probe(
+		plan: (n: number) => Answer,
+		args: string[] = [],
+	): Promise<{ code: number; stderr: string; summary: ProbeSummary; served: number }> {
+		const server = await startScriptedServer(plan);
+		const out = path.join(tempDir('hed-lsp-probe-'), 'summary.json');
+		try {
+			const result = await bash(
+				script,
+				['--interval', '1', '--target', `neighbor=loopback=${server.url}/`, '--out', out, ...args],
+				env(),
+			);
+			return {
+				code: result.code,
+				stderr: result.stderr,
+				summary: JSON.parse(fs.readFileSync(out, 'utf-8')),
+				served: server.requests(),
+			};
+		} finally {
+			await server.stop();
+		}
+	}
+
+	it('aborts when the neighbor takes 1.5 s to answer, which is over the limit of 1 s, though it answered 200', async () => {
+		const run = await probe(() => ({ delayMs: 1500 }));
+
+		expect(run.code).toBe(1);
+		const took = /ABORT: neighbor took (\d+)\.\d ms, over 1000 ms/.exec(run.stderr);
+		expect(took).not.toBeNull();
+		expect(Number(took?.[1])).toBeGreaterThanOrEqual(1500);
+		expect(run.summary.aborted).toBe(true);
+		expect(run.summary.reason).toContain('took');
+		expect(run.summary.samples).toBe(1);
+		expect(run.summary.targets.neighbor.non200).toBe(0);
+		expect(run.summary.targets.neighbor.p95Ms).toBeGreaterThanOrEqual(1500);
+		expect(run.served).toBe(1);
+	}, 30_000);
+
+	it('does not abort for a neighbor that answers at once, or in 0.6 s, which is under the limit', async () => {
+		const fast = await probe(() => ({}), ['--duration', '3']);
+		const slowish = await probe(() => ({ delayMs: 600 }), ['--duration', '3']);
+
+		expect(fast.code).toBe(0);
+		expect(fast.summary.aborted).toBe(false);
+		expect(fast.summary.samples).toBeGreaterThanOrEqual(3);
+		expect(fast.summary.targets.neighbor.maxMs).toBeLessThan(500);
+		expect(slowish.code).toBe(0);
+		expect(slowish.summary.aborted).toBe(false);
+		expect(slowish.summary.targets.neighbor.p95Ms).toBeGreaterThanOrEqual(600);
+		expect(slowish.summary.targets.neighbor.p95Ms).toBeLessThan(1000);
+	}, 60_000);
+
+	it('aborts in a later round, and stops asking, when a neighbor that was fast turns slow', async () => {
+		const run = await probe((n) => ({ delayMs: n <= 2 ? 0 : 1500 }));
+
+		expect(run.code).toBe(1);
+		expect(run.stderr).toContain('ABORT: neighbor took');
+		expect(run.summary.samples).toBe(3);
+		expect(run.summary.targets.neighbor.n).toBe(3);
+		expect(run.summary.targets.neighbor.p95Ms).toBeGreaterThanOrEqual(1500);
+		expect(run.served).toBe(3);
+	}, 30_000);
+
+	it('aborts on the first answer that is not 200, counts it, and stops asking, when a neighbor starts to fail', async () => {
+		const run = await probe((n) => ({ status: n <= 2 ? 200 : 503 }));
+
+		expect(run.code).toBe(1);
+		expect(run.stderr).toContain('ABORT: neighbor answered 503, not 200');
+		expect(run.summary.samples).toBe(3);
+		expect(run.summary.targets.neighbor.non200).toBe(1);
+		expect(run.served).toBe(3);
+	}, 30_000);
+
+	it('aborts after 3 s, the time the probe waits at most, for a neighbor that never answers', async () => {
+		const run = await probe(() => ({ delayMs: 60_000 }));
+
+		expect(run.code).toBe(1);
+		expect(run.stderr).toContain('ABORT: neighbor answered 000, not 200');
+		expect(run.summary.targets.neighbor.non200).toBe(1);
+		expect(run.summary.targets.neighbor.p95Ms).toBeGreaterThanOrEqual(3000);
+		expect(run.summary.targets.neighbor.p95Ms).toBeLessThan(10_000);
+	}, 30_000);
+});
+
+// The memory, swap, and pressure counters are read from /proc, which only Linux has. The tests of the
+// numbers read the real files and are skipped, with the reason in their names, where there is none (macOS);
+// the test of the other branch, a machine without /proc, runs only there.
+const hasProc = fs.existsSync('/proc/meminfo') && fs.existsSync('/proc/vmstat');
+const hasPressure = fs.existsSync('/proc/pressure/cpu');
+
+/** MemAvailable of the real /proc/meminfo, in whole MiB, as the probe reads it. */
+function memAvailableMiB(): number {
+	const found = /^MemAvailable:\s+(\d+) kB$/m.exec(fs.readFileSync('/proc/meminfo', 'utf-8'));
+	return Math.floor(Number(found?.[1]) / 1024);
+}
+
+/** The "some" avg10 figure of the real /proc/pressure/cpu. */
+function cpuPressureSomeAvg10(): number {
+	const found = /^some .*avg10=([0-9.]+)/m.exec(fs.readFileSync('/proc/pressure/cpu', 'utf-8'));
+	return Number(found?.[1]);
+}
+
+describe.skipIf(!(haveCurl && haveJq))('the /proc counters of neighbor-probe.sh', () => {
+	const script = path.join(DEPLOY, 'neighbor-probe.sh');
+
+	/** Seven rounds, half a second apart, against a server that answers at once. */
+	async function sample(): Promise<{ summary: ProbeSummary; before: number[]; after: number[] }> {
+		const server = await startScriptedServer(() => ({}));
+		const out = path.join(tempDir('hed-lsp-probe-'), 'summary.json');
+		const read = (): number[] => [
+			hasProc ? memAvailableMiB() : Number.NaN,
+			hasPressure ? cpuPressureSomeAvg10() : Number.NaN,
+		];
+		try {
+			const before = read();
+			await bash(
+				script,
+				['--interval', '0.5', '--duration', '3', '--target', `neighbor=loopback=${server.url}/`, '--out', out],
+				{ PATH: pathWithoutDocker(), HOME: tempDir('hed-lsp-home-') },
+			);
+			return { summary: JSON.parse(fs.readFileSync(out, 'utf-8')), before, after: read() };
+		} finally {
+			await server.stop();
+		}
+	}
+
+	it.skipIf(!hasProc)(
+		'reads MemAvailable and the swap-in counter of the real /proc (skipped without /proc, as on macOS)',
+		async () => {
+			const { summary, before, after } = await sample();
+
+			const [memoryBefore, memoryAfter] = [before[0], after[0]];
+			// The probe keeps the lowest MemAvailable it saw, in whole MiB, so it is close to what the file said at the
+			// start and the end; a unit slip (kB for MiB) or another field would be far off.
+			expect(Number.isInteger(summary.hostAvailableMinMiB)).toBe(true);
+			expect(summary.hostAvailableMinMiB as number).toBeLessThanOrEqual(Math.max(memoryBefore, memoryAfter) * 1.25);
+			expect(summary.hostAvailableMinMiB as number).toBeGreaterThanOrEqual(Math.min(memoryBefore, memoryAfter) * 0.1);
+			if (summary.aborted) {
+				// A machine that is short of memory or swapping aborts, and then it names the threshold it crossed.
+				expect(summary.reason).toMatch(/host memory available is \d+ MiB, under 1024 MiB|swap-in averages/);
+			} else {
+				// Seven rounds fill the window of five, so the rate of pages read back from swap was worked out, and
+				// it is under the limit of 50 pages a second, because the probe did not abort.
+				expect(typeof summary.swapInPagesPerSecMax).toBe('number');
+				expect(summary.swapInPagesPerSecMax as number).toBeGreaterThanOrEqual(0);
+				expect(summary.swapInPagesPerSecMax as number).toBeLessThan(50);
+			}
+		},
+		60_000,
+	);
+
+	it.skipIf(!hasProc || !hasPressure)(
+		'reads the CPU pressure of the real /proc/pressure/cpu (skipped without it)',
+		async () => {
+			const { summary, before, after } = await sample();
+
+			const [pressureBefore, pressureAfter] = [before[1], after[1]];
+			expect(typeof summary.cpuPressureSomeAvg10Max).toBe('number');
+			expect(summary.cpuPressureSomeAvg10Max as number).toBeGreaterThanOrEqual(0);
+			expect(summary.cpuPressureSomeAvg10Max as number).toBeLessThanOrEqual(100);
+			// The highest avg10 of the run is not far under what the file said at the start and the end.
+			expect(summary.cpuPressureSomeAvg10Max as number).toBeGreaterThanOrEqual(
+				Math.min(pressureBefore, pressureAfter) - 5,
+			);
+		},
+		60_000,
+	);
+
+	it.skipIf(!hasProc || hasPressure)(
+		'leaves the CPU pressure null on a Linux kernel without /proc/pressure/cpu',
+		async () => {
+			const { summary } = await sample();
+
+			expect(summary.cpuPressureSomeAvg10Max).toBeNull();
+			expect(typeof summary.hostAvailableMinMiB === 'number' || summary.aborted).toBe(true);
+		},
+		60_000,
+	);
+
+	it.skipIf(hasProc)(
+		'skips the three counters on a machine without /proc, as macOS, and still probes (skipped on Linux)',
+		async () => {
+			const { summary } = await sample();
+
+			expect(summary.hostAvailableMinMiB).toBeNull();
+			expect(summary.swapInPagesPerSecMax).toBeNull();
+			expect(summary.cpuPressureSomeAvg10Max).toBeNull();
+			expect(summary.aborted).toBe(false);
+			expect(summary.samples).toBeGreaterThanOrEqual(5);
+		},
+		60_000,
+	);
 });
 
 describe('measure.sh', () => {
