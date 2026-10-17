@@ -106,7 +106,7 @@ jobs:
   image:
     name: Daemon image (build and smoke test)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     # Only for a pull request into main (the epic-to-main pull request) and a push to main, though
     # the workflow also runs for develop. act cannot run this job and its actor is nektos/act, so it
     # skips the job; the env context, where act sets ACT, is not available in a job-level condition.
@@ -173,6 +173,169 @@ jobs:
           name: hed-lsp-daemon-image
           path: hed-lsp-daemon.tar
           retention-days: 14
+
+      # The deploy scripts of the hedtools host run here against the image that was just tested, on the Docker of
+      # the runner, because their Docker paths cannot run anywhere else without a host: deploy.sh and its rollback,
+      # the settings check, check-client-key.sh, the probe, and a rehearsal of measure.sh. The smoke containers go
+      # first, because they publish the port 38530 that hed-lsp publishes too. Every step uses the real scripts and
+      # a real daemon; the one neighbor is a plain HTTP server. The last two steps remove what these made.
+      - name: Prepare the deploy checks
+        run: |
+          set -euo pipefail
+          docker rm --force hed-lsp-smoke hed-lsp-offline
+          image_id="$(docker image inspect --format '{{.Id}}' hed-lsp-daemon:ci)"
+          # A second image that differs only in its commit label, so that there is a previous image to roll back to.
+          docker build --platform linux/amd64 --build-arg HED_LSP_COMMIT=0000000 --tag hed-lsp-daemon:ci-other .
+          other_id="$(docker image inspect --format '{{.Id}}' hed-lsp-daemon:ci-other)"
+          if [ "$image_id" = "$other_id" ]; then echo "the second image has the ID of the first: $image_id"; exit 1; fi
+          state="$RUNNER_TEMP/hed-lsp-state"
+          mkdir -p "$state/results"
+          sed "s|^HED_LSP_IMAGE_ID=.*|HED_LSP_IMAGE_ID=$image_id|" deploy/hedtools/hed-lsp.env.example > "$state/hed-lsp.env"
+          {
+            echo "IMAGE_ID=$image_id"
+            echo "OTHER_IMAGE_ID=$other_id"
+            echo "HED_LSP_STATE_DIR=$state"
+            echo "HED_LSP_REPO_DIR=$GITHUB_WORKSPACE"
+          } >> "$GITHUB_ENV"
+
+      - name: Deploy the image, and deploy it again
+        run: |
+          set -euo pipefail
+          deploy/hedtools/deploy.sh --dry-run "$IMAGE_ID" > /dev/null
+          deploy/hedtools/deploy.sh "$IMAGE_ID"
+          curl -fsS http://127.0.0.1:38530/v1/health | jq -e --arg commit "${IMAGE_COMMIT::7}" '(.status == "ok" or .status == "degraded") and .commit == $commit'
+          # There was no earlier container, so no image is recorded as the last good one.
+          if [ -e "$HED_LSP_STATE_DIR/previous-image-id" ]; then echo "a record was written with no earlier container"; exit 1; fi
+          first="$(docker container inspect --format '{{.Id}}' hed-lsp)"
+          # The same image again: the container is replaced, and the record is still not written.
+          deploy/hedtools/deploy.sh "$IMAGE_ID" | tee "$RUNNER_TEMP/second-deploy.txt"
+          grep -F 'already has this image' "$RUNNER_TEMP/second-deploy.txt"
+          if [ -e "$HED_LSP_STATE_DIR/previous-image-id" ]; then echo "a record was written for the same image"; exit 1; fi
+          if [ "$(docker container inspect --format '{{.Id}}' hed-lsp)" = "$first" ]; then echo "the container was not replaced"; exit 1; fi
+
+      - name: Check which address the daemon limits by
+        run: deploy/hedtools/check-client-key.sh direct
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.3
+
+      # A real run needs the image of the env file to be the image that runs. Then two short steps, with a plain
+      # HTTP server as the one neighbor, and the result files judged as a rehearsal. The latency verdicts depend
+      # on the runner, so only what the files must hold is checked: that each says it is a rehearsal and that its
+      # host file has every value, with Docker checked and no restart, no kill, and no breach.
+      - name: Refuse to measure another image, then rehearse a measurement
+        run: |
+          set -euo pipefail
+          cp "$HED_LSP_STATE_DIR/hed-lsp.env" "$RUNNER_TEMP/hed-lsp.env.good"
+          zeros="$(printf '%064d' 0)"
+          sed -i "s|^HED_LSP_IMAGE_ID=.*|HED_LSP_IMAGE_ID=sha256:$zeros|" "$HED_LSP_STATE_DIR/hed-lsp.env"
+          if deploy/hedtools/measure.sh --rehearsal 5 s0-c4 2> "$RUNNER_TEMP/refusal.txt"; then
+            echo "measure.sh measured an image that does not run"; exit 1
+          fi
+          cat "$RUNNER_TEMP/refusal.txt"
+          grep -F 'but HED_LSP_IMAGE_ID in' "$RUNNER_TEMP/refusal.txt"
+          grep -F "is sha256:$zeros" "$RUNNER_TEMP/refusal.txt"
+          if docker container inspect hed-lsp-load > /dev/null 2>&1; then echo "the refused run started a load container"; exit 1; fi
+          cp "$RUNNER_TEMP/hed-lsp.env.good" "$HED_LSP_STATE_DIR/hed-lsp.env"
+
+          python3 -m http.server 38999 --bind 127.0.0.1 --directory "$RUNNER_TEMP" > /dev/null 2>&1 &
+          neighbor=$!
+          trap 'kill "$neighbor" 2> /dev/null || true' EXIT
+          timeout 30 sh -c 'until curl -fsS -o /dev/null http://127.0.0.1:38999/; do sleep 0.5; done'
+          export HED_LSP_PROBE_TARGETS='neighbor=loopback=http://127.0.0.1:38999/'
+          deploy/hedtools/measure.sh --rehearsal 10 s0-c4 s0-overload
+
+          for step in s0-c4 s0-overload; do
+            profile="$step"; if [ "$step" = s0-c4 ]; then profile=s0; fi
+            report="$(ls "$HED_LSP_STATE_DIR"/results/*-"$step"-rehearsal.json)"
+            status=0
+            bun scripts/check-load-report.ts --rehearsal --profile "$profile" --json "$report" > "$RUNNER_TEMP/judged-$step.json" || status=$?
+            if [ "$status" -gt 1 ]; then echo "the checker could not read the files of $step"; cat "$RUNNER_TEMP/judged-$step.json"; exit 1; fi
+            jq -e '.rehearsal == true' "$RUNNER_TEMP/judged-$step.json"
+            jq -e '[.results[] | select(.criterion | IN("run kind", "neighbor targets", "neighbor probe", "Docker health of the neighbors", "no out-of-memory kill", "restart count")) | .verdict] | length == 6 and all(. == "pass")' "$RUNNER_TEMP/judged-$step.json"
+            if jq -e '[.results[] | select(.detail | contains("host file has no value"))] | length > 0' "$RUNNER_TEMP/judged-$step.json" > /dev/null; then
+              echo "the host file of $step lacks a value"; jq '.results' "$RUNNER_TEMP/judged-$step.json"; exit 1
+            fi
+          done
+
+      # The Docker branches of the probe: it kills the load container when it aborts, and it aborts when a container
+      # that ran at its start has stopped. The probe has no --duration in the second run but the bound of 40 s,
+      # so a probe that misses the stop ends with status 0 and the step fails.
+      - name: Check that the probe kills the load container and notices a stopped one
+        run: |
+          set -euo pipefail
+          docker run --detach --name hed-lsp-load --entrypoint sleep hed-lsp-daemon:ci 600
+          if deploy/hedtools/neighbor-probe.sh --abort-container hed-lsp-load --out "$RUNNER_TEMP/abort.json" \
+            --target 'daemon=loopback=http://127.0.0.1:38530/v1/no-such-route' 2> "$RUNNER_TEMP/abort.txt"; then
+            echo "the probe did not abort on a 404"; exit 1
+          fi
+          cat "$RUNNER_TEMP/abort.txt"
+          grep -F 'killed hed-lsp-load' "$RUNNER_TEMP/abort.txt"
+          if [ "$(docker container inspect --format '{{.State.Running}}' hed-lsp-load)" != false ]; then echo "the load container still runs"; exit 1; fi
+          docker rm --force hed-lsp-load
+
+          docker run --detach --name hed-lsp-helper --entrypoint sleep hed-lsp-daemon:ci 600
+          status=0
+          deploy/hedtools/neighbor-probe.sh --interval 1 --duration 40 --out "$RUNNER_TEMP/stopped.json" \
+            --target 'daemon=loopback=http://127.0.0.1:38530/v1/health' 2> "$RUNNER_TEMP/stopped.txt" &
+          probe=$!
+          sleep 3
+          docker stop --time 1 hed-lsp-helper
+          wait "$probe" || status=$?
+          cat "$RUNNER_TEMP/stopped.txt"
+          if [ "$status" != 1 ]; then echo "the probe did not abort when a container stopped (status $status)"; exit 1; fi
+          grep -F 'hed-lsp-helper is no longer running' "$RUNNER_TEMP/stopped.txt"
+          jq -e '.aborted == true and .dockerChecked == true and .dockerHealthy == false and (.dockerContainers | index("hed-lsp-helper")) != null' "$RUNNER_TEMP/stopped.json"
+          docker rm --force hed-lsp-helper
+
+      - name: Refuse a bad setting before anything is stopped
+        run: |
+          set -euo pipefail
+          before="$(docker container inspect --format '{{.Id}} {{.State.StartedAt}}' hed-lsp)"
+          cp "$HED_LSP_STATE_DIR/hed-lsp.env" "$RUNNER_TEMP/hed-lsp.env.good"
+          sed -i 's|^HED_LSP_MAX_IN_FLIGHT=.*|HED_LSP_MAX_IN_FLIGHT=eight|' "$HED_LSP_STATE_DIR/hed-lsp.env"
+          if deploy/hedtools/deploy.sh "$IMAGE_ID" 2> "$RUNNER_TEMP/refused.txt"; then echo "deploy.sh accepted a bad setting"; exit 1; fi
+          cat "$RUNNER_TEMP/refused.txt"
+          grep -F 'nothing was stopped' "$RUNNER_TEMP/refused.txt"
+          grep -F 'HED_LSP_MAX_IN_FLIGHT' "$RUNNER_TEMP/refused.txt"
+          # The message names the setting and the rule, never the value.
+          if grep -F 'eight' "$RUNNER_TEMP/refused.txt"; then echo "the message printed the value"; exit 1; fi
+          # The container that ran before is still the one that runs, and it was not restarted.
+          if [ "$(docker container inspect --format '{{.Id}} {{.State.StartedAt}}' hed-lsp)" != "$before" ]; then echo "the running container changed"; exit 1; fi
+          if [ "$(docker container inspect --format '{{.State.Running}}' hed-lsp)" != true ]; then echo "the container does not run"; exit 1; fi
+          curl -fsS http://127.0.0.1:38530/v1/health | jq -e '.status == "ok" or .status == "degraded"'
+          cp "$RUNNER_TEMP/hed-lsp.env.good" "$HED_LSP_STATE_DIR/hed-lsp.env"
+
+      - name: Replace the image, and roll back to the one that ran before
+        run: |
+          set -euo pipefail
+          deploy/hedtools/deploy.sh "$OTHER_IMAGE_ID"
+          curl -fsS http://127.0.0.1:38530/v1/health | jq -e '.commit == "0000000"'
+          # The replaced container was healthy, so its image is the one on record, and it is tagged.
+          if [ "$(tr -d '[:space:]' < "$HED_LSP_STATE_DIR/previous-image-id")" != "$IMAGE_ID" ]; then echo "the record is not the first image"; exit 1; fi
+          if [ "$(docker image inspect --format '{{.Id}}' hed-lsp-daemon:previous)" != "$IMAGE_ID" ]; then echo "the tag previous is not the first image"; exit 1; fi
+          deploy/hedtools/deploy.sh --rollback
+          curl -fsS http://127.0.0.1:38530/v1/health | jq -e --arg commit "${IMAGE_COMMIT::7}" '.commit == $commit'
+          # The rollback replaced a healthy container too, so the image it left is on record in turn.
+          if [ "$(tr -d '[:space:]' < "$HED_LSP_STATE_DIR/previous-image-id")" != "$OTHER_IMAGE_ID" ]; then echo "the record is not the second image"; exit 1; fi
+
+      - name: Show the deploy check logs
+        if: failure()
+        run: |
+          docker ps --all
+          docker logs hed-lsp || true
+          docker network inspect hed-lsp || true
+          ls -l "${HED_LSP_STATE_DIR:-/nonexistent}" "${HED_LSP_STATE_DIR:-/nonexistent}/results" || true
+
+      # The container goes before the volume, because a volume cannot be removed while a container, even a
+      # stopped one, still uses it. This runs whether or not a step failed.
+      - name: Remove the container, the network, and the volume of the deploy checks
+        if: always()
+        run: |
+          docker rm --force hed-lsp hed-lsp-load hed-lsp-helper || true
+          docker network rm hed-lsp || true
+          docker volume rm hed-lsp-cache || true
 
   publish-image:
     name: Publish daemon image (ghcr.io)
