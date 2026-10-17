@@ -239,7 +239,7 @@ jobs:
           if docker container inspect hed-lsp-load > /dev/null 2>&1; then echo "the refused run started a load container"; exit 1; fi
           cp "$RUNNER_TEMP/hed-lsp.env.good" "$HED_LSP_STATE_DIR/hed-lsp.env"
 
-          python3 -m http.server 38999 --bind 127.0.0.1 --directory "$RUNNER_TEMP" > /dev/null 2>&1 &
+          bun -e "Bun.serve({ port: 38999, hostname: '127.0.0.1', fetch: () => new Response('ok') })" > /dev/null 2>&1 &
           neighbor=$!
           trap 'kill "$neighbor" 2> /dev/null || true' EXIT
           timeout 30 sh -c 'until curl -fsS -o /dev/null http://127.0.0.1:38999/; do sleep 0.5; done'
