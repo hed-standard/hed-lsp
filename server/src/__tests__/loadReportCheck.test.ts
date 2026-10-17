@@ -126,12 +126,97 @@ describe.skipIf(!bun)('check-load-report.ts', () => {
 		expect(result.code).toBe(latencyHolds ? 0 : 1);
 	});
 
-	it('passes the overload profile for a run in which every answer was a 200', async () => {
-		const result = await check(['--profile', 's0-overload', '--no-host', mixed]);
+	describe('the overload step', () => {
+		const reached = 'the overload was reached';
 
-		expect(result.code).toBe(0);
-		expect(result.stdout).toContain('only OVERLOADED rejections: 0 OVERLOADED 503 answers');
-		expect(result.stdout).toContain('all criteria of s0-overload pass');
+		it('passes the real report of an overloaded daemon: OVERLOADED answers, each with a Retry-After, and nothing else', async () => {
+			const refused = JSON.parse(fs.readFileSync(overloaded, 'utf-8')).overall.rejections['503'].OVERLOADED;
+
+			const result = await check(['--profile', 's0-overload', '--no-host', overloaded]);
+
+			expect(refused).toBeGreaterThan(0);
+			expect(result.code).toBe(0);
+			expect(result.stdout).toContain(`only OVERLOADED rejections: ${refused} OVERLOADED 503 answers`);
+			expect(result.stdout).toContain(
+				`${reached}: ${refused} OVERLOADED 503 answers with a Retry-After of at least 1 s`,
+			);
+			expect(result.stdout).toContain('all criteria of s0-overload pass');
+		});
+
+		it('fails a run in which every answer was a 200, because the daemon was never overloaded', async () => {
+			const result = await check(['--profile', 's0-overload', '--no-host', '--json', mixed]);
+
+			expect(result.code).toBe(1);
+			expect(verdictOf(result.results, 'only OVERLOADED rejections')).toBe('pass');
+			expect(verdictOf(result.results, reached)).toBe('fail');
+			expect(result.results.find((r) => r.criterion === reached)?.detail).toContain('no OVERLOADED 503 answer');
+		});
+
+		it('fails OVERLOADED answers that lack a Retry-After, and a report that does not record it', async () => {
+			const refused = JSON.parse(fs.readFileSync(overloaded, 'utf-8')).overall.rejections['503'].OVERLOADED;
+			const lacking = worsened(
+				'overload-no-retry.json',
+				(copy) => {
+					copy.overall.withoutRetryAfter['503'] = { OVERLOADED: refused };
+				},
+				overloaded,
+			);
+			const unrecorded = worsened(
+				'overload-unrecorded.json',
+				(copy) => {
+					delete copy.overall.withoutRetryAfter;
+				},
+				overloaded,
+			);
+
+			const a = await check(['--profile', 's0-overload', '--no-host', '--json', lacking]);
+			const b = await check(['--profile', 's0-overload', '--no-host', '--json', unrecorded]);
+
+			expect(verdictOf(a.results, reached)).toBe('fail');
+			expect(a.results.find((r) => r.criterion === reached)?.detail).toContain('none with an integer Retry-After');
+			expect(verdictOf(b.results, reached)).toBe('fail');
+			expect(b.results.find((r) => r.criterion === reached)?.detail).toContain('does not record their Retry-After');
+			expect(a.code).toBe(1);
+			expect(b.code).toBe(1);
+		});
+
+		it('is reached by one OVERLOADED answer with a Retry-After, even when others lack one', async () => {
+			const one = worsened(
+				'overload-one.json',
+				(copy) => {
+					copy.overall.rejections['503'] = { OVERLOADED: 5 };
+					copy.overall.status['503'] = 5;
+					copy.overall.withoutRetryAfter['503'] = { OVERLOADED: 4 };
+				},
+				overloaded,
+			);
+
+			const result = await check(['--profile', 's0-overload', '--no-host', '--json', one]);
+
+			expect(verdictOf(result.results, reached)).toBe('pass');
+			// The other four are still a failure of the criterion that every refusal carries one.
+			expect(verdictOf(result.results, 'Retry-After on 429 and 503 answers')).toBe('fail');
+		});
+
+		it.each([
+			['a 500', { '500': 1 }],
+			['a 502', { '502': 2 }],
+			['a 504', { '504': 1 }],
+		])('fails %s next to the OVERLOADED answers', async (_label, extra) => {
+			const bad = worsened(
+				`overload-5xx-${Object.keys(extra)[0]}.json`,
+				(copy) => {
+					Object.assign(copy.overall.status, extra);
+				},
+				overloaded,
+			);
+
+			const result = await check(['--profile', 's0-overload', '--no-host', '--json', bad]);
+
+			expect(verdictOf(result.results, 'only OVERLOADED rejections')).toBe('fail');
+			expect(verdictOf(result.results, reached)).toBe('pass');
+			expect(result.code).toBe(1);
+		});
 	});
 
 	it('fails a deliberately bad report, and names each criterion it breaks', async () => {
@@ -265,6 +350,42 @@ describe.skipIf(!bun)('check-load-report.ts', () => {
 		expect(result.code).toBe(1);
 	});
 
+	it('fails a reach check that left a query without an answer, and passes one that answered them all', async () => {
+		const withErrors = (count: number) =>
+			worsened(
+				`reach-errors-${count}.json`,
+				(copy) => {
+					copy.reach.errors = count;
+				},
+				capacity,
+			);
+
+		const none = await check(['--profile', 's1-capacity', '--no-host', '--json', withErrors(0)]);
+		const some = await check(['--profile', 's1-capacity', '--no-host', '--json', withErrors(3)]);
+		const unrecorded = await check([
+			'--profile',
+			's1-capacity',
+			'--no-host',
+			'--json',
+			worsened(
+				'reach-no-errors.json',
+				(copy) => {
+					delete copy.reach.errors;
+				},
+				capacity,
+			),
+		]);
+
+		expect(verdictOf(none.results, 'reach check answered every query')).toBe('pass');
+		expect(verdictOf(some.results, 'reach check answered every query')).toBe('fail');
+		expect(some.results.find((r) => r.criterion === 'reach check answered every query')?.detail).toContain(
+			'3 of 206 queries without an answer',
+		);
+		expect(verdictOf(unrecorded.results, 'reach check answered every query')).toBe('fail');
+		// The share itself is unchanged, so only the errors make this report fail.
+		expect(verdictOf(some.results, 'reach')).toBe(verdictOf(none.results, 'reach'));
+	});
+
 	it('fails the capacity profile for a report without a reach, and judges SEMANTIC_BUSY against the semantic requests', async () => {
 		const noReach = worsened(
 			'no-reach.json',
@@ -365,6 +486,7 @@ describe.skipIf(!bun)('check-load-report.ts', () => {
 
 	describe('the host file that measure.sh writes', () => {
 		const good = {
+			rehearsal: false,
 			container: {
 				memoryPeakMiB: 312.4,
 				memoryAtMinute5MiB: 300,
@@ -492,7 +614,7 @@ describe.skipIf(!bun)('check-load-report.ts', () => {
 		});
 
 		it('fails every host criterion in one line when there is no host file, and finds it beside the report', async () => {
-			const lonely = worsened('lonely.json', () => {});
+			const lonely = worsened('lonely.json', () => {}, overloaded);
 			const alone = await check(['--profile', 's0-overload', '--json', lonely]);
 			fs.writeFileSync(lonely.replace(/\.json$/, '.host.json'), JSON.stringify({ ...good, recoverySeconds: 2 }));
 			const found = await check(['--profile', 's0-overload', '--json', lonely]);
@@ -501,6 +623,67 @@ describe.skipIf(!bun)('check-load-report.ts', () => {
 			expect(verdictOf(alone.results, 'host measurements')).toBe('fail');
 			expect(verdictOf(found.results, 'recovery after the overload')).toBe('pass');
 			expect(found.code).toBe(0);
+		});
+	});
+
+	describe('a rehearsal of measure.sh', () => {
+		const host = (rehearsal: unknown) => ({
+			rehearsal,
+			container: { memoryPeakMiB: 300, oomKilled: false, restartCount: 0 },
+			hostAvailableMinMiB: 4096,
+			neighbors: { aborted: false, samples: 5, targets: {}, dockerHealthy: true },
+		});
+		const judged = async (rehearsalFlag: boolean, marked: unknown) => {
+			const hostFile = path.join(dir, `rehearsal-${Math.random().toString(36).slice(2)}.host.json`);
+			fs.writeFileSync(hostFile, JSON.stringify(host(marked)));
+			const args = ['--profile', 's0', '--host', hostFile, '--json', mixed];
+			return check(rehearsalFlag ? ['--rehearsal', ...args] : args);
+		};
+
+		it('is not a result: the files of a rehearsal fail without --rehearsal', async () => {
+			const result = await judged(false, true);
+
+			expect(verdictOf(result.results, 'run kind')).toBe('fail');
+			expect(result.results.find((r) => r.criterion === 'run kind')?.detail).toContain('judge it with --rehearsal');
+			expect(result.code).toBe(1);
+		});
+
+		it('is judged as practice with --rehearsal, and the output says so', async () => {
+			const hostFile = path.join(dir, 'practice.host.json');
+			fs.writeFileSync(hostFile, JSON.stringify(host(true)));
+
+			const json = await check(['--rehearsal', '--profile', 's0', '--host', hostFile, '--json', mixed]);
+			const text = await check(['--rehearsal', '--profile', 's0', '--host', hostFile, mixed]);
+
+			expect(verdictOf(json.results, 'run kind')).toBe('pass');
+			expect(text.stdout.startsWith('REHEARSAL: these files are practice')).toBe(true);
+			expect(text.stdout).toMatch(/PASS {2}run kind: a rehearsal: practice, not a result\n/);
+			expect(text.stdout).toMatch(/\(a rehearsal, not a result\)\n$/);
+		});
+
+		it('is never excused by --rehearsal for the files of a real run, and a host file that does not say fails', async () => {
+			const real = await judged(true, false);
+			const silent = await judged(false, undefined);
+			const text = await judged(false, 'yes');
+
+			expect(verdictOf(real.results, 'run kind')).toBe('fail');
+			expect(real.results.find((r) => r.criterion === 'run kind')?.detail).toContain('judge it without --rehearsal');
+			expect(verdictOf(silent.results, 'run kind')).toBe('fail');
+			expect(verdictOf(text.results, 'run kind')).toBe('fail');
+			expect(silent.results.find((r) => r.criterion === 'run kind')?.detail).toContain('does not say');
+		});
+
+		it('says in the JSON that it is a rehearsal, and not otherwise', async () => {
+			const hostFile = path.join(dir, 'label.host.json');
+			fs.writeFileSync(hostFile, JSON.stringify(host(true)));
+			const raw = async (flag: boolean) =>
+				JSON.parse(
+					(await check([...(flag ? ['--rehearsal'] : []), '--profile', 's0', '--host', hostFile, '--json', mixed]))
+						.stdout,
+				);
+
+			expect((await raw(true)).rehearsal).toBe(true);
+			expect((await raw(false)).rehearsal).toBe(false);
 		});
 	});
 
@@ -513,6 +696,7 @@ describe.skipIf(!bun)('check-load-report.ts', () => {
 			[['--profile'], '--profile needs a value'],
 			[['--profile', 's0', '--bogus', 'x.json'], 'unknown option --bogus'],
 			[['--profile', 's0', '--no-host', '--host', 'h.json', 'x.json'], 'exclude each other'],
+			[['--profile', 's0', '--no-host', '--rehearsal', 'x.json'], 'it excludes --no-host'],
 			[['--profile', 's0', '--no-host', '/nonexistent/report.json'], 'cannot read the report /nonexistent/report.json'],
 		])('exits 2 for the arguments %j', async (args, message) => {
 			const result = await check(args);

@@ -18,7 +18,8 @@
 # Options:
 #   --dry-run             Print what would run and change nothing; Docker is not called.
 #   --rehearsal SECONDS   Run every step for SECONDS instead of its time, to practice the procedure. The
-#                         result files say so in their names, and they are not results.
+#                         result files say so in their names and in the host file (rehearsal: true), they
+#                         are not results, and check-load-report.ts judges them only with --rehearsal.
 #
 # The daemon under test is the container hed-lsp. The image to measure is the one that CI printed in its
 # job summary, which you record as HED_LSP_IMAGE_ID=sha256:<id> in the env file. measure.sh refuses to run
@@ -200,7 +201,7 @@ if [ "$DRY_RUN" = 1 ]; then
 		printf '\n+ '
 		quote "${HARNESS[@]}"
 		printf '> %s\n' "$RESULTS_DIR/TIME-$step.json"
-		echo "# then: bun scripts/check-load-report.ts --profile $(step_field "$step" profile) TIME-$step.json"
+		echo "# then: bun scripts/check-load-report.ts --profile $(step_field "$step" profile)${REHEARSAL:+ --rehearsal} TIME-$step.json"
 	done
 	exit 0
 fi
@@ -369,7 +370,7 @@ finish_step() {
 		die "$step: the harness failed with status $harness_status or wrote no report ($base.json)"
 	fi
 	echo "   done: $(jq -r '"\(.overall.requests) requests, error rate \(.overall.errorRate), p95 \(.overall.latencyMs.p95) ms"' "$base.json")"
-	echo "   judge on a machine with Bun:  bun scripts/check-load-report.ts --profile $(step_field "$step" profile) $(basename "$base").json"
+	echo "   judge on a machine with Bun:  bun scripts/check-load-report.ts --profile $(step_field "$step" profile)${REHEARSAL:+ --rehearsal} $(basename "$base").json"
 }
 
 # cleanup: on every exit, stop what this run started. It is installed only here, after the refusals above,

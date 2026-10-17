@@ -232,7 +232,7 @@ That is accepted and documented.
 ### Step 10: the load runs
 
 Tell the owners of `osa`, `hedit`, and `hedtools` first, and use a quiet window.
-Rehearse once with short steps, which are not results:
+Rehearse once with short steps, which are not results (judge their files with `check-load-report.ts --rehearsal`):
 
 ```bash
 ~/hed-lsp/deploy/hedtools/measure.sh --rehearsal 10 s0-c4
@@ -540,7 +540,7 @@ The sequences, which `measure.sh` runs:
 | Step | Run | Profile of `check-load-report.ts` |
 |---|---|---|
 | `s0-c1`, `s0-c4`, `s0-c8` | Semantic search off, concurrency 1, 4, 8, 60 s each, mix `suggest=65,validate=35`, 64 clients | `s0` (the gate is concurrency 4) |
-| `s0-overload` | Concurrency 12, 60 s: only `OVERLOADED` answers are acceptable, and recovery takes under 5 s | `s0-overload` |
+| `s0-overload` | Concurrency 12, 60 s: at least one `OVERLOADED` 503 answer with a `Retry-After`, no other 5xx or rejection, and recovery in under 5 s | `s0-overload` |
 | `s1-mixed` | Semantic search on, 300 s at concurrency 4, mix `suggest=60,validate=30,semantic=10`, `--semantic-top 50` | `s1-mixed` |
 | `s1-capacity` | 120 s of semantic requests only, `--semantic-top 50`, with the reach check, for the capacity C | `s1-capacity` |
 | `s1-realistic` | 120 s of the mixed requests with `--semantic-top 10 --semantic-batch 10` | `s1-realistic` |
@@ -569,6 +569,10 @@ p95 and p99 are the 95th and 99th percentiles of the latency, by the nearest-ran
 
 `check-load-report.ts` exits 0 when every criterion passes, 1 when one fails, and 2 for a file it cannot read.
 A criterion whose data is missing fails, and `--no-host` skips the ones that need the host file.
+Every 429 and 503 answer must carry an integer `Retry-After` of at least 1 second, and a reach check that left a query without an answer fails.
+The `s0-overload` run fails when it had no `OVERLOADED` answer, because then the daemon was never overloaded.
+The files of a rehearsal (`measure.sh --rehearsal`) are practice and not results: the host file says so, and the checker fails them unless `--rehearsal` is given.
+With `--rehearsal` it judges them as practice and labels its output "a rehearsal, not a result", and it fails the host file of a real run.
 
 ### The do-no-harm probe
 

@@ -491,6 +491,13 @@ describe('measure.sh', () => {
 		expect(result.code).toBe(0);
 		expect(result.stdout).toContain('--concurrency 1 --duration 5 --mix suggest=60');
 		expect(result.stdout).not.toContain('1800');
+		// The files of a rehearsal are judged only with --rehearsal, so the hint says so; a real run's does not.
+		expect(result.stdout).toContain(
+			'# then: bun scripts/check-load-report.ts --profile s0 --rehearsal TIME-s0-c1.json',
+		);
+		expect((await bash(script, ['--dry-run', 's0-c1'], withPin(IMAGE))).stdout).toContain(
+			'# then: bun scripts/check-load-report.ts --profile s0 TIME-s0-c1.json',
+		);
 	});
 
 	it.each([

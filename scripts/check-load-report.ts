@@ -5,11 +5,12 @@
  * acceptance criteria of the hedtools deployment (docs/deployment-hedtools.md), and exit non-zero
  * when one fails.
  *
- * Usage: bun scripts/check-load-report.ts --profile NAME [--host FILE | --no-host] [--json] REPORT.json
+ * Usage: bun scripts/check-load-report.ts --profile NAME [--host FILE | --no-host] [--rehearsal] [--json] REPORT.json
  *
  * Profiles, one per run of deploy/hedtools/measure.sh:
  *   s0            Semantic search off, concurrency 4 or 8 (the gate is the run at concurrency 4).
- *   s0-overload   Semantic search off, concurrency 12: only OVERLOADED 503 answers are acceptable.
+ *   s0-overload   Semantic search off, concurrency 12: at least one OVERLOADED 503 answer with a Retry-After,
+ *                 and no other 5xx answer; the daemon must answer again within 5 seconds.
  *   s1-mixed      Semantic search on, the 300 s mixed run.
  *   s1-capacity   Semantic search on, semantic requests only; the reach and the capacity C.
  *   s1-realistic  Semantic search on, `--semantic-top 10 --semantic-batch 10`.
@@ -19,7 +20,13 @@
  * left on the host, the soak drift, the recovery time, and the neighbors come from the file that measure.sh
  * writes beside it (`--host FILE`, by default REPORT with `.host.json` in place of `.json`). A criterion
  * whose data is missing fails; `--no-host` skips the criteria that need the host file and says so. In
- * every profile, each 429 and 503 answer must carry a Retry-After that is an integer of at least 1.
+ * every profile, each 429 and 503 answer must carry a Retry-After that is an integer of at least 1, and a
+ * reach check that left a query without an answer fails.
+ *
+ * The host file says whether the run was a rehearsal (`measure.sh --rehearsal`), which is practice and not a
+ * result. Without `--rehearsal`, a host file of a rehearsal fails. With it, the files are judged as practice
+ * and the output says so, and a host file of a real run fails. `--rehearsal` needs the host file, so it
+ * excludes `--no-host`.
  * The correctness of the semantic results (issues #70 and #71) is not something a report can show.
  *
  * Exit status: 0 when every criterion passes or is skipped, 1 when one fails, 2 for bad arguments or a
@@ -185,6 +192,25 @@ export function evaluateReport(profile: Profile, report: Json): Result[] {
 						`${otherBusy} other 503 answers and ${others.map(([c, n]) => `${n} with status ${c}`).join(', ') || 'no other status'}`,
 					),
 		);
+		// A step that never overloaded the daemon proves nothing about how it behaves when it is overloaded.
+		const without = get(report, 'overall', 'withoutRetryAfter');
+		const withoutOverloaded = isObject(without) ? (num(get(without, '503', 'OVERLOADED')) ?? 0) : overloaded;
+		const withRetryAfter = overloaded - withoutOverloaded;
+		results.push(
+			withRetryAfter >= 1
+				? pass(
+						'the overload was reached',
+						`${withRetryAfter} OVERLOADED 503 answers with a Retry-After of at least 1 s`,
+					)
+				: fail(
+						'the overload was reached',
+						overloaded === 0
+							? 'no OVERLOADED 503 answer: the step never reached a limit of the daemon'
+							: isObject(without)
+								? `${overloaded} OVERLOADED 503 answers, none with an integer Retry-After of at least 1 s`
+								: `${overloaded} OVERLOADED 503 answers, but the report does not record their Retry-After`,
+					),
+		);
 	} else {
 		const busy = rejections(report, 'SEMANTIC_BUSY');
 		const serverErrors = statusCount(get(report, 'overall', 'status'), 500, 599) - busy;
@@ -216,6 +242,22 @@ export function evaluateReport(profile: Profile, report: Json): Result[] {
 			: check('429 answers', limited === 0, `${limited}`, 'none'),
 	);
 	results.push(retryAfterResult(report));
+
+	const reachRecord = get(report, 'reach');
+	if (isObject(reachRecord)) {
+		const errors = num(reachRecord.errors);
+		const queries = num(reachRecord.queries);
+		results.push(
+			errors === undefined
+				? fail('reach check answered every query', 'the reach record has no count of queries without an answer')
+				: check(
+						'reach check answered every query',
+						errors === 0,
+						`${errors} of ${queries ?? '?'} queries without an answer`,
+						'none',
+					),
+		);
+	}
 
 	if (profile === 's0') {
 		for (const name of ['suggest', 'validate']) {
@@ -254,7 +296,12 @@ export function evaluateReport(profile: Profile, report: Json): Result[] {
 		const top = num(get(reach, 'top'));
 		results.push(
 			share === undefined
-				? fail('reach', 'the report has no reach; run the harness with --reach-check')
+				? fail(
+						'reach',
+						isObject(reach)
+							? 'no query of the reach check was answered'
+							: 'the report has no reach; run the harness with --reach-check',
+					)
 				: check(
 						'reach',
 						share >= LIMITS.reachShare,
@@ -273,13 +320,34 @@ export function evaluateReport(profile: Profile, report: Json): Result[] {
 	return results;
 }
 
+/**
+ * The host file says whether the run was a rehearsal. A rehearsal is practice, so it is judged only when
+ * the caller says that it is one, and a host file of a real run is never judged as practice, which would
+ * let `--rehearsal` excuse a run.
+ */
+function runKindResult(host: Json, rehearsal: boolean): Result {
+	const marked = get(host, 'rehearsal');
+	if (typeof marked !== 'boolean') {
+		return fail('run kind', 'the host file does not say whether the run was a rehearsal');
+	}
+	if (marked === rehearsal) {
+		return pass('run kind', rehearsal ? 'a rehearsal: practice, not a result' : 'a run on the host');
+	}
+	return fail(
+		'run kind',
+		rehearsal
+			? 'the host file is of a real run, not a rehearsal; judge it without --rehearsal'
+			: 'the host file is of a rehearsal, which is practice and not a result; judge it with --rehearsal',
+	);
+}
+
 /** The criteria on the host file that measure.sh writes. */
-export function evaluateHost(profile: Profile, host: Json | undefined): Result[] {
+export function evaluateHost(profile: Profile, host: Json | undefined, rehearsal = false): Result[] {
 	const need = (criterion: string): Result => fail(criterion, 'the host file has no value for it');
 	if (host === undefined) {
 		return [fail('host measurements', 'no host file; run measure.sh, or pass --no-host to skip these criteria')];
 	}
-	const results: Result[] = [];
+	const results: Result[] = [runKindResult(host, rehearsal)];
 	const semantic = profile.startsWith('s1');
 	const container = get(host, 'container');
 
@@ -395,7 +463,7 @@ function readJson(file: string, what: string): Json {
 	return data;
 }
 
-const USAGE = `Usage: bun scripts/check-load-report.ts --profile NAME [--host FILE | --no-host] [--json] REPORT.json
+const USAGE = `Usage: bun scripts/check-load-report.ts --profile NAME [--host FILE | --no-host] [--rehearsal] [--json] REPORT.json
 Profiles: ${PROFILES.join(', ')}
 `;
 
@@ -404,6 +472,7 @@ interface Options {
 	report: string;
 	host?: string;
 	noHost: boolean;
+	rehearsal: boolean;
 	json: boolean;
 }
 
@@ -412,6 +481,7 @@ export function parseArgs(argv: readonly string[]): Options | 'help' {
 	let profile: string | undefined;
 	let host: string | undefined;
 	let noHost = false;
+	let rehearsal = false;
 	let json = false;
 	const positional: string[] = [];
 	for (let i = 0; i < argv.length; i++) {
@@ -423,6 +493,8 @@ export function parseArgs(argv: readonly string[]): Options | 'help' {
 			json = true;
 		} else if (arg === '--no-host') {
 			noHost = true;
+		} else if (arg === '--rehearsal') {
+			rehearsal = true;
 		} else if (arg === '--profile' || arg === '--host') {
 			const value = argv[++i];
 			if (value === undefined) {
@@ -448,7 +520,10 @@ export function parseArgs(argv: readonly string[]): Options | 'help' {
 	if (noHost && host !== undefined) {
 		throw new ReportError('--host and --no-host exclude each other');
 	}
-	return { profile: profile as Profile, report: positional[0], host, noHost, json };
+	if (noHost && rehearsal) {
+		throw new ReportError('--rehearsal judges the host file of a rehearsal, so it excludes --no-host');
+	}
+	return { profile: profile as Profile, report: positional[0], host, noHost, rehearsal, json };
 }
 
 /** Run the command line and return the exit status. */
@@ -471,7 +546,7 @@ export function main(argv: readonly string[]): number {
 		} else {
 			const hostFile = options.host ?? options.report.replace(/\.json$/, '.host.json');
 			const host = fs.existsSync(hostFile) ? readJson(hostFile, 'host file') : undefined;
-			results.push(...evaluateHost(options.profile, host));
+			results.push(...evaluateHost(options.profile, host, options.rehearsal));
 		}
 	} catch (error) {
 		if (error instanceof ReportError) {
@@ -483,13 +558,20 @@ export function main(argv: readonly string[]): number {
 
 	const failed = results.filter((result) => result.verdict === 'fail').length;
 	if (options.json) {
-		process.stdout.write(`${JSON.stringify({ profile: options.profile, passed: failed === 0, results }, null, 2)}\n`);
+		const summary = { profile: options.profile, rehearsal: options.rehearsal, passed: failed === 0, results };
+		process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
 	} else {
+		if (options.rehearsal) {
+			process.stdout.write('REHEARSAL: these files are practice from measure.sh --rehearsal, not a result\n');
+		}
+		const note = options.rehearsal ? ' (a rehearsal, not a result)' : '';
 		for (const result of results) {
 			process.stdout.write(`${result.verdict.toUpperCase().padEnd(4)}  ${result.criterion}: ${result.detail}\n`);
 		}
 		process.stdout.write(
-			failed === 0 ? `all criteria of ${options.profile} pass\n` : `${failed} criteria of ${options.profile} fail\n`,
+			failed === 0
+				? `all criteria of ${options.profile} pass${note}\n`
+				: `${failed} criteria of ${options.profile} fail${note}\n`,
 		);
 	}
 	return failed === 0 ? 0 : 1;
