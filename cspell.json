@@ -48,6 +48,7 @@
 		"onnx",
 		"optogenetics",
 		"pids",
+		"pipefail",
 		"polysomnography",
 		"prefork",
 		"pgrep",

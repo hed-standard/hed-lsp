@@ -10,9 +10,10 @@ import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import * as net from 'node:net';
 import * as path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { startDaemon } from './daemonHarness.js';
+import { call, type RunningDaemon, startDaemon, waitFor } from './daemonHarness.js';
 import {
 	bash,
 	DEPLOY,
@@ -21,6 +22,7 @@ import {
 	onPath,
 	pathWithoutDocker,
 	removeTempDirs,
+	run,
 	stateDirWith,
 	tempDir,
 } from './scriptHarness.js';
@@ -845,6 +847,154 @@ describe('measure.sh', () => {
 
 		expect(result.code).toBe(1);
 		expect(result.stderr).toContain(message);
+	});
+
+	it('names what a rehearsal may do with a degraded daemon in its dry run, and what a run on the host needs', async () => {
+		const rehearsal = await bash(script, ['--dry-run', '--rehearsal', '5', 's0-c4'], withPin(IMAGE));
+		const real = await bash(script, ['--dry-run', 's0-c4'], withPin(IMAGE));
+
+		expect(rehearsal.stdout).toContain('that its health is ok (or degraded, for a rehearsal),');
+		expect(real.stdout).toContain('that its health is ok,');
+		expect(real.stdout).not.toContain('degraded');
+	});
+
+	// The health gate sits behind the Docker checks of a real run, which need the container of the host: the
+	// container must run the pinned image. So its function is run as it ships, text and all, with the real curl and
+	// jq, against a real daemon. The whole run is rehearsed by the image job of CI, which also reads the status
+	// back from the host file.
+	describe.skipIf(!(haveCurl && haveJq))('the health gate', () => {
+		/** The text of a top-level shell function of the script, from `name() {` to its closing brace. */
+		function shellFunction(name: string): string {
+			const found = new RegExp(`^${name}\\(\\) \\{\\n[\\s\\S]*?\\n\\}$`, 'm').exec(fs.readFileSync(script, 'utf-8'));
+			if (!found) {
+				throw new Error(`measure.sh has no function ${name}`);
+			}
+			return found[0];
+		}
+
+		/** Run the gate against a daemon at `url`, as a rehearsal of `rehearsal` seconds, or on the host when empty. */
+		function gate(url: string, rehearsal: string): Promise<{ code: number; stdout: string; stderr: string }> {
+			const program = [
+				'set -euo pipefail',
+				`DAEMON_URL='${url}'`,
+				`REHEARSAL='${rehearsal}'`,
+				'HEALTH_STATUS=""',
+				shellFunction('die'),
+				shellFunction('health_field'),
+				shellFunction('require_health'),
+				'require_health',
+				'echo "status kept: $HEALTH_STATUS"',
+			].join('\n');
+			return run(onPath('bash'), ['-c', program], { PATH: pathWithoutDocker(), HOME: tempDir('hed-lsp-home-') });
+		}
+
+		/** A daemon that really is degraded: a library schema that does not exist cannot load. */
+		async function startDegraded(): Promise<RunningDaemon> {
+			const daemon = await startDaemon({
+				HED_LSP_SCHEMAS: '8.4.0;8.4.0,sc:score_9.9.9',
+				HED_LSP_DEFAULT_SCHEMA: '8.4.0',
+			});
+			await waitFor(async () => (await call(daemon.url, '/v1/health')).json.status === 'degraded', 10_000, 'degraded');
+			return daemon;
+		}
+
+		/** An address on this machine that had a free port a moment ago and has nothing on it now. */
+		async function closedAddress(): Promise<string> {
+			const server = net.createServer();
+			await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+			const { port } = server.address() as AddressInfo;
+			await new Promise((resolve) => server.close(resolve));
+			return `http://127.0.0.1:${port}`;
+		}
+
+		it.each([
+			['a run on the host', ''],
+			['a rehearsal', '5'],
+		])(
+			'goes on without a word for a daemon that answers ok: %s',
+			async (_label, rehearsal) => {
+				const daemon = await startDaemon();
+				try {
+					const result = await gate(daemon.url, rehearsal);
+
+					expect(result.stderr).toBe('');
+					expect(result.code).toBe(0);
+					expect(result.stdout).toBe('status kept: ok\n');
+				} finally {
+					await daemon.stop();
+				}
+			},
+			60_000,
+		);
+
+		it('stops a run on the host at degraded, and says that it saw degraded', async () => {
+			const daemon = await startDegraded();
+			try {
+				const result = await gate(daemon.url, '');
+
+				expect(result.code).toBe(1);
+				expect(result.stdout).toBe('');
+				expect(result.stderr).toContain(`does not answer health with status ok at ${daemon.url}`);
+				expect(result.stderr).toContain('it answered status degraded');
+			} finally {
+				await daemon.stop();
+			}
+		}, 60_000);
+
+		it('goes on in a rehearsal at degraded, says so, and keeps the status for the host file', async () => {
+			const daemon = await startDegraded();
+			try {
+				const result = await gate(daemon.url, '5');
+
+				expect(result.stderr).toBe('');
+				expect(result.code).toBe(0);
+				expect(result.stdout).toContain('note: the daemon answers health with status degraded');
+				expect(result.stdout).toContain('a rehearsal checks the scripts and not the schema');
+				expect(result.stdout).toContain('status kept: degraded\n');
+			} finally {
+				await daemon.stop();
+			}
+		}, 60_000);
+
+		it.each([
+			['a run on the host', ''],
+			['a rehearsal', '5'],
+		])(
+			'stops at a daemon that is still starting, and says that it saw no status: %s',
+			async (_label, rehearsal) => {
+				// A daemon that has not loaded its schema answers health with 503, which is no status at all.
+				const daemon = await startDaemon({}, { autoPreload: false });
+				try {
+					expect((await call(daemon.url, '/v1/health')).status).toBe(503);
+
+					const result = await gate(daemon.url, rehearsal);
+
+					expect(result.code).toBe(1);
+					expect(result.stderr).toContain(`does not answer health with status ok at ${daemon.url}`);
+					expect(result.stderr).toContain('it answered no status');
+				} finally {
+					await daemon.stop();
+				}
+			},
+			60_000,
+		);
+
+		it('stops at an address where nothing listens, and says that it saw no status', async () => {
+			const url = await closedAddress();
+
+			const result = await gate(url, '5');
+
+			expect(result.code).toBe(1);
+			expect(result.stderr).toContain(`does not answer health with status ok at ${url}`);
+			expect(result.stderr).toContain('it answered no status');
+		}, 60_000);
+
+		it('writes the status that the gate saw into the host file, next to the commit', () => {
+			const source = fs.readFileSync(script, 'utf-8');
+
+			expect(source).toContain('--arg healthStatus "$HEALTH_STATUS"');
+			expect(source).toMatch(/envSha256: \$envSha,\n\s+healthStatus: \$healthStatus,/);
+		});
 	});
 
 	it('prints its usage for --help', async () => {

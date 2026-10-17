@@ -253,6 +253,14 @@ jobs:
             status=0
             bun scripts/check-load-report.ts --rehearsal --profile "$profile" --json "$report" > "$RUNNER_TEMP/judged-$step.json" || status=$?
             if [ "$status" -gt 1 ]; then echo "the checker could not read the files of $step"; cat "$RUNNER_TEMP/judged-$step.json"; exit 1; fi
+            # What was judged, before any assertion, so that the first failure shows what it was about.
+            echo "== judged $step"
+            jq -r '.results[] | "\(.verdict) \(.criterion): \(.detail)"' "$RUNNER_TEMP/judged-$step.json"
+            # The status that the daemon answered at the health gate: a runner that cannot fetch the default schema
+            # from GitHub shows degraded, which a rehearsal accepts.
+            host="$(ls "$HED_LSP_STATE_DIR"/results/*-"$step"-rehearsal.host.json)"
+            echo "the daemon answered health with status $(jq -r '.healthStatus' "$host")"
+            jq -e '.healthStatus == "ok" or .healthStatus == "degraded"' "$host" > /dev/null
             jq -e '.rehearsal == true' "$RUNNER_TEMP/judged-$step.json"
             jq -e '[.results[] | select(.criterion | IN("run kind", "neighbor targets", "neighbor probe", "Docker health of the neighbors", "no out-of-memory kill", "restart count")) | .verdict] | length == 6 and all(. == "pass")' "$RUNNER_TEMP/judged-$step.json"
             if jq -e '[.results[] | select(.detail | contains("host file has no value"))] | length > 0' "$RUNNER_TEMP/judged-$step.json" > /dev/null; then

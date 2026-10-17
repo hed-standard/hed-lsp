@@ -19,7 +19,11 @@
 #   --dry-run             Print what would run and change nothing; Docker is not called.
 #   --rehearsal SECONDS   Run every step for SECONDS instead of its time, to practice the procedure. The
 #                         result files say so in their names and in the host file (rehearsal: true), they
-#                         are not results, and check-load-report.ts judges them only with --rehearsal.
+#                         are not results, and check-load-report.ts judges them only with --rehearsal. A rehearsal
+#                         also goes on when the daemon answers health with status degraded, which is what a
+#                         machine shows when it cannot fetch the default schema from GitHub: it checks the
+#                         scripts and not the schema. It prints a note, and every host file records the status as
+#                         healthStatus. A run on the host needs status ok.
 #
 # The daemon under test is the container hed-lsp. The image to measure is the one that CI printed in its
 # job summary, which you record as HED_LSP_IMAGE_ID=sha256:<id> in the env file. measure.sh refuses to run
@@ -84,6 +88,8 @@ SAMPLE_PID=""
 HARNESS_PID=""
 LOAD_RUNNING=0
 INTERRUPTED=""
+# The status that the daemon answered at the health gate of the step that runs, for the host file.
+HEALTH_STATUS=""
 
 die() {
 	printf 'measure.sh: %s\n' "$*" >&2
@@ -196,7 +202,7 @@ PROBE=("$SCRIPT_DIR/neighbor-probe.sh" --abort-container "$LOAD_CONTAINER")
 if [ "$DRY_RUN" = 1 ]; then
 	echo "Dry run: nothing below is executed, and Docker is not called."
 	echo "Image under test: $IMAGE (from HED_LSP_IMAGE_ID in $ENV_FILE)"
-	echo "Before each step it checks that the container $CONTAINER runs this image, that its health is ok,"
+	echo "Before each step it checks that the container $CONTAINER runs this image, that its health is ok${REHEARSAL:+ (or degraded, for a rehearsal)},"
 	echo "and that semantic search is in the state the step needs."
 	echo "On Ctrl-C, SIGTERM, SIGHUP, or any exit, it stops the probe and the sampler and runs: docker kill $LOAD_CONTAINER"
 	for step in "${STEPS[@]}"; do
@@ -269,6 +275,28 @@ health_field() {
 	curl -fsS --max-time 5 "$DAEMON_URL/v1/health" 2>/dev/null | jq -r "$1" 2>/dev/null || true
 }
 
+# require_health: the health gate of a step. The daemon must answer health with status ok, and the status it
+# answered is kept in HEALTH_STATUS. A rehearsal also goes on with degraded, which is what a machine shows when
+# the fetch of the default schema from GitHub fails: a rehearsal checks the scripts and not the schema. A run on
+# the host needs ok, because a measurement of a degraded daemon says nothing about the image.
+require_health() {
+	local saw
+	HEALTH_STATUS="$(health_field .status)"
+	case "$HEALTH_STATUS" in
+		ok) ;;
+		degraded)
+			[ -n "$REHEARSAL" ] ||
+				die "the daemon does not answer health with status ok at $DAEMON_URL: it answered status degraded, and only a rehearsal goes on with that"
+			echo "   note: the daemon answers health with status degraded; a rehearsal checks the scripts and not the schema, so it goes on"
+			;;
+		*)
+			saw="status '$HEALTH_STATUS'"
+			[ -n "$HEALTH_STATUS" ] || saw="no status (no answer, an answer that is not a 200, or one that is not JSON with a status)"
+			die "the daemon does not answer health with status ok at $DAEMON_URL: it answered $saw"
+			;;
+	esac
+}
+
 # recovery_seconds: after an overload, how long until a small request is answered again.
 recovery_seconds() {
 	local start="$SECONDS" body='{"strings":["Red"]}' code
@@ -287,9 +315,7 @@ run_step() {
 	local step="$1" semantic_want state base started code=0 recovery="" every=10 guard
 	semantic_want="$(step_field "$step" semantic)"
 
-	if [ "$(health_field .status)" != "ok" ]; then
-		die "the daemon does not answer health with status ok at $DAEMON_URL"
-	fi
+	require_health
 	state="$(health_field .semantic.state)"
 	if [ "$semantic_want" = off ] && [ "$state" != "disabled" ]; then
 		die "$step needs semantic search off, but the daemon reports '$state'; set HED_LSP_SEMANTIC=0 in the env file and run deploy.sh again"
@@ -358,14 +384,14 @@ finish_step() {
 	restarts="$(docker container inspect --format '{{.RestartCount}}' "$CONTAINER" 2>/dev/null || echo -1)"
 	health="$(docker container inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CONTAINER" 2>/dev/null || echo gone)"
 	jq -n --arg step "$step" --argjson rehearsal "$([ -n "$REHEARSAL" ] && echo true || echo false)" --arg image "$IMAGE" \
-		--arg envSha "$(sha256_of "$ENV_FILE")" --arg commit "$(health_field .commit)" \
+		--arg envSha "$(sha256_of "$ENV_FILE")" --arg commit "$(health_field .commit)" --arg healthStatus "$HEALTH_STATUS" \
 		--argjson cpus "$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo null)" \
 		--argjson peak "$(number_or_null "$peak")" --argjson at5 "$(number_or_null "$at5")" --argjson end "$(number_or_null "$end")" \
 		--argjson oom "$oom" --argjson restarts "$restarts" --arg health "$health" \
 		--argjson available "$(number_or_null "$available")" --argjson recovery "$(number_or_null "$recovery")" \
 		--argjson harnessStatus "$harness_status" --argjson probeStatus "$probe_status" --slurpfile neighbors "$base.neighbors.json" \
 		'{tool: "hed-lsp-measure-host", step: $step, rehearsal: $rehearsal, image: $image, commit: $commit, envSha256: $envSha,
-		  hostProcessors: $cpus, harnessExitStatus: $harnessStatus, probeExitStatus: $probeStatus,
+		  healthStatus: $healthStatus, hostProcessors: $cpus, harnessExitStatus: $harnessStatus, probeExitStatus: $probeStatus,
 		  container: {memoryPeakMiB: $peak, memoryAtMinute5MiB: $at5, memoryAtEndMiB: $end, oomKilled: $oom,
 		              restartCount: $restarts, health: $health},
 		  hostAvailableMinMiB: $available, recoverySeconds: $recovery, neighbors: $neighbors[0]}' >"$base.host.json"
