@@ -176,9 +176,10 @@ jobs:
 
       # The deploy scripts of the hedtools host run here against the image that was just tested, on the Docker of
       # the runner, because their Docker paths cannot run anywhere else without a host: deploy.sh and its rollback,
-      # the settings check, check-client-key.sh, the probe, and a rehearsal of measure.sh. The smoke containers go
-      # first, because they publish the port 38530 that hed-lsp publishes too. Every step uses the real scripts and
-      # a real daemon; the one neighbor is a plain HTTP server. The last two steps remove what these made.
+      # the settings check, a failed deploy and the way back from it, check-client-key.sh, the probe, and a
+      # rehearsal of measure.sh. The smoke containers go first, because they publish the port 38530 that hed-lsp
+      # publishes too. Every step uses the real scripts and a real daemon; the one neighbor is a plain HTTP server.
+      # The last two steps remove what these made.
       - name: Prepare the deploy checks
         run: |
           set -euo pipefail
@@ -319,6 +320,28 @@ jobs:
           curl -fsS http://127.0.0.1:38530/v1/health | jq -e --arg commit "${IMAGE_COMMIT::7}" '.commit == $commit'
           # The rollback replaced a healthy container too, so the image it left is on record in turn.
           if [ "$(tr -d '[:space:]' < "$HED_LSP_STATE_DIR/previous-image-id")" != "$OTHER_IMAGE_ID" ]; then echo "the record is not the second image"; exit 1; fi
+
+      # The failed deploy, and the way back from it. The rollback step leaves the first image running, so the setup
+      # deploys the second one again: it runs, healthy, with the first on record. Then the first image is deployed
+      # with 6 MB of memory, which a Node process cannot run in, so the container is killed and restarted over and
+      # over, as a bad image would be. A failed deploy must not touch the record, and the rollback must start the
+      # image that ran before it.
+      - name: Fail a deploy, and roll back from it
+        run: |
+          set -euo pipefail
+          deploy/hedtools/deploy.sh "$OTHER_IMAGE_ID"
+          if [ "$(tr -d '[:space:]' < "$HED_LSP_STATE_DIR/previous-image-id")" != "$IMAGE_ID" ]; then echo "the record is not the first image"; exit 1; fi
+          if [ "$(docker container inspect --format '{{.Image}}' hed-lsp)" != "$OTHER_IMAGE_ID" ]; then echo "the second image does not run"; exit 1; fi
+          status=0
+          deploy/hedtools/deploy.sh --memory 6m "$IMAGE_ID" > "$RUNNER_TEMP/failed-deploy.txt" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/failed-deploy.txt"
+          if [ "$status" != 1 ]; then echo "the failed deploy ended with status $status, not 1"; exit 1; fi
+          grep -F 'crash loop' "$RUNNER_TEMP/failed-deploy.txt"
+          grep -F 'deploy.sh --rollback' "$RUNNER_TEMP/failed-deploy.txt"
+          # The healthy container was recorded before it was replaced, so the record is the second image.
+          if [ "$(tr -d '[:space:]' < "$HED_LSP_STATE_DIR/previous-image-id")" != "$OTHER_IMAGE_ID" ]; then echo "the record is not the second image"; exit 1; fi
+          deploy/hedtools/deploy.sh --rollback
+          curl -fsS http://127.0.0.1:38530/v1/health | jq -e '(.status == "ok" or .status == "degraded") and .commit == "0000000"'
 
       - name: Show the deploy check logs
         if: failure()
