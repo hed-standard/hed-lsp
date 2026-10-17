@@ -18,7 +18,8 @@
  * The harness report holds the latency and the answers. Memory, out-of-memory kills, restarts, the memory
  * left on the host, the soak drift, the recovery time, and the neighbors come from the file that measure.sh
  * writes beside it (`--host FILE`, by default REPORT with `.host.json` in place of `.json`). A criterion
- * whose data is missing fails; `--no-host` skips the criteria that need the host file and says so.
+ * whose data is missing fails; `--no-host` skips the criteria that need the host file and says so. In
+ * every profile, each 429 and 503 answer must carry a Retry-After that is an integer of at least 1.
  * The correctness of the semantic results (issues #70 and #71) is not something a report can show.
  *
  * Exit status: 0 when every criterion passes or is skipped, 1 when one fails, 2 for bad arguments or a
@@ -109,6 +110,37 @@ const rejections = (report: Json, code: string): number => {
 	return isObject(by) && typeof by[code] === 'number' ? (by[code] as number) : 0;
 };
 
+/** The sum of the counts in a map such as `{ OVERLOADED: 3 }`; 0 when it is not one. */
+function sumCounts(value: unknown): number {
+	return isObject(value)
+		? Object.values(value).reduce<number>((sum, n) => sum + (typeof n === 'number' ? n : 0), 0)
+		: 0;
+}
+
+/**
+ * Every 429 and every 503 needs a Retry-After that is an integer of at least 1. The harness counts the
+ * refusals without one, by error code, in `withoutRetryAfter`.
+ */
+function retryAfterResult(report: Json): Result {
+	const criterion = 'Retry-After on 429 and 503 answers';
+	const status = get(report, 'overall', 'status');
+	const refused = statusCount(status, 429, 429) + statusCount(status, 503, 503);
+	if (refused === 0) {
+		return pass(criterion, 'no 429 or 503 answer');
+	}
+	const without = get(report, 'overall', 'withoutRetryAfter');
+	if (!isObject(without)) {
+		return fail(
+			criterion,
+			`${refused} refusals, but the report does not record their Retry-After; run the harness again`,
+		);
+	}
+	const missing = sumCounts(without['429']) + sumCounts(without['503']);
+	return missing === 0
+		? pass(criterion, `${refused} refusals, each with an integer Retry-After of at least 1 s`)
+		: fail(criterion, `${missing} of ${refused} refusals have no integer Retry-After of at least 1 s`);
+}
+
 function latencyChecks(report: Json, name: string, p95Max: number, p99Max: number, label: string): Result[] {
 	const endpoint = get(report, 'endpoints', name);
 	if (!isObject(endpoint)) {
@@ -183,6 +215,7 @@ export function evaluateReport(profile: Profile, report: Json): Result[] {
 				)
 			: check('429 answers', limited === 0, `${limited}`, 'none'),
 	);
+	results.push(retryAfterResult(report));
 
 	if (profile === 's0') {
 		for (const name of ['suggest', 'validate']) {

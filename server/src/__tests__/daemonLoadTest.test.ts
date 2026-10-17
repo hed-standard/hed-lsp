@@ -237,6 +237,28 @@ describe('summarizeSamples', () => {
 		expect(report.semanticStatus).toBeUndefined();
 	});
 
+	it('counts the 429 and 503 answers that have no usable Retry-After, by error code, from hand-worked samples', () => {
+		const report = summarizeSamples(
+			[
+				{ status: 429, ms: 1, errorCode: 'RATE_LIMITED', retryAfter: '1' },
+				{ status: 429, ms: 1, errorCode: 'RATE_LIMITED', retryAfter: '12' },
+				{ status: 429, ms: 1, errorCode: 'RATE_LIMITED' },
+				{ status: 503, ms: 1, errorCode: 'OVERLOADED', retryAfter: '1' },
+				{ status: 503, ms: 1, errorCode: 'OVERLOADED', retryAfter: '0' },
+				{ status: 503, ms: 1, errorCode: 'OVERLOADED', retryAfter: '1.5' },
+				{ status: 503, ms: 1, errorCode: 'STARTING', retryAfter: 'Wed, 21 Oct 2026 07:28:00 GMT' },
+				{ status: 503, ms: 1, errorCode: 'STARTING', retryAfter: '' },
+				// Only a refusal needs one: a 200 and a 500 are not counted either way.
+				{ status: 200, ms: 5 },
+				{ status: 500, ms: 1, errorCode: 'INTERNAL_ERROR' },
+			],
+			1,
+		);
+
+		expect(report.rejections).toEqual({ '429': { RATE_LIMITED: 3 }, '503': { OVERLOADED: 3, STARTING: 2 } });
+		expect(report.withoutRetryAfter).toEqual({ '429': { RATE_LIMITED: 1 }, '503': { OVERLOADED: 2, STARTING: 2 } });
+	});
+
 	it('counts the semantic status of the answers that carried one', () => {
 		const report = summarizeSamples(
 			[
@@ -264,6 +286,7 @@ describe('summarizeSamples', () => {
 			errorRate: 0,
 			status: {},
 			rejections: { '429': {}, '503': {} },
+			withoutRetryAfter: { '429': {}, '503': {} },
 			latencyMs: { p50: null, p95: null, p99: null, max: null },
 			throughputRps: 0,
 		});
@@ -763,6 +786,7 @@ describe('the compiled harness', () => {
 				expect(endpoint.errorRate, name).toBe(0);
 				expect(endpoint.status, name).toEqual({ '200': endpoint.requests });
 				expect(endpoint.rejections, name).toEqual({ '429': {}, '503': {} });
+				expect(endpoint.withoutRetryAfter, name).toEqual({ '429': {}, '503': {} });
 				const { p50, p95, p99, max } = endpoint.latencyMs;
 				for (const value of [p50, p95, p99, max]) {
 					expect(typeof value).toBe('number');
@@ -855,6 +879,48 @@ describe('the compiled harness', () => {
 			expect(plain.stderr).not.toMatch(/reach at top/);
 		} finally {
 			await daemon.stop();
+		}
+	}, 60_000);
+
+	it('records the Retry-After of the refusals of a real daemon, the 429 answers and the OVERLOADED 503 answers', async () => {
+		// One request at a time on a bucket of 50 units, at 10 units a request, is limited from the sixth request on.
+		const limiting = await startDaemon({ HED_LSP_RATE_ITEMS_PER_SEC: '1', HED_LSP_RATE_ITEMS_BURST: '50' });
+		// One request in flight for each client, and sixteen workers that share one address.
+		const crowded = await startDaemon({ HED_LSP_MAX_IN_FLIGHT_PER_CLIENT: '1' });
+		try {
+			const limited = await runHarness([
+				'--url',
+				limiting.url,
+				'--duration',
+				'1',
+				'--concurrency',
+				'1',
+				'--mix',
+				'validate=1',
+			]);
+			const overloaded = await runHarness([
+				'--url',
+				crowded.url,
+				'--duration',
+				'1.5',
+				'--concurrency',
+				'16',
+				'--clients',
+				'1',
+				'--mix',
+				'suggest=1',
+			]);
+
+			const rate = JSON.parse(limited.stdout).endpoints.validate;
+			const busy = JSON.parse(overloaded.stdout).endpoints.suggest;
+			// The refusals are real, and the daemon sent each of them a Retry-After of at least one second.
+			expect(rate.rejections['429'].RATE_LIMITED).toBeGreaterThan(0);
+			expect(rate.withoutRetryAfter).toEqual({ '429': {}, '503': {} });
+			expect(busy.rejections['503'].OVERLOADED).toBeGreaterThan(0);
+			expect(busy.withoutRetryAfter).toEqual({ '429': {}, '503': {} });
+		} finally {
+			await limiting.stop();
+			await crowded.stop();
 		}
 	}, 60_000);
 

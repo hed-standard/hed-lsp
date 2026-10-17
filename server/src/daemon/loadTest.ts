@@ -225,6 +225,13 @@ export interface Sample {
 	errorCode?: string;
 	/** The semantic status a 200 answer to a semantic request carried. */
 	semanticStatus?: string;
+	/** The Retry-After header of the answer, as the daemon sent it; absent when there was none. */
+	retryAfter?: string;
+}
+
+/** A Retry-After that a client can act on: a whole number of seconds, at least 1. */
+export function hasUsableRetryAfter(value: string | undefined): boolean {
+	return value !== undefined && /^\d+$/.test(value) && Number(value) >= 1;
 }
 
 export interface EndpointReport {
@@ -239,6 +246,8 @@ export interface EndpointReport {
 	status: Record<string, number>;
 	/** The 429 and 503 answers by the daemon's error code. */
 	rejections: { '429': Record<string, number>; '503': Record<string, number> };
+	/** Of those, the answers without a usable Retry-After (see hasUsableRetryAfter), by error code. */
+	withoutRetryAfter: { '429': Record<string, number>; '503': Record<string, number> };
 	/** Over the answers with a 2xx status. */
 	latencyMs: LatencySummary;
 	throughputRps: number;
@@ -254,6 +263,7 @@ function count(into: Record<string, number>, key: string): void {
 export function summarizeSamples(samples: readonly Sample[], elapsedSeconds: number): EndpointReport {
 	const status: Record<string, number> = {};
 	const rejections: EndpointReport['rejections'] = { '429': {}, '503': {} };
+	const withoutRetryAfter: EndpointReport['withoutRetryAfter'] = { '429': {}, '503': {} };
 	const semanticStatus: Record<string, number> = {};
 	const okLatencies: number[] = [];
 	for (const sample of samples) {
@@ -262,7 +272,11 @@ export function summarizeSamples(samples: readonly Sample[], elapsedSeconds: num
 			okLatencies.push(sample.ms);
 		}
 		if (sample.status === 429 || sample.status === 503) {
-			count(rejections[sample.status === 429 ? '429' : '503'], sample.errorCode ?? 'UNKNOWN');
+			const kind = sample.status === 429 ? '429' : '503';
+			count(rejections[kind], sample.errorCode ?? 'UNKNOWN');
+			if (!hasUsableRetryAfter(sample.retryAfter)) {
+				count(withoutRetryAfter[kind], sample.errorCode ?? 'UNKNOWN');
+			}
 		}
 		if (sample.semanticStatus !== undefined) {
 			count(semanticStatus, sample.semanticStatus);
@@ -277,6 +291,7 @@ export function summarizeSamples(samples: readonly Sample[], elapsedSeconds: num
 		errorRate: requests === 0 ? 0 : round4(errors / requests),
 		status,
 		rejections,
+		withoutRetryAfter,
 		latencyMs: summarizeLatencies(okLatencies),
 		throughputRps: elapsedSeconds > 0 ? round2(requests / elapsedSeconds) : 0,
 	};
@@ -628,13 +643,17 @@ function readAnswer(
 }
 
 /** The end of one POST: the status and body of the answer, or the reason there was none. */
-type Exchange = { status: number; ms: number; body: Buffer } | { status: null; ms: number; errorCode: string };
+type Exchange =
+	| { status: number; ms: number; body: Buffer; retryAfter?: string }
+	| { status: null; ms: number; errorCode: string };
 
 function post(agent: http.Agent, url: URL, body: string, client: string): Promise<Exchange> {
 	return new Promise((resolve) => {
 		const started = performance.now();
 		let settled = false;
-		const finish = (outcome: { status: number; body: Buffer } | { status: null; errorCode: string }): void => {
+		const finish = (
+			outcome: { status: number; body: Buffer; retryAfter?: string } | { status: null; errorCode: string },
+		): void => {
 			if (!settled) {
 				settled = true;
 				resolve({ ...outcome, ms: performance.now() - started });
@@ -655,7 +674,13 @@ function post(agent: http.Agent, url: URL, body: string, client: string): Promis
 			(response) => {
 				const chunks: Buffer[] = [];
 				response.on('data', (chunk: Buffer) => chunks.push(chunk));
-				response.on('end', () => finish({ status: response.statusCode ?? 0, body: Buffer.concat(chunks) }));
+				response.on('end', () =>
+					finish({
+						status: response.statusCode ?? 0,
+						body: Buffer.concat(chunks),
+						retryAfter: response.headers['retry-after'],
+					}),
+				);
 				response.on('error', () => finish({ status: null, errorCode: 'RESPONSE_ERROR' }));
 				response.on('close', () => {
 					if (!response.complete) {
@@ -680,7 +705,12 @@ async function send(agent: http.Agent, url: URL, plan: RequestPlan, client: stri
 	if (exchange.status === null) {
 		return { status: null, ms: exchange.ms, errorCode: exchange.errorCode };
 	}
-	return { status: exchange.status, ms: exchange.ms, ...readAnswer(plan.endpoint, exchange.status, exchange.body) };
+	return {
+		status: exchange.status,
+		ms: exchange.ms,
+		...readAnswer(plan.endpoint, exchange.status, exchange.body),
+		...(exchange.retryAfter === undefined ? {} : { retryAfter: exchange.retryAfter }),
+	};
 }
 
 /**

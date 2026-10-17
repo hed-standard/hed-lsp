@@ -44,14 +44,17 @@ describe.skipIf(!bun)('check-load-report.ts', () => {
 	let mixed: string;
 	let capacity: string;
 	let full: string;
+	/** Reports of a daemon that refuses requests: the 429 answers of a limited client, and the OVERLOADED 503 answers. */
+	let limited: string;
+	let overloaded: string;
 	let report: any;
 
 	/** Run the compiled harness against the daemon and return the file it wrote. */
-	async function harness(url: string, name: string, args: string[]): Promise<string> {
+	async function harness(url: string, name: string, args: string[], clients = '64'): Promise<string> {
 		const out = path.join(dir, name);
 		const result = await run(
 			process.execPath,
-			[compiled('loadTest.js'), '--url', url, '--clients', '64', '--duration', '1.5', '--out', out, ...args],
+			[compiled('loadTest.js'), '--url', url, '--clients', clients, '--duration', '1.5', '--out', out, ...args],
 			childEnv(),
 		);
 		expect(result.code).toBe(0);
@@ -75,6 +78,17 @@ describe.skipIf(!bun)('check-load-report.ts', () => {
 			full = await harness(daemon.url, 'full.json', ['--concurrency', '2']);
 		} finally {
 			await daemon.stop();
+		}
+		// Real refusals: a bucket of 50 units at 10 units a request limits one client from the sixth request on,
+		// and one request in flight for each client refuses the second of sixteen workers that share an address.
+		const limiting = await startDaemon({ HED_LSP_RATE_ITEMS_PER_SEC: '1', HED_LSP_RATE_ITEMS_BURST: '50' });
+		const crowded = await startDaemon({ HED_LSP_MAX_IN_FLIGHT_PER_CLIENT: '1' });
+		try {
+			limited = await harness(limiting.url, 'limited.json', ['--concurrency', '1', '--mix', 'validate=1'], '1');
+			overloaded = await harness(crowded.url, 'overloaded.json', ['--concurrency', '16', '--mix', 'suggest=1'], '1');
+		} finally {
+			await limiting.stop();
+			await crowded.stop();
 		}
 		report = JSON.parse(fs.readFileSync(mixed, 'utf-8'));
 	}, 120_000);
@@ -140,6 +154,65 @@ describe.skipIf(!bun)('check-load-report.ts', () => {
 		expect(human.stdout).toContain('FAIL  5xx other than SEMANTIC_BUSY: 3, over the limit (none)');
 		expect(human.stdout).toContain('FAIL  non-semantic suggest p95: 900 ms, over the limit (at most 100 ms)');
 		expect(human.stdout).toMatch(/\d+ criteria of s0 fail\n$/);
+	});
+
+	describe('Retry-After on the refusals', () => {
+		const criterion = 'Retry-After on 429 and 503 answers';
+		const detailOf = (results: Verdict[]): string | undefined => results.find((r) => r.criterion === criterion)?.detail;
+
+		it('passes the real refusals of a daemon, each of which carries one, and a run with no refusal', async () => {
+			const refused429 = JSON.parse(fs.readFileSync(limited, 'utf-8')).overall.status['429'];
+			const refused503 = JSON.parse(fs.readFileSync(overloaded, 'utf-8')).overall.status['503'];
+
+			const rate = await check(['--profile', 's0', '--no-host', '--json', limited]);
+			const busy = await check(['--profile', 's0-overload', '--no-host', '--json', overloaded]);
+			const none = await check(['--profile', 's0', '--no-host', '--json', mixed]);
+
+			expect(refused429).toBeGreaterThan(0);
+			expect(refused503).toBeGreaterThan(0);
+			expect(verdictOf(rate.results, criterion)).toBe('pass');
+			expect(detailOf(rate.results)).toContain(`${refused429} refusals`);
+			expect(verdictOf(busy.results, criterion)).toBe('pass');
+			expect(detailOf(busy.results)).toContain(`${refused503} refusals`);
+			expect(detailOf(none.results)).toBe('no 429 or 503 answer');
+		});
+
+		it('fails a 429 or a 503 without an integer Retry-After of at least 1, and a report that does not record them', async () => {
+			const refused429 = JSON.parse(fs.readFileSync(limited, 'utf-8')).overall.status['429'];
+			const without429 = worsened(
+				'retry-429.json',
+				(copy) => {
+					copy.overall.withoutRetryAfter['429'] = { RATE_LIMITED: 1 };
+				},
+				limited,
+			);
+			const without503 = worsened(
+				'retry-503.json',
+				(copy) => {
+					copy.overall.withoutRetryAfter['503'] = { OVERLOADED: 2 };
+				},
+				overloaded,
+			);
+			const unrecorded = worsened(
+				'retry-unrecorded.json',
+				(copy) => {
+					delete copy.overall.withoutRetryAfter;
+				},
+				limited,
+			);
+
+			const a = await check(['--profile', 's0', '--no-host', '--json', without429]);
+			const b = await check(['--profile', 's0-overload', '--no-host', '--json', without503]);
+			const c = await check(['--profile', 's0', '--no-host', '--json', unrecorded]);
+
+			expect(verdictOf(a.results, criterion)).toBe('fail');
+			expect(detailOf(a.results)).toContain(`1 of ${refused429} refusals have no integer Retry-After of at least 1 s`);
+			expect(a.code).toBe(1);
+			expect(verdictOf(b.results, criterion)).toBe('fail');
+			expect(detailOf(b.results)).toMatch(/^2 of \d+ refusals have no integer Retry-After/);
+			expect(verdictOf(c.results, criterion)).toBe('fail');
+			expect(detailOf(c.results)).toContain('does not record their Retry-After');
+		});
 	});
 
 	it('does not count a 429 against a run with fewer than 64 clients, and says so', async () => {
