@@ -54,7 +54,7 @@ const MAX_WEIGHT = 1_000_000;
 /** Items in one request of each endpoint: queries for suggest, strings for validate. */
 export const BATCH: Readonly<Record<EndpointName, number>> = { suggest: 5, validate: 10, semantic: 1 };
 
-/** Queries in one request of the reach check, below the default limit of 20 for a semantic request. */
+/** Queries in one request of the reach check: 20, the most that a semantic request may carry by default (exactly 20). */
 export const REACH_BATCH = 20;
 
 /**
