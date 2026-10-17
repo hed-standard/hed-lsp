@@ -386,6 +386,39 @@ describe.skipIf(!(haveCurl && haveJq))('neighbor-probe.sh', () => {
 		}
 	}, 60_000);
 
+	it('says that it could not kill the load container, and not that it killed it, when docker kill fails', async () => {
+		const daemon = await startDaemon();
+		const out = path.join(tempDir('hed-lsp-probe-'), 'summary.json');
+		try {
+			// There is no docker on this PATH, so docker kill fails, as it does for a container that is gone. The
+			// success of the kill is checked on Docker by the image job of CI.
+			const result = await bash(
+				script,
+				[
+					'--interval',
+					'1',
+					'--abort-container',
+					'hed-lsp-load',
+					'--target',
+					`missing=loopback=${daemon.url}/v1/no-such-route`,
+					'--out',
+					out,
+				],
+				env(),
+			);
+
+			expect(result.code).toBe(1);
+			expect(result.stderr).toContain('ABORT: missing answered 404, not 200');
+			expect(result.stderr).toContain('could not kill hed-lsp-load: ');
+			expect(result.stderr).not.toContain('killed hed-lsp-load');
+			const summary = JSON.parse(fs.readFileSync(out, 'utf-8'));
+			expect(summary.aborted).toBe(true);
+			expect(summary.reason).toContain('missing answered 404');
+		} finally {
+			await daemon.stop();
+		}
+	}, 60_000);
+
 	it('aborts when a target does not answer at all', async () => {
 		const out = path.join(tempDir('hed-lsp-probe-'), 'summary.json');
 

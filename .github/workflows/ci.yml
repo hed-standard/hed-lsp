@@ -281,7 +281,15 @@ jobs:
           fi
           cat "$RUNNER_TEMP/abort.txt"
           grep -F 'killed hed-lsp-load' "$RUNNER_TEMP/abort.txt"
-          if [ "$(docker container inspect --format '{{.State.Running}}' hed-lsp-load)" != false ]; then echo "the load container still runs"; exit 1; fi
+          # docker kill returns when the signal is sent, so the state may take a moment to change.
+          running=true
+          deadline=$((SECONDS + 5))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            running="$(docker container inspect --format '{{.State.Running}}' hed-lsp-load)"
+            if [ "$running" = false ]; then break; fi
+            sleep 0.2
+          done
+          if [ "$running" != false ]; then echo "the load container still runs 5 s after the kill"; exit 1; fi
           docker rm --force hed-lsp-load
 
           docker run --detach --name hed-lsp-helper --entrypoint sleep hed-lsp-daemon:ci 600

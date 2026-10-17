@@ -25,6 +25,8 @@
 #   - sustained swap-in: pages read back from swap averaging 50 per second or more over the last 5 rounds;
 #   - a container that was running at the start and has stopped, been restarted, or been killed for lack
 #     of memory (an OOM kill), or that reports unhealthy.
+# It prints "killed NAME" only when docker kill worked. When it did not, for instance because the container
+# is already gone, it prints "could not kill NAME" and the reason from Docker, and still exits 1.
 # On the way out, by --duration, SIGINT, or SIGTERM, it writes a JSON summary to --out (default standard
 # output): per target the count, the p95 and the maximum in milliseconds, and the counters of the host.
 # The summary is judged by scripts/check-load-report.ts: loopback targets p95 of at most 150 ms, Apache
@@ -201,12 +203,18 @@ finish() {
 }
 
 abort() {
+	local kill_error
 	ABORTED=true
 	REASON="$1"
 	printf 'neighbor-probe.sh: ABORT: %s\n' "$REASON" >&2
 	if [ -n "$ABORT_CONTAINER" ]; then
-		docker kill "$ABORT_CONTAINER" >/dev/null 2>&1 || true
-		printf 'neighbor-probe.sh: killed %s\n' "$ABORT_CONTAINER" >&2
+		# Say "killed" only when docker kill worked. A container that is gone, or a Docker that does not answer,
+		# leaves the load running or already ended, and the person who reads this must know which.
+		if kill_error="$(docker kill "$ABORT_CONTAINER" 2>&1 >/dev/null)"; then
+			printf 'neighbor-probe.sh: killed %s\n' "$ABORT_CONTAINER" >&2
+		else
+			printf 'neighbor-probe.sh: could not kill %s: %s\n' "$ABORT_CONTAINER" "${kill_error:-docker gave no reason}" >&2
+		fi
 	fi
 	finish 1
 }
