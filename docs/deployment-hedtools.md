@@ -102,6 +102,7 @@ The scripts do not re-check them, so look again when it matters.
   Making it public cannot be undone.
 - The speed of one core of the virtual machine and its swap behavior under semantic load.
 - The `image` CI job has never run on GitHub, so the first draft pull request may fail and need fixes.
+  It builds the image, runs both smoke tests, runs the deploy scripts on the Docker of the runner (`deploy.sh` with a replacement and a rollback, a bad setting that must be refused, `check-client-key.sh direct`, a rehearsal of `measure.sh`, and the probe), and keeps the image tarball as an artifact for 14 days.
   It is skipped under `act`, so its change is validated only there.
 - Whether the fix for #71 changes the latency of semantic search, which is why the semantic measurement follows it.
 - What the daemon does when GitHub is unreachable at its start: it serves the bundled 8.4.0 under the name 8.5.0 until it restarts, and says so in `schemas.degraded`.
@@ -132,7 +133,7 @@ The measurement sequences are called S0 (semantic search off) and S1 (semantic s
 |---|---|---|---|---|
 | 1 | File the defect issues and comment on #57 that #70 and #71 block M2 (done) | assistant | A link on #57 | Delete the comment |
 | 2 | Merge the tooling pull request (5a) into the epic branch | assistant | The deploy files and the CI change are on the epic branch | Revert the commit |
-| 3 | Open the draft pull request from the epic branch into `main` and request review | assistant | Continuous integration (CI) is green, the image tarball is an artifact, the job summary prints the image ID, review is requested | Close the pull request |
+| 3 | Open the draft pull request from the epic branch into `main` and request review | assistant | Continuous integration (CI) is green, the image tarball is an artifact that is kept for 14 days, the job summary prints the image ID, review is requested | Close the pull request |
 | 4 | Create the `ghcr-publish` environment (done) | owner | It exists | `gh api -X DELETE .../environments/ghcr-publish` |
 | 5 | Ask for more vCPUs | owner | `nproc` above 1 | Not applicable |
 | 6 | Clone the repository and prepare the state on the host | assistant | The directories exist | `rm -rf ~/hed-lsp ~/hed-lsp-state` |
@@ -141,10 +142,10 @@ The measurement sequences are called S0 (semantic search off) and S1 (semantic s
 | 9 | Smoke test and the check of the client key | assistant | The smoke test passes and the client key is verified | None needed |
 | 10 | The semantic-off load runs, in a quiet window | assistant | The criteria pass and the neighbors are unharmed | Ctrl-C, or from another terminal `docker kill hed-lsp-load` |
 | 11 | Apache Stage 1, testers only, and reload | owner | "Syntax OK", and the other routes still answer 200 | Restore the backup, `configtest`, reload (under 5 s) |
-| 12 | External verification through Apache | assistant | No Apache HTML error where the daemon should have answered (a body up to 2 MiB gets the daemon's JSON 413, and a body above 2 MiB gets Apache's HTML 502), and the limiter keys by the real address | As in step 11 |
+| 12 | External verification through Apache | assistant | No Apache HTML error where the daemon should have answered (a body up to 2 MiB gets the daemon's JSON 413, and a body above 2 MiB gets Apache's HTML 502), the limiter keys by the real address, and the harness run through Apache from both tester addresses is accepted | As in step 11 |
 | 13 | Owner-review gate, then Apache Stage 2 (public) | owner | The public route is live; not before the reviewer has had the chance to comment, unless the owner says otherwise | Restore `Require ip` and reload |
 | 14 | Seed the model cache (M2) | assistant | `semantic.state` is `ready` and the model checksum is recorded | See the step |
-| 15 | Enable semantic search (M2) | owner and assistant | The semantic gate passes and health shows `ready` | `HED_LSP_SEMANTIC=0` and run `deploy.sh` again |
+| 15 | Enable semantic search (M2) | owner and assistant | The semantic gate passes and health shows `ready` | `HED_LSP_SEMANTIC=0` and run `deploy.sh` again, or `deploy.sh --rollback` for the image that ran before |
 | 16 | Merge the epic into `main`, approve the publish run, make the package public | owner | A digest in the job summary and an anonymous pull works | `deploy.sh --rollback`; making the package public cannot be reverted |
 
 ### Steps 6 and 7: the repository and the image
@@ -157,6 +158,7 @@ mkdir -p ~/hed-lsp-state/{images,results}
 ```
 
 Step 7, from a workstation that has the CI artifact.
+The artifact `hed-lsp-daemon-image` of the `image` job is kept for 14 days after its run, so download it within that time, or run the job again.
 The tarball is stored on the host as a gzipped file, which is also the rollback copy of the image, and loaded from there:
 
 ```bash
@@ -196,6 +198,7 @@ A real run goes in this order:
 2. **The record of the last good image.**
    If `hed-lsp` is running, is healthy, and runs another image, its image ID is written to `~/hed-lsp-state/previous-image-id` and tagged `hed-lsp-daemon:previous`.
    An unhealthy or missing container leaves the record as it is, so a second bad image never overwrites the good one.
+   To go back to that image, run `~/hed-lsp/deploy/hedtools/deploy.sh --rollback`, which reads the ID from `~/hed-lsp-state/previous-image-id`, so no ID has to be looked up or typed.
 3. **The replacement.**
    The old container is stopped and removed, and the new one is started.
    The route answers 503 for 10 to 20 seconds.
@@ -312,6 +315,21 @@ deploy/hedtools/check-client-key.sh other --url "$BASE"               # from tes
 `proxy` shows that a spoofed `X-Forwarded-For` has no effect, because Apache removes it, and `other` shows that a second real address is not limited by the first.
 A 429 answer carries `Retry-After`; the daemon's own tests cover that, and `curl -i` on a limited request shows it.
 
+Then the harness through Apache, from each of the two tester addresses in turn.
+It needs a clone of the repository with `bun install` and `bun run compile` done there, and Node.js runs it.
+`--clients 1` is right here, because Apache replaces `X-Forwarded-For`, so every request from one address shares one key whatever the harness sends.
+The run tests the route and the limits and not the capacity, so 429 answers are expected, and what it must show is that Apache never answers where the daemon should have:
+
+```bash
+node server/out/daemon/loadTest.js --url "$BASE" --concurrency 4 --duration 30 --clients 1 \
+  --mix suggest=65,validate=35 --out results/apache-<tester>.json
+jq -e '(.overall.status | has("502") or has("504") or has("network") | not)
+  and ([.overall.rejections[] | keys[]] | index("UNKNOWN") == null)
+  and ([.overall.withoutRetryAfter[] | length] | add == 0)' results/apache-<tester>.json
+```
+
+`jq -e` exits 0 when all three hold: no 502, no 504, and no request without an answer; no refusal without a JSON error code, which the harness counts as `UNKNOWN` (an Apache HTML page is one); and a `Retry-After` on every 429 and 503.
+
 The daemon-stopped path and the recovery, from the host:
 
 ```bash
@@ -337,10 +355,20 @@ docker run -d --name hed-lsp-seed --network hed-lsp \
   -e HED_LSP_SEMANTIC=1 -e HED_LSP_MODEL_DOWNLOAD=1 \
   sha256:<the image ID>
 
-until [ "$(curl -s http://127.0.0.1:38531/v1/health | jq -r .semantic.state)" = ready ]; do sleep 10; done
+# Poll for up to 10 minutes. The loop ends at ready, at unavailable, and at the timeout.
+deadline=$((SECONDS + 600))
+state=""
+while [ "$SECONDS" -lt "$deadline" ]; do
+  state="$(curl -s http://127.0.0.1:38531/v1/health | jq -r .semantic.state)"
+  if [ "$state" = ready ] || [ "$state" = unavailable ]; then break; fi
+  sleep 10
+done
+[ "$state" = ready ] || { echo "semantic.state is '$state', not ready: see docker logs hed-lsp-seed" >&2; false; }
 ```
 
-Poll until `semantic.state` is `ready`; a state of `unavailable` means the download or the load failed, and `docker logs hed-lsp-seed` says why.
+The loop ends when `semantic.state` is `ready`, when it is `unavailable`, which means that the download or the load failed, and after 10 minutes.
+The last line exits with a non-zero status for every state but `ready`, so a poll that times out, with the state still `loading`, fails and does not wait forever.
+`docker logs hed-lsp-seed` says why it failed.
 Then stop it, record the checksum of the model file, and remove it:
 
 ```bash
@@ -351,7 +379,14 @@ docker rm hed-lsp-seed
 ```
 
 The Secure Hash Algorithm 256 (SHA-256) checksums go into the results of the measurement, because the model revision is not pinned.
-To throw the cache away, stop `hed-lsp`, remove the volume with `docker volume rm hed-lsp-cache`, and run `deploy.sh` again, which creates it empty.
+To throw the cache away, remove the containers first and the volume after them, because Docker refuses to remove a volume while a container, even a stopped one, still has it:
+
+```bash
+docker rm --force hed-lsp hed-lsp-seed     # an error for the one that does not exist is harmless
+docker volume rm hed-lsp-cache
+```
+
+Then run `deploy.sh` again, which creates the volume empty and starts the container.
 
 ### Step 15: semantic search on (M2)
 
@@ -375,6 +410,8 @@ Deploy that digest, which `deploy.sh` pulls when it is not on the host:
 ```bash
 ~/hed-lsp/deploy/hedtools/deploy.sh ghcr.io/hed-standard/hed-lsp-daemon@sha256:<digest>
 ```
+
+To go back to the image that ran before this deploy, run `~/hed-lsp/deploy/hedtools/deploy.sh --rollback`, which reads its ID from `~/hed-lsp-state/previous-image-id`.
 
 Making the package public is a step on the package settings page of GitHub, and it cannot be undone.
 
@@ -428,6 +465,12 @@ An unedited copy of the snippet fails `configtest`, because `<tester-1>` is not 
 ### Stage 2: public
 
 Not before the reviewer has had the chance to comment, or the owner says otherwise.
+
+**Warning: the public route is shared capacity.**
+Apache runs the prefork module with `MaxRequestWorkers 150`, one pool of workers for every virtual host on the machine.
+A flood against any of them can exhaust that pool, so a flood against `/hed-lsp/` can starve `/hed/`, `/osa/`, and `/hedit/`, and a flood against one of those can starve `/hed-lsp/`.
+The daemon's limits (the rates, the cap on requests in flight, the 429 and 503 answers) protect the daemon and not this pool, and Stage 1 hides the problem because only the testers can reach the route.
+Before Stage 2, tell the owners of the other services, watch `/hed/`, `/osa/health`, and `/hedit/health` while the route is public, and have the two ways back ready: `docker stop hed-lsp`, which needs no `sudo`, and the rollback of the route below, which takes under 5 s.
 
 ```bash
 sudoedit /etc/apache2/snippets/hed-lsp.conf    # change the Require line to: Require all granted
@@ -638,7 +681,7 @@ This is the text for this runbook and, later, for the notice in the client.
 | Image | `deploy.sh --rollback`, which starts the image recorded in `~/hed-lsp-state/previous-image-id` through the same steps (the settings check, the replacement, the poll). It refuses when nothing is recorded; then run `deploy.sh <image ID or digest>` with an image that is known to work. The cache volume is untouched. The image is also tagged `hed-lsp-daemon:previous`, and a tag is never accepted as an argument | 15 to 30 s |
 | Flag | `HED_LSP_SEMANTIC=0` in the settings file, then `deploy.sh <the image ID that runs>` again | 10 to 20 s |
 | Route | Restore the virtual host backup over `"$VHOST"` (the resolved real file, see [Rollback of the route](#rollback-of-the-route)), or comment out the `Include` line there, then `sudo apachectl configtest` and `sudo systemctl reload apache2`. Requests then get a 404 | Under 5 s |
-| Full removal | `docker rm -f hed-lsp`, `docker network rm hed-lsp`, `docker volume rm hed-lsp-cache`, remove the snippet and the `Include` line, reload | About 1 minute |
+| Full removal | `docker rm -f hed-lsp` (and `hed-lsp-seed` if it exists) first, because Docker refuses to remove the network or the volume while a container, even a stopped one, uses it; then `docker network rm hed-lsp` and `docker volume rm hed-lsp-cache`; remove the snippet and the `Include` line, reload | About 1 minute |
 
 The image of the record stays on the host, tagged, with a gzipped tarball of it in `~/hed-lsp-state/images/`, and the last two are kept.
 `deploy.sh --rollback` takes the same options as a deploy (`--cpus`, `--memory`, `--no-read-only`), and a failed deploy prints the command with the options of that run.
@@ -649,10 +692,10 @@ Rehearse a rollback before Stage 2.
 
 1. The tooling pull request is merged, and the image ID on the host matches the CI summary.
 2. The local checks pass: `bun run check`, `bun run spellcheck`, `bun run compile`, `bun run test`.
-3. The owner-review gate is satisfied, or the owner waives it.
+3. The owner-review gate is satisfied, or the owner waives it, and the owner has read the warning at the head of Stage 2 about the shared pool of 150 Apache workers.
 4. The loopback smoke test passes and the peer address is verified.
 5. S0 passes with the neighbors unharmed.
-6. Stage 1 is verified from two external addresses: the checks of step 12 (a small chunked body gets 200, a 1 MiB chunked body gets the daemon's JSON 411, a 600000-byte body gets the daemon's JSON 413, and a 3000000-byte body gets Apache's HTML 502), the CORS preflight, the daemon-stopped path, and the recovery.
+6. Stage 1 is verified from two external addresses: the checks of step 12 (a small chunked body gets 200, a 1 MiB chunked body gets the daemon's JSON 411, a 600000-byte body gets the daemon's JSON 413, and a 3000000-byte body gets Apache's HTML 502), the limiter checks `proxy` and `other`, the harness run through Apache from each of the two addresses, the CORS preflight, the daemon-stopped path, and the recovery.
 7. A rollback has been rehearsed.
 8. Monitoring and the privacy text are in place.
 9. The owner approves.
