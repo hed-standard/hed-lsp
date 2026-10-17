@@ -36,7 +36,7 @@ graph LR
 | Network | `hed-lsp`, subnet 172.30.56.0/24, gateway 172.30.56.1 |
 | Trusted proxy | `HED_LSP_TRUSTED_PROXIES=172.30.56.1`, the gateway, which is the address Apache's requests reach the container from |
 | Model cache | volume `hed-lsp-cache`, mounted at `/home/node/.cache` |
-| State | `~/hed-lsp-state/`: `hed-lsp.env` (the settings), `images/` (gzipped image tarballs), `results/` (measurements) |
+| State | `~/hed-lsp-state/`: `hed-lsp.env` (the settings), `previous-image-id` (the last good image, for `deploy.sh --rollback`), `images/` (gzipped image tarballs), `results/` (measurements) |
 | Repository clone | `~/hed-lsp`, which supplies the scripts and the harness corpus `server/eval/hed-examples-pairs.json` |
 | Limits | `--cpus 0.5`, `--cpu-shares 512`, `--memory 1g` (semantic search off) or `3g` (on), equal `--memory-swap`, `--pids-limit 256` |
 
@@ -44,7 +44,7 @@ The files that make this deployment are in the repository.
 
 | File | Purpose |
 |---|---|
-| `deploy/hedtools/deploy.sh` | Creates the network and the volume, replaces the container, with `--dry-run` |
+| `deploy/hedtools/deploy.sh` | Checks the settings with the image, creates the network and the volume, replaces the container, and rolls back with `--rollback`; `--dry-run` prints every step |
 | `deploy/hedtools/hed-lsp.env.example` | Template of `~/hed-lsp-state/hed-lsp.env` |
 | `deploy/hedtools/apache-hed-lsp.conf` | The Apache snippet for the route |
 | `deploy/hedtools/check-client-key.sh` | The behavioral test of which address the daemon limits by |
@@ -119,7 +119,7 @@ The scripts do not re-check them, so look again when it matters.
 | G | The harness measures what reaches the embedding model (97% of the evaluation queries at `top` 50, against 27% at `top` 10), runs semantic search off first and then on, and repeats everything after the vCPU increase. The verdict uses the post-increase numbers. | A 27% reach understates the cost of the model by a factor of about 3.6. |
 | H | Semantic search is off at launch. It goes on only after #70 and #71 are fixed in a new image, the cache is seeded, the gate passes after the vCPU increase, and the owner approves. | Earlier it returns invalid HED tags and tags of the wrong schema. |
 | I | The Docker health check for observability, an external check that matches `"status":"ok"`, rotated container logs, and the privacy statement below. | Health answers 200 for `degraded`, so a check of the status code alone misses a degraded daemon. |
-| J | The previous image stays tagged as `hed-lsp-daemon:previous` and as a gzipped tarball in `~/hed-lsp-state/images/`. | A routine `docker image prune -a` would delete an unused rollback image. |
+| J | The ID of the last good image is recorded in `~/hed-lsp-state/previous-image-id`, tagged as `hed-lsp-daemon:previous`, and kept as a gzipped tarball in `~/hed-lsp-state/images/`. It is recorded only from a healthy container, so a second bad image never overwrites it. | A routine `docker image prune -a` would delete an unused rollback image, and a record made on every run would lose the good image to the second bad one. |
 
 ## Procedure
 
@@ -145,7 +145,7 @@ The measurement sequences are called S0 (semantic search off) and S1 (semantic s
 | 13 | Owner-review gate, then Apache Stage 2 (public) | owner | The public route is live; not before the reviewer has had the chance to comment, unless the owner says otherwise | Restore `Require ip` and reload |
 | 14 | Seed the model cache (M2) | assistant | `semantic.state` is `ready` and the model checksum is recorded | See the step |
 | 15 | Enable semantic search (M2) | owner and assistant | The semantic gate passes and health shows `ready` | `HED_LSP_SEMANTIC=0` and run `deploy.sh` again |
-| 16 | Merge the epic into `main`, approve the publish run, make the package public | owner | A digest in the job summary and an anonymous pull works | The previous image; making the package public cannot be reverted |
+| 16 | Merge the epic into `main`, approve the publish run, make the package public | owner | A digest in the job summary and an anonymous pull works | `deploy.sh --rollback`; making the package public cannot be reverted |
 
 ### Steps 6 and 7: the repository and the image
 
@@ -184,8 +184,26 @@ ss -ltn | grep 38530
 ```
 
 `deploy.sh` takes an image ID or a digest, never a tag, and checks the settings file without printing a value.
-The dry run prints the commands and changes nothing.
-The running container is replaced in 10 to 20 seconds, during which the route answers 503.
+The dry run prints every step, including the settings check and the rollback command, calls no Docker, and writes no file.
+
+A real run goes in this order:
+
+1. **The settings check.**
+   A throwaway container of the new image loads the daemon's own configuration code with the same settings file and the same `HED_LSP_TRUSTED_PROXIES` override.
+   A value that the daemon would refuse at start, such as `HED_LSP_SEMANTIC=1 # on`, `HED_LSP_SEMANTIC="1"` (Docker does not remove quotes), or `HED_LSP_MAX_IN_FLIGHT=eight`, stops the script here, before anything is stopped.
+   The message names the variable and the rule and never the value, so the error is not a place where a setting leaks.
+   Without this check, such a value became a crash loop under `unless-stopped` after the old container was already gone.
+2. **The record of the last good image.**
+   If `hed-lsp` is running, is healthy, and runs another image, its image ID is written to `~/hed-lsp-state/previous-image-id` and tagged `hed-lsp-daemon:previous`.
+   An unhealthy or missing container leaves the record as it is, so a second bad image never overwrites the good one.
+3. **The replacement.**
+   The old container is stopped and removed, and the new one is started.
+   The route answers 503 for 10 to 20 seconds.
+4. **The poll.**
+   Every 2 seconds the script reads whether the container runs, whether it is restarting, its restart count, and its health.
+   It fails at once on a restart (Docker reports `Running` as true during a crash loop, so the restart flag and the count are what show it), on a stop, and on `unhealthy`, and it fails after 180 seconds.
+   Every failure prints the state of the container and the rollback command, exits non-zero, and removes nothing, so the failed container stays for `docker logs hed-lsp`.
+   Read the log of a failed daemon with care: it names the setting that was refused, with its value.
 
 The smoke test runs in a throwaway container of the same image, because the host has no Node.js.
 Set `HED_LSP_EXPECTED_COMMIT` to the short commit of the pull request head, which is also the `commit` of the health answer:
@@ -602,12 +620,14 @@ This is the text for this runbook and, later, for the notice in the client.
 | Target | Steps | Time |
 |---|---|---|
 | Emergency kill (no `sudo`) | `docker stop hed-lsp`. Apache answers 503, the clients fall back to local, and it stays stopped across reboots | 1 to 10 s |
-| Image | `deploy.sh <previous image ID or digest>`. The cache volume is untouched. The last image is also tagged `hed-lsp-daemon:previous` | 15 to 30 s |
-| Flag | `HED_LSP_SEMANTIC=0` in the settings file, then `deploy.sh` again | 10 to 20 s |
+| Image | `deploy.sh --rollback`, which starts the image recorded in `~/hed-lsp-state/previous-image-id` through the same steps (the settings check, the replacement, the poll). It refuses when nothing is recorded; then run `deploy.sh <image ID or digest>` with an image that is known to work. The cache volume is untouched. The image is also tagged `hed-lsp-daemon:previous`, and a tag is never accepted as an argument | 15 to 30 s |
+| Flag | `HED_LSP_SEMANTIC=0` in the settings file, then `deploy.sh <the image ID that runs>` again | 10 to 20 s |
 | Route | Restore the virtual host backup over `"$VHOST"` (the resolved real file, see [Rollback of the route](#rollback-of-the-route)), or comment out the `Include` line there, then `sudo apachectl configtest` and `sudo systemctl reload apache2`. Requests then get a 404 | Under 5 s |
 | Full removal | `docker rm -f hed-lsp`, `docker network rm hed-lsp`, `docker volume rm hed-lsp-cache`, remove the snippet and the `Include` line, reload | About 1 minute |
 
-The previous image stays tagged on the host, with a gzipped tarball of it in `~/hed-lsp-state/images/`, and the last two are kept.
+The image of the record stays on the host, tagged, with a gzipped tarball of it in `~/hed-lsp-state/images/`, and the last two are kept.
+`deploy.sh --rollback` takes the same options as a deploy (`--cpus`, `--memory`, `--no-read-only`), and a failed deploy prints the command with the options of that run.
+A rollback that is started from a healthy container records that container's image in turn, so a second `--rollback` goes forward again.
 Rehearse a rollback before Stage 2.
 
 ## Gates before Stage 2

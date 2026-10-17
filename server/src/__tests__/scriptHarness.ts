@@ -91,9 +91,15 @@ export interface Result {
 }
 
 /** Run a program with these arguments and environment, and wait for it to exit. */
-export function run(program: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs = 60_000): Promise<Result> {
+export function run(
+	program: string,
+	args: string[],
+	env: NodeJS.ProcessEnv,
+	timeoutMs = 60_000,
+	cwd?: string,
+): Promise<Result> {
 	return new Promise((resolve) => {
-		execFile(program, args, { env, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+		execFile(program, args, { env, cwd, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
 			const code = error ? ((error as { code?: unknown }).code as number | string) : 0;
 			resolve({ code: typeof code === 'number' ? code : -1, stdout, stderr });
 		});
