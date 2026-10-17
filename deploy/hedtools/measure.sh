@@ -34,6 +34,9 @@
 # Every step runs deploy/hedtools/neighbor-probe.sh beside the load, which stops the harness at the first
 # sign of harm to the other services on the host. Run in a quiet window, after telling their owners.
 #
+# Stopping a run: Ctrl-C ends the harness, which runs with --init so that it receives the signal. The
+# emergency stop, from another terminal, is: docker kill hed-lsp-load
+#
 # Environment:
 #   HED_LSP_STATE_DIR         Directory of the env file and results (default ~/hed-lsp-state).
 #   HED_LSP_REPO_DIR          Clone that holds server/eval/hed-examples-pairs.json (default ~/hed-lsp).
@@ -148,7 +151,9 @@ harness_command() {
 	local step="$1" seconds extra
 	seconds="${REHEARSAL:-$(step_field "$step" seconds)}"
 	extra="$(step_field "$step" extra)"
-	HARNESS=(docker run --rm --name "$LOAD_CONTAINER" --network "$HARNESS_NETWORK" --cpus "$HARNESS_CPUS" --memory 256m
+	# --init puts a small init process at the top of the container, which passes Ctrl-C and `docker stop` on
+	# to the harness; without it the harness is PID 1 and ignores them.
+	HARNESS=(docker run --rm --init --name "$LOAD_CONTAINER" --network "$HARNESS_NETWORK" --cpus "$HARNESS_CPUS" --memory 256m
 		-v "$REPO_DIR/server/eval:/corpus:ro" --entrypoint node "$IMAGE" out/daemon/loadTest.js
 		--url "$HARNESS_URL" --corpus /corpus/hed-examples-pairs.json
 		--concurrency "$(step_field "$step" concurrency)" --duration "$seconds"

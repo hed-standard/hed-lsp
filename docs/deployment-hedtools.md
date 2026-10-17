@@ -139,7 +139,7 @@ The measurement sequences are called S0 (semantic search off) and S1 (semantic s
 | 7 | Load the image onto the host | assistant | The ID on the host equals the one in the CI summary | `docker rmi <id>` |
 | 8 | Start the container, loopback only, semantic search off | assistant | `docker ps` shows it healthy, and `ss` shows 127.0.0.1:38530 only | `docker rm -f hed-lsp` |
 | 9 | Smoke test and the check of the client key | assistant | The smoke test passes and the client key is verified | None needed |
-| 10 | The semantic-off load runs, in a quiet window | assistant | The criteria pass and the neighbors are unharmed | Ctrl-C or `docker stop hed-lsp` |
+| 10 | The semantic-off load runs, in a quiet window | assistant | The criteria pass and the neighbors are unharmed | Ctrl-C, or from another terminal `docker kill hed-lsp-load` |
 | 11 | Apache Stage 1, testers only, and reload | owner | "Syntax OK", and the other routes still answer 200 | Restore the backup, `configtest`, reload (under 5 s) |
 | 12 | External verification through Apache | assistant | No Apache HTML error where the daemon should have answered (a body up to 2 MiB gets the daemon's JSON 413, and a body above 2 MiB gets Apache's HTML 502), and the limiter keys by the real address | As in step 11 |
 | 13 | Owner-review gate, then Apache Stage 2 (public) | owner | The public route is live; not before the reviewer has had the chance to comment, unless the owner says otherwise | Restore `Require ip` and reload |
@@ -223,14 +223,15 @@ Rehearse once with short steps, which are not results:
 The harness runs in a throwaway container of that image with the corpus mounted:
 
 ```bash
-docker run --rm --network host --cpus 0.2 --memory 256m \
+docker run --rm --init --name hed-lsp-load --network host --cpus 0.2 --memory 256m \
   -v ~/hed-lsp/server/eval:/corpus:ro --entrypoint node <image ID> \
   out/daemon/loadTest.js --url http://127.0.0.1:38530 --corpus /corpus/hed-examples-pairs.json ...
 ```
 
 Its report goes to standard output, because the cache volume and the bind mounts belong to different users, and `measure.sh` writes it to `~/hed-lsp-state/results/`.
 `--clients 64` is honored because the daemon trusts the path from the harness.
-Ctrl-C or `docker stop hed-lsp` ends a run at once.
+Ctrl-C ends a run: the harness container starts with `--init`, so that it receives the signal.
+The emergency stop, from another terminal, is `docker kill hed-lsp-load`, which ends the harness at once.
 
 Copy the results to a machine with Bun and judge them:
 

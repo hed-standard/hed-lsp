@@ -302,7 +302,8 @@ describe('measure.sh', () => {
 		const harness = result.stdout.split('\n').find((line) => line.startsWith('+ docker run'));
 		expect(harness).toBeDefined();
 		expect(harness).toContain(
-			'+ docker run --rm --name hed-lsp-load --network host --cpus 0.2 --memory 256m -v /srv/hed-lsp/server/eval:/corpus:ro ' +
+			// --init: without an init process the harness is PID 1 and ignores Ctrl-C and `docker stop`.
+			'+ docker run --rm --init --name hed-lsp-load --network host --cpus 0.2 --memory 256m -v /srv/hed-lsp/server/eval:/corpus:ro ' +
 				`--entrypoint node ${IMAGE} out/daemon/loadTest.js --url http://127.0.0.1:38530 --corpus /corpus/hed-examples-pairs.json ` +
 				'--concurrency 4 --duration 60 --mix suggest=65,validate=35 --clients 64 > ',
 		);
@@ -389,5 +390,7 @@ describe('measure.sh', () => {
 		expect(result.code).toBe(0);
 		expect(result.stdout).toContain('Usage: measure.sh [--dry-run]');
 		expect(result.stdout).toContain('refuses to run');
+		expect(result.stdout).toContain('emergency stop');
+		expect(result.stdout).toContain('docker kill hed-lsp-load');
 	});
 });
