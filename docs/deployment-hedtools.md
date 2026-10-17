@@ -425,7 +425,7 @@ The snippet has no `disablereuse=On`, no `LimitRequestBody`, and no `proxy-sendc
 
 ### Stage 1: testers only
 
-Check first that the modules are there, then follow the five steps of the plan.
+Check first that the modules are there, then follow the five steps below.
 
 ```bash
 # 0. The modules the route needs (authz_core and authz_host come with Apache by default).
@@ -514,8 +514,9 @@ Undoing Stage 2 alone is putting the `Require ip` line back and reloading.
 
 ## Oversize request bodies
 
-This section records what was measured on 2026-10-16, and it replaces what the plan assumed.
-The measurements ran on a local machine with Apache 2.4.52, the version on the host, in front of the image built from the Phase 5 branch, with `curl` as the client.
+This section records what was measured on 2026-10-16 to decide three options of the route: `disablereuse=On`, `LimitRequestBody`, and `SetEnv proxy-sendcl 1`.
+The snippet uses none of them, for the reasons below.
+The measurements ran on a local machine with Apache 2.4.52, the version on the host, in front of the image built from the branch that added this tooling, with `curl` as the client.
 The rate limits of the daemon were raised, so the limiter took no part.
 Each size was sent 10 times.
 
@@ -589,7 +590,7 @@ The sequences, which `measure.sh` runs:
 | `s1-realistic` | 120 s of the mixed requests with `--semantic-top 10 --semantic-batch 10` | `s1-realistic` |
 | `s1-soak` | 30 minutes at concurrency 1 | `s1-soak` |
 
-The plan names no duration or concurrency for `s1-capacity` and `s1-realistic`, so the values in the table are this runbook's choice.
+The duration and the concurrency of `s1-capacity` and `s1-realistic` are this runbook's choice.
 
 ### Criteria
 

@@ -694,7 +694,7 @@ describe('measure.sh', () => {
 	const withPin = (pin: string): Record<string, string> =>
 		envFor(stateDirWith(`HED_LSP_SEMANTIC=0\nHED_LSP_IMAGE_ID=${pin}\n`));
 
-	it('prints the harness command of the plan for the S0 concurrency-4 step, and calls no Docker', async () => {
+	it('prints the harness command for the S0 concurrency-4 step, and calls no Docker', async () => {
 		const env = withPin(IMAGE);
 
 		const result = await bash(script, ['--dry-run', 's0-c4'], { ...env, HED_LSP_REPO_DIR: '/srv/hed-lsp' });
@@ -752,7 +752,7 @@ describe('measure.sh', () => {
 		expect(source.indexOf('trap cleanup EXIT')).toBeGreaterThan(source.indexOf('the container $LOAD_CONTAINER exists'));
 	});
 
-	it('runs a group in the order of the plan, with the options of each step', async () => {
+	it('runs a group in the order of the runbook, with the options of each step', async () => {
 		const s0 = await bash(script, ['--dry-run', 's0'], withPin(IMAGE));
 		const s1 = await bash(script, ['--dry-run', 's1'], withPin(IMAGE));
 

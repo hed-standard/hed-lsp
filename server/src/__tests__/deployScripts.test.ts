@@ -56,7 +56,7 @@ const DIGEST = `ghcr.io/hed-standard/hed-lsp-daemon@sha256:${'0f'.repeat(32)}`;
 describe('deploy.sh --dry-run', () => {
 	const script = path.join(DEPLOY, 'deploy.sh');
 
-	it('prints the run command of the plan, exactly, and calls no Docker', async () => {
+	it('prints the run command of the runbook, exactly, and calls no Docker', async () => {
 		const dir = stateDir();
 
 		const result = await bash(script, ['--dry-run', IMAGE_ID], envFor(dir));

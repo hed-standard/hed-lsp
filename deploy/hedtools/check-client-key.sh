@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check which address the hed-lsp daemon rate-limits by, with the behavioral spoof test of the plan.
+# Check which address the hed-lsp daemon rate-limits by, with a behavioral spoof test.
 #
 # Usage:
 #   check-client-key.sh direct [--url URL] [--no-docker] [--container NAME] [--network NAME]
