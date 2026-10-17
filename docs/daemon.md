@@ -436,7 +436,8 @@ docker run -d --name hed-lsp --restart unless-stopped \
 - Measured in a local container, the daemon used about 200 MiB with semantic search off and about 2 GiB with it on and the model loaded.
   The image is about 390 MB compressed and about 830 MB on disk.
 - A reverse proxy that strips a path prefix, such as `/hed-lsp/`, passes `/hed-lsp/v1/health` to the daemon as `/v1/health`.
-  A proxy can enforce the same body limit, for example with `LimitRequestBody 524288` in Apache.
+  A proxy in front of the daemon cannot be relied on to enforce this limit: Apache 2.4.52 does not limit a proxied body with `LimitRequestBody`, so the daemon's own check is the limit.
+  See Oversize request bodies in docs/deployment-hedtools.md.
 
 `scripts/daemon-smoke.sh` is the smoke test of a running daemon.
 It checks health, the schema list, a valid and an invalid string, a suggestion, a 413, a 400 for an unknown field, and that `dataDir()` resolves to `/app/server/data` in the container.

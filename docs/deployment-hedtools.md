@@ -141,7 +141,7 @@ The measurement sequences are called S0 (semantic search off) and S1 (semantic s
 | 9 | Smoke test and the check of the client key | assistant | The smoke test passes and the client key is verified | None needed |
 | 10 | The semantic-off load runs, in a quiet window | assistant | The criteria pass and the neighbors are unharmed | Ctrl-C or `docker stop hed-lsp` |
 | 11 | Apache Stage 1, testers only, and reload | owner | "Syntax OK", and the other routes still answer 200 | Restore the backup, `configtest`, reload (under 5 s) |
-| 12 | External verification through Apache | assistant | No Apache HTML error where the daemon should have answered, and the limiter keys by the real address | As in step 11 |
+| 12 | External verification through Apache | assistant | No Apache HTML error where the daemon should have answered (a body up to 2 MiB gets the daemon's JSON 413, and a body above 2 MiB gets Apache's HTML 502), and the limiter keys by the real address | As in step 11 |
 | 13 | Owner-review gate, then Apache Stage 2 (public) | owner | The public route is live; not before the reviewer has had the chance to comment, unless the owner says otherwise | Restore `Require ip` and reload |
 | 14 | Seed the model cache (M2) | assistant | `semantic.state` is `ready` and the model checksum is recorded | See the step |
 | 15 | Enable semantic search (M2) | owner and assistant | The semantic gate passes and health shows `ready` | `HED_LSP_SEMANTIC=0` and run `deploy.sh` again |
@@ -261,11 +261,16 @@ curl -sS -X POST "$BASE/v1/validate" -H 'Content-Type: application/json' \
 echo '{"strings":["Red"]}' | curl -sS -o /dev/null -w '%{http_code}\n' -X POST "$BASE/v1/validate" \
   -H 'Content-Type: application/json' -H 'Transfer-Encoding: chunked' --data-binary @-
 
+# A body over the daemon's limit of 524288 bytes: the daemon's JSON 413 (PAYLOAD_TOO_LARGE) up to 2 MiB, and Apache's HTML 502 above it.
+head -c 600000 /dev/zero | curl -sS -w '\n%{http_code}\n' -X POST "$BASE/v1/validate" -H 'Content-Type: application/json' --data-binary @-
+head -c 3000000 /dev/zero | curl -sS -o /dev/null -w '%{http_code}\n' -X POST "$BASE/v1/validate" -H 'Content-Type: application/json' --data-binary @-
+
 # The cross-origin preflight (Cross-Origin Resource Sharing, CORS): 204 with Access-Control-Allow-Origin: *.
 curl -sS -i -X OPTIONS -H 'Origin: https://example.org' -H 'Access-Control-Request-Method: POST' "$BASE/v1/validate"
 ```
 
-The smoke script cannot run from outside because one of its checks reads the data directory of the image, so the daemon's other answers are checked here by hand, and the body limit is the subject of the section [Oversize request bodies](#oversize-request-bodies).
+The smoke script cannot run from outside because one of its checks reads the data directory of the image, so the daemon's other answers are checked here by hand.
+The 600000-byte body must get the daemon's JSON 413, and the 3000000-byte body gets Apache's HTML 502, as the section [Oversize request bodies](#oversize-request-bodies) explains.
 
 Then the limiter, from two tester addresses, the first with `--hold` and the second inside the time it holds:
 
@@ -349,7 +354,7 @@ Apache is changed in three stages.
 Stage 1 is for the testers, Stage 2 is public, and the rollback restores the configuration from before.
 The snippet is `deploy/hedtools/apache-hed-lsp.conf`, and it is included from the hedtools.org `:443` virtual host only.
 
-Before Stage 1, decide on `disablereuse=On` (see [Oversize request bodies](#oversize-request-bodies)).
+The snippet has no `disablereuse=On` and no `LimitRequestBody`, for the reasons measured in [Oversize request bodies](#oversize-request-bodies), so nothing is left to decide before Stage 1.
 
 ### Stage 1: testers only
 
@@ -413,8 +418,10 @@ Undoing Stage 2 alone is putting the `Require ip` line back and reloading.
 - `timeout=40` is an idle input and output timeout of Apache.
   The daemon's deadline of 30 seconds plus a margin of 5 should fire first, so a client gets the JavaScript Object Notation (JSON) error `TIMEOUT` and not an HTML 502 or 504.
 - `retry=0` stops Apache from remembering a backend failure for 60 seconds, so a restart of the container needs no reload.
-- `disablereuse=On` stops the prefork workers from holding up to 150 idle backend connections.
-- `LimitRequestBody 1048576` is twice the daemon's limit of 524288 bytes.
+- `ttl=30` closes an idle backend connection of Apache after 30 seconds, below the daemon's keep-alive of 65 seconds, so Apache drops it before the daemon does.
+  Each prefork worker keeps at most one, 150 at most, under the daemon's cap `MAX_CONNECTIONS` of 256.
+- There is no `disablereuse=On`, because an oversize body then gets Apache's HTML 502 and not the daemon's JSON 413 (see [Oversize request bodies](#oversize-request-bodies)).
+- There is no `LimitRequestBody`, because it did not stop a proxied body in the test, so the daemon's limit of 524288 bytes is the only limit.
 - `SetEnv proxy-sendcl 1` makes Apache read a chunked client body, within its cap, and send it with a `Content-Length`, so chunked clients work instead of getting 411.
 - `RequestHeader unset X-Forwarded-For` removes any client value and the virtual host's `set`.
   mod_proxy then appends the real connection address as the only entry, which is what the daemon's rightmost-entry rule needs.
@@ -423,44 +430,39 @@ Undoing Stage 2 alone is putting the `Require ip` line back and reloading.
 
 ## Oversize request bodies
 
-This section records a measurement, made on 2026-10-16, that differs from what the plan assumed.
-It needs a decision before Stage 1.
+This section records what was measured on 2026-10-16, and it replaces what the plan assumed.
+The measurements ran on a local machine with Apache 2.4.52, the version on the host, in front of the image built from the Phase 5 branch, with `curl` as the client.
+The rate limits of the daemon were raised, so the limiter took no part.
+Each size was sent 10 times.
 
 The daemon refuses a body over 524288 bytes by its `Content-Length`, before it reads the body, and answers with the JSON error `PAYLOAD_TOO_LARGE`.
-The plan expected that answer to reach the client through Apache for the 600000-byte body of the smoke test.
+It then reads and drops up to four times its limit, 2097152 bytes (2 MiB), and closes the connection after that.
 
-The route was tested with the real daemon (the image built from the Phase 5 branch) and Apache 2.4.52, the version on the host, and Apache 2.4.69 (`httpd:2.4`), on the same loopback network, with `curl` as the client.
-Six requests were sent for each size.
-
-| Body | Snippet as committed, 2.4.52 | Without ` disablereuse=On`, 2.4.52 |
+| Body in bytes | With `disablereuse=On` | The snippet (no `disablereuse`, `ttl=30`) |
 |---|---|---|
-| 600000, 1000000, or 2000000 bytes | 502, an HTML page, 6 of 6 each | 413 JSON from the daemon, 6 of 6 each |
-| 5000000 bytes | 502, an HTML page | 502, an HTML page |
+| 600000 | Apache's HTML 502 in 6 of 10 (the JSON 413 in 4) | the daemon's JSON 413 in 10 of 10 |
+| 1000000 | Apache's HTML 502 in 9 of 10 | the daemon's JSON 413 in 10 of 10 |
+| 2000000 | Apache's HTML 502 in 10 of 10 | the daemon's JSON 413 in 10 of 10 |
+| 3000000 | not measured | Apache's HTML 502 in 10 of 10 |
 
-On 2.4.69 the committed snippet gave the daemon's 413 for some of the 600000- and 700000-byte bodies and 502 for the others, so it is not reliable there either.
-
-- **Cause of the 502.**
-  `disablereuse=On` makes Apache send `Connection: close` to the daemon.
-  The daemon answers 413 and closes the connection while the body is still unread, and the operating system resets a connection that is closed with unread data (this is the first item of "Known limits" in [HTTP Daemon](./daemon.md)).
-  Apache sees the reset while it is still writing the body and answers 502 without reading the 413.
-  Without `disablereuse=On` the connection is kept, and the daemon reads and drops up to four times its limit (2 MiB).
-  Past that, at 5000000 bytes, the daemon closes the connection and Apache answers 502 in both cases.
+- **Bodies up to 2 MiB get the daemon's JSON 413, and the 600000-byte check of the smoke test passes through Apache.**
+  The check was run on Apache 2.4.52 locally (10 of 10 above), not yet on the host.
+- **Bodies beyond 2 MiB get Apache's HTML 502.**
+  This is expected: the daemon closes the connection after its bounded discard of 2097152 bytes, while Apache is still sending.
+- **`disablereuse=On` causes the 502 for the smaller bodies.**
+  The daemon closes the connection after its JSON 413 while Apache is still sending the body, and Apache's error log shows `pass request body failed ... Broken pipe`.
+  With the connection kept alive to the backend, the daemon drops the rest of the body first and Apache reads the 413.
 - **`LimitRequestBody` does not limit the proxied body.**
-  It was not enforced at 1000 bytes in the location, the virtual host, or the server, although it was enforced for a path that Apache served itself.
-  The daemon's limit is the only limit on the size of a body, and the line in the snippet is harmless but does nothing.
+  With `LimitRequestBody 1048576`, a body of 2000017 bytes reached the daemon.
+  The daemon's limit is the only limit on the size of a body.
+- **A client that sends `Connection: close` with a large unread body can see a connection reset instead of the answer.**
+  This is the first item of "Known limits" in [HTTP Daemon](./daemon.md).
+- **Reused backend connections are safe.**
+  A chunked small body got 200, so `proxy-sendcl` works, and a burst of 30 small validate requests through one Apache all got 200.
+  Without `disablereuse=On`, each prefork worker that has served the route can hold one idle backend connection, 150 at most against the 256 connections the daemon accepts, and `ttl=30` closes it before the daemon's keep-alive of 65 seconds.
 
-The decision:
-
-- **Keep the snippet as planned.**
-  A body over 512 KiB gets Apache's HTML 502 and not the daemon's JSON error, and the 600000-byte check of the smoke test cannot pass through Apache.
-  Idle backend connections stay at none.
-- **Remove ` disablereuse=On`.**
-  A body up to 2 MiB gets the daemon's JSON 413.
-  The cost is up to one idle backend connection for each Apache worker that has served the route, 150 at most against the 256 connections the daemon accepts, which the daemon closes after 65 seconds idle.
-  To apply it to the copy before installing: `sed 's/ disablereuse=On//'`.
-
-The measurements favor the second choice.
-The path through docker-proxy on the host was not part of the test, so the check of step 12 with a 600000-byte body decides it on the host.
+Not tested: Apache 2.4.69, and the path through docker-proxy on the host.
+The checks of step 12 are run on the host.
 
 ## Measurement
 
@@ -574,7 +576,7 @@ Rehearse a rollback before Stage 2.
 3. The owner-review gate is satisfied, or the owner waives it.
 4. The loopback smoke test passes and the peer address is verified.
 5. S0 passes with the neighbors unharmed.
-6. Stage 1 is verified from two external addresses: the checks of step 12, the 411 and 413 behavior, the CORS preflight, the daemon-stopped path, and the recovery.
+6. Stage 1 is verified from two external addresses: the checks of step 12 (the chunked body gets 200, a 600000-byte body gets the daemon's JSON 413, and a 3000000-byte body gets Apache's HTML 502), the CORS preflight, the daemon-stopped path, and the recovery.
 7. A rollback has been rehearsed.
 8. Monitoring and the privacy text are in place.
 9. The owner approves.
