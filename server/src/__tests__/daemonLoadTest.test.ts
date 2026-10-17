@@ -45,7 +45,7 @@ import {
 	summarizeSamples,
 	UsageError,
 } from '../daemon/loadTest.js';
-import { childEnv, compiled, startDaemon, waitFor } from './daemonHarness.js';
+import { call, childEnv, compiled, startDaemon, waitFor } from './daemonHarness.js';
 
 describe('percentile', () => {
 	const hundred = Array.from({ length: 100 }, (_, i) => i + 1);
@@ -532,12 +532,39 @@ describe('the semantic options', () => {
 		expect(() => parseArgs(argv)).toThrow(UsageError);
 	});
 
-	it('are named in the help text, with the limits the daemon enforces', () => {
+	it('are named in the help text', () => {
 		for (const flag of ['--semantic-top', '--semantic-batch', '--reach-check']) {
 			expect(HELP).toContain(flag);
 		}
-		expect(MAX_SEMANTIC_TOP).toBe(50);
-		expect(MAX_SEMANTIC_BATCH).toBe(20);
+	});
+
+	it('allow the largest semantic request that a real daemon accepts, and the daemon refuses one step more', async () => {
+		const daemon = await startDaemon();
+		try {
+			const corpus = loadCorpus(DEFAULT_CORPUS_PATH);
+			const send = (body: string) =>
+				call(daemon.url, '/v1/suggest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+			const largest = { top: MAX_SEMANTIC_TOP, batch: MAX_SEMANTIC_BATCH };
+			const planned = (shape: { top: number; batch: number }): string =>
+				planRequest('semantic', corpus, createRandom(3), shape).body;
+
+			const accepted = await send(planned(largest));
+			const tooManyQueries = await send(planned({ ...largest, batch: MAX_SEMANTIC_BATCH + 1 }));
+			const tooDeep = await send(planned({ ...largest, top: MAX_SEMANTIC_TOP + 1 }));
+
+			// The limits of the options are the daemon's: the request the options allow at most is a 200, and a
+			// request past either limit is refused by the daemon itself, with the error that names the field.
+			expect(accepted.status).toBe(200);
+			expect(accepted.json.results).toHaveLength(MAX_SEMANTIC_BATCH);
+			expect(tooManyQueries.status).toBe(400);
+			expect(tooManyQueries.json.error.code).toBe('BATCH_TOO_LARGE');
+			expect(tooManyQueries.json.error.details).toMatchObject({ field: 'queries', max: MAX_SEMANTIC_BATCH });
+			expect(tooDeep.status).toBe(400);
+			expect(tooDeep.json.error.code).toBe('INVALID_REQUEST');
+			expect(tooDeep.json.error.message).toContain('top');
+		} finally {
+			await daemon.stop();
+		}
 	});
 
 	it('shape the semantic request and no other, from real text', () => {
