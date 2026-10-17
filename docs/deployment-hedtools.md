@@ -257,8 +257,12 @@ curl -sS "$BASE/v1/health"                                   # status ok, and th
 curl -sS -X POST "$BASE/v1/validate" -H 'Content-Type: application/json' \
   -d '{"strings":["Sensory-event, Red"],"schema":"8.4.0"}'   # valid
 
-# A chunked body is accepted, because of proxy-sendcl: 200, not 411.
+# A small chunked body, which Apache reads at once and sends with a Content-Length: 200.
 echo '{"strings":["Red"]}' | curl -sS -o /dev/null -w '%{http_code}\n' -X POST "$BASE/v1/validate" \
+  -H 'Content-Type: application/json' -H 'Transfer-Encoding: chunked' --data-binary @-
+
+# A chunked body of 1 MiB, which Apache passes on as chunked: the daemon's JSON 411 (LENGTH_REQUIRED), and nothing is spooled to disk.
+head -c 1048576 /dev/zero | curl -sS -w '\n%{http_code}\n' -X POST "$BASE/v1/validate" \
   -H 'Content-Type: application/json' -H 'Transfer-Encoding: chunked' --data-binary @-
 
 # A body over the daemon's limit of 524288 bytes: the daemon's JSON 413 (PAYLOAD_TOO_LARGE) up to 2 MiB, and Apache's HTML 502 above it.
@@ -271,6 +275,7 @@ curl -sS -i -X OPTIONS -H 'Origin: https://example.org' -H 'Access-Control-Reque
 
 The smoke script cannot run from outside because one of its checks reads the data directory of the image, so the daemon's other answers are checked here by hand.
 The 600000-byte body must get the daemon's JSON 413, and the 3000000-byte body gets Apache's HTML 502, as the section [Oversize request bodies](#oversize-request-bodies) explains.
+The small chunked body must get 200 and the 1 MiB chunked body the JSON 411, as the same section explains.
 
 Then the limiter, from two tester addresses, the first with `--hold` and the second inside the time it holds:
 
@@ -354,7 +359,7 @@ Apache is changed in three stages.
 Stage 1 is for the testers, Stage 2 is public, and the rollback restores the configuration from before.
 The snippet is `deploy/hedtools/apache-hed-lsp.conf`, and it is included from the hedtools.org `:443` virtual host only.
 
-The snippet has no `disablereuse=On` and no `LimitRequestBody`, for the reasons measured in [Oversize request bodies](#oversize-request-bodies), so nothing is left to decide before Stage 1.
+The snippet has no `disablereuse=On`, no `LimitRequestBody`, and no `proxy-sendcl`, for the reasons measured in [Oversize request bodies](#oversize-request-bodies), so nothing is left to decide before Stage 1.
 
 ### Stage 1: testers only
 
@@ -362,7 +367,7 @@ Check first that the modules are there, then follow the five steps of the plan.
 
 ```bash
 # 0. The modules the route needs (authz_core and authz_host come with Apache by default).
-sudo apachectl -M 2>/dev/null | grep -E 'proxy_module|proxy_http_module|headers_module|env_module|authz_core_module|authz_host_module'
+sudo apachectl -M 2>/dev/null | grep -E 'proxy_module|proxy_http_module|headers_module|authz_core_module|authz_host_module'
 
 # 1. A clean baseline.
 sudo apachectl configtest
@@ -422,7 +427,9 @@ Undoing Stage 2 alone is putting the `Require ip` line back and reloading.
   Each prefork worker keeps at most one, 150 at most, under the daemon's cap `MAX_CONNECTIONS` of 256.
 - There is no `disablereuse=On`, because an oversize body then gets Apache's HTML 502 and not the daemon's JSON 413 (see [Oversize request bodies](#oversize-request-bodies)).
 - There is no `LimitRequestBody`, because it did not stop a proxied body in the test, so the daemon's limit of 524288 bytes is the only limit.
-- `SetEnv proxy-sendcl 1` makes Apache read a chunked client body, within its cap, and send it with a `Content-Length`, so chunked clients work instead of getting 411.
+- There is no `SetEnv proxy-sendcl 1`, because it makes Apache spool every chunked client body to a temporary file with no bound.
+  A chunked POST of 200 MiB grew a file in Apache's temporary directory to 193 MiB, at the rate of the client.
+  Without it, chunked bodies are not spooled, and a chunked client gets the answers in [Chunked request bodies](#chunked-request-bodies).
 - `RequestHeader unset X-Forwarded-For` removes any client value and the virtual host's `set`.
   mod_proxy then appends the real connection address as the only entry, which is what the daemon's rightmost-entry rule needs.
   `mod_remoteip` is not needed, because nothing sits in front of Apache.
@@ -458,8 +465,32 @@ It then reads and drops up to four times its limit, 2097152 bytes (2 MiB), and c
 - **A client that sends `Connection: close` with a large unread body can see a connection reset instead of the answer.**
   This is the first item of "Known limits" in [HTTP Daemon](./daemon.md).
 - **Reused backend connections are safe.**
-  A chunked small body got 200, so `proxy-sendcl` works, and a burst of 30 small validate requests through one Apache all got 200.
+  A burst of 30 small validate requests through one Apache all got 200.
   Without `disablereuse=On`, each prefork worker that has served the route can hold one idle backend connection, 150 at most against the 256 connections the daemon accepts, and `ttl=30` closes it before the daemon's keep-alive of 65 seconds.
+
+### Chunked request bodies
+
+The daemon refuses a POST without a `Content-Length` with the JSON error `LENGTH_REQUIRED` (411), so a chunked body only works if Apache turns it into a body with a length.
+`SetEnv proxy-sendcl 1` did that by spooling the whole body to a temporary file of Apache, which has no bound: `LimitRequestBody` is not applied to a proxied body, as above.
+A chunked POST of 200 MiB, sent at 25 MiB a second, grew a file in the temporary directory of the Apache container to 193 MiB and then got Apache's HTML 502.
+The snippet therefore leaves it out.
+
+These are the answers to a chunked POST through the snippet as it ships, with the temporary directory of Apache watched during the 200 MiB request.
+They were measured with Apache 2.4.52 in a container, and the daemon running from the compiled output of this branch on the same machine (Node.js 26, not its container), reached through `host.docker.internal`.
+
+| Chunked body | Answer | Why |
+|---|---|---|
+| 4096 to 16300 bytes, every trial (5 trials up to 12288 bytes, 3 above) | The daemon sees a `Content-Length` and answers as for any body: 200 for a valid request | Apache reads the whole body in its first read, which holds up to 16 KiB, and sends it with a length |
+| 16370 to 2200000 bytes, every trial (3 to 5 trials each; 1 MiB is the case of step 12) | The daemon's JSON 411 `LENGTH_REQUIRED` | Apache passes the body on as chunked, and the daemon refuses it before it reads it |
+| 3000000, 5000000, and 10000000 bytes, 5 of 5 each, and 200 MiB, 2 of 2 | Apache's HTML 502 | The daemon closes the connection after its bounded discard of 2097152 bytes, as for a body with a length |
+
+- **The temporary directory did not grow.**
+  During the 200 MiB request it held 4 KiB, which is the directory itself, against 193 MiB with `proxy-sendcl`.
+- **Apache reads the whole chunked body before it answers 502.**
+  The 200 MiB request took 8.0 seconds at 25 MiB a second, so a worker stays busy for as long as the client keeps sending, but it spools nothing.
+  The `RequestReadTimeout` of the host (10 seconds for the body, at a rate of at least 500 bytes a second) ends only a slow sender.
+- **A chunked client therefore works only for bodies of up to about 16 KiB.**
+  A client of the daemon should send a `Content-Length`, as `fetch` does for a string body.
 
 Not tested: Apache 2.4.69, and the path through docker-proxy on the host.
 The checks of step 12 are run on the host.
@@ -576,7 +607,7 @@ Rehearse a rollback before Stage 2.
 3. The owner-review gate is satisfied, or the owner waives it.
 4. The loopback smoke test passes and the peer address is verified.
 5. S0 passes with the neighbors unharmed.
-6. Stage 1 is verified from two external addresses: the checks of step 12 (the chunked body gets 200, a 600000-byte body gets the daemon's JSON 413, and a 3000000-byte body gets Apache's HTML 502), the CORS preflight, the daemon-stopped path, and the recovery.
+6. Stage 1 is verified from two external addresses: the checks of step 12 (a small chunked body gets 200, a 1 MiB chunked body gets the daemon's JSON 411, a 600000-byte body gets the daemon's JSON 413, and a 3000000-byte body gets Apache's HTML 502), the CORS preflight, the daemon-stopped path, and the recovery.
 7. A rollback has been rehearsed.
 8. Monitoring and the privacy text are in place.
 9. The owner approves.
