@@ -436,7 +436,8 @@ docker run -d --name hed-lsp --restart unless-stopped \
 - Measured in a local container, the daemon used about 200 MiB with semantic search off and about 2 GiB with it on and the model loaded.
   The image is about 390 MB compressed and about 830 MB on disk.
 - A reverse proxy that strips a path prefix, such as `/hed-lsp/`, passes `/hed-lsp/v1/health` to the daemon as `/v1/health`.
-  A proxy can enforce the same body limit, for example with `LimitRequestBody 524288` in Apache.
+  A proxy in front of the daemon cannot be relied on to enforce this limit: Apache 2.4.52 does not limit a proxied body with `LimitRequestBody`, so the daemon's own check is the limit.
+  See Oversize request bodies in docs/deployment-hedtools.md.
 
 `scripts/daemon-smoke.sh` is the smoke test of a running daemon.
 It checks health, the schema list, a valid and an invalid string, a suggestion, a 413, a 400 for an unknown field, and that `dataDir()` resolves to `/app/server/data` in the container.
@@ -470,6 +471,12 @@ It sends requests built from the 206 description and HED pairs of `server/eval/h
 The JSON report has, for each endpoint and for the run, the p50, p95, and p99 latency in milliseconds, the error rate, the 429 and 503 answers counted by error code, and the throughput, with the run parameters and `/v1/health` before and after.
 `--clients` sends that many distinct `X-Forwarded-For` addresses, so the per-client limits apply to each separately.
 The target honors the header only when the address of the machine running the harness is in its `TRUSTED_PROXIES`; otherwise every request shares one key.
+
+The cost of a semantic request depends on how many of its queries reach the embedding model, and the daemon sends a query there only when its keyword and schema results are fewer than `top` tags.
+`--semantic-top` (1 to 50, default 10) and `--semantic-batch` (1 to 20, default 1) set the `top` and the number of queries of each semantic request.
+On the 206 evaluation queries with semantic search off, 27.2% return fewer than 10 tags and 97.1% return fewer than 50, so the default `top` of 10 understates the cost of the model by a factor of about 3.6.
+`--reach-check` measures this before the run: it sends every corpus query as a suggest request with semantic search off and `top` set to `--semantic-top`, and adds a `reach` object to the report with the number of queries answered, the number below `top`, and their share.
+The check sends as one extra client address, so it does not spend the rate budget of the clients of the run.
 
 ## Known limits
 

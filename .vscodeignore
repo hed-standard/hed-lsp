@@ -32,6 +32,8 @@ server/out/engine/**
 server/out/daemon/**
 Dockerfile
 .dockerignore
+# The hedtools deploy files run on the host, not in the extension
+deploy/**
 server/eval/**
 # transformers.js writes model downloads here when no cache directory is set; never ship them
 server/node_modules/@huggingface/transformers/.cache/**

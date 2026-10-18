@@ -4,7 +4,9 @@
  * directly, on values worked out by hand and on the real evaluation set. One test runs the compiled
  * harness as a process against a real daemon on a real socket, with the real engine, for about two
  * seconds, and checks the JSON report, the health snapshots, and that the daemon counted every
- * request. No mocks.
+ * request. The semantic options and the reach check are tested the same way: the tally on numbers
+ * worked out by hand, and the check itself against a real daemon with the real engine and the real
+ * evaluation set. No mocks.
  */
 
 import { execFile } from 'node:child_process';
@@ -18,23 +20,32 @@ import {
 	clientAddress,
 	createRandom,
 	DEFAULT_CORPUS_PATH,
+	DEFAULT_SEMANTIC_SHAPE,
 	ENDPOINTS,
 	HELP,
+	type LoadOptions,
 	loadCorpus,
 	MAX_CLIENTS,
+	MAX_SEMANTIC_BATCH,
+	MAX_SEMANTIC_TOP,
 	type Mix,
 	parseArgs,
 	parseMix,
 	percentile,
 	pickEndpoint,
 	planRequest,
+	REACH_BATCH,
+	REACH_CLIENT,
 	routeUrl,
+	runReachCheck,
 	type Sample,
+	semanticShape,
 	summarizeLatencies,
+	summarizeReach,
 	summarizeSamples,
 	UsageError,
 } from '../daemon/loadTest.js';
-import { childEnv, compiled, startDaemon, waitFor } from './daemonHarness.js';
+import { call, childEnv, compiled, startDaemon, waitFor } from './daemonHarness.js';
 
 describe('percentile', () => {
 	const hundred = Array.from({ length: 100 }, (_, i) => i + 1);
@@ -226,6 +237,28 @@ describe('summarizeSamples', () => {
 		expect(report.semanticStatus).toBeUndefined();
 	});
 
+	it('counts the 429 and 503 answers that have no usable Retry-After, by error code, from hand-worked samples', () => {
+		const report = summarizeSamples(
+			[
+				{ status: 429, ms: 1, errorCode: 'RATE_LIMITED', retryAfter: '1' },
+				{ status: 429, ms: 1, errorCode: 'RATE_LIMITED', retryAfter: '12' },
+				{ status: 429, ms: 1, errorCode: 'RATE_LIMITED' },
+				{ status: 503, ms: 1, errorCode: 'OVERLOADED', retryAfter: '1' },
+				{ status: 503, ms: 1, errorCode: 'OVERLOADED', retryAfter: '0' },
+				{ status: 503, ms: 1, errorCode: 'OVERLOADED', retryAfter: '1.5' },
+				{ status: 503, ms: 1, errorCode: 'STARTING', retryAfter: 'Wed, 21 Oct 2026 07:28:00 GMT' },
+				{ status: 503, ms: 1, errorCode: 'STARTING', retryAfter: '' },
+				// Only a refusal needs one: a 200 and a 500 are not counted either way.
+				{ status: 200, ms: 5 },
+				{ status: 500, ms: 1, errorCode: 'INTERNAL_ERROR' },
+			],
+			1,
+		);
+
+		expect(report.rejections).toEqual({ '429': { RATE_LIMITED: 3 }, '503': { OVERLOADED: 3, STARTING: 2 } });
+		expect(report.withoutRetryAfter).toEqual({ '429': { RATE_LIMITED: 1 }, '503': { OVERLOADED: 2, STARTING: 2 } });
+	});
+
 	it('counts the semantic status of the answers that carried one', () => {
 		const report = summarizeSamples(
 			[
@@ -253,6 +286,7 @@ describe('summarizeSamples', () => {
 			errorRate: 0,
 			status: {},
 			rejections: { '429': {}, '503': {} },
+			withoutRetryAfter: { '429': {}, '503': {} },
 			latencyMs: { p50: null, p95: null, p99: null, max: null },
 			throughputRps: 0,
 		});
@@ -472,6 +506,202 @@ describe('planRequest', () => {
 	});
 });
 
+describe('the semantic options', () => {
+	/** The options of a command line that is not a request for help. */
+	function options(argv: string[]): LoadOptions {
+		const parsed = parseArgs(argv);
+		if (parsed === 'help') {
+			throw new Error('expected options, got help');
+		}
+		return parsed;
+	}
+
+	it('leave the options as they were when the command line does not name them', () => {
+		const defaults = options([]);
+
+		expect(defaults).not.toHaveProperty('semanticTop');
+		expect(defaults).not.toHaveProperty('semanticBatch');
+		expect(defaults).not.toHaveProperty('reachCheck');
+		expect(semanticShape(defaults)).toEqual({ top: 10, batch: 1 });
+		expect(DEFAULT_SEMANTIC_SHAPE).toEqual({ top: 10, batch: 1 });
+	});
+
+	it('are read with a value after a space or after an equals sign, and --reach-check takes none', () => {
+		const spaced = options(['--semantic-top', '50', '--semantic-batch', '10', '--reach-check']);
+		const equals = options(['--reach-check', '--semantic-top=1', '--semantic-batch=20']);
+
+		expect(spaced).toMatchObject({ semanticTop: 50, semanticBatch: 10, reachCheck: true });
+		expect(semanticShape(spaced)).toEqual({ top: 50, batch: 10 });
+		expect(equals).toMatchObject({ semanticTop: 1, semanticBatch: 20, reachCheck: true });
+		// A value for the top alone leaves the batch at its default, and the other way round.
+		expect(semanticShape(options(['--semantic-top', '50']))).toEqual({ top: 50, batch: 1 });
+		expect(semanticShape(options(['--semantic-batch', '10']))).toEqual({ top: 10, batch: 10 });
+	});
+
+	it.each([
+		[['--semantic-top', '0']],
+		[['--semantic-top', String(MAX_SEMANTIC_TOP + 1)]],
+		[['--semantic-top', '2.5']],
+		[['--semantic-top', 'many']],
+		[['--semantic-top']],
+		[['--semantic-top', '5', '--semantic-top', '6']],
+		[['--semantic-batch', '0']],
+		[['--semantic-batch', String(MAX_SEMANTIC_BATCH + 1)]],
+		[['--semantic-batch', '-1']],
+		[['--semantic-batch']],
+		[['--reach-check=yes']],
+		[['--reach-check', '--reach-check']],
+	])('reject %j as a usage error', (argv) => {
+		expect(() => parseArgs(argv)).toThrow(UsageError);
+	});
+
+	it('are named in the help text', () => {
+		for (const flag of ['--semantic-top', '--semantic-batch', '--reach-check']) {
+			expect(HELP).toContain(flag);
+		}
+	});
+
+	it('allow the largest semantic request that a real daemon accepts, and the daemon refuses one step more', async () => {
+		const daemon = await startDaemon();
+		try {
+			const corpus = loadCorpus(DEFAULT_CORPUS_PATH);
+			const send = (body: string) =>
+				call(daemon.url, '/v1/suggest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+			const largest = { top: MAX_SEMANTIC_TOP, batch: MAX_SEMANTIC_BATCH };
+			const planned = (shape: { top: number; batch: number }): string =>
+				planRequest('semantic', corpus, createRandom(3), shape).body;
+
+			const accepted = await send(planned(largest));
+			const tooManyQueries = await send(planned({ ...largest, batch: MAX_SEMANTIC_BATCH + 1 }));
+			const tooDeep = await send(planned({ ...largest, top: MAX_SEMANTIC_TOP + 1 }));
+
+			// The limits of the options are the daemon's: the request the options allow at most is a 200, and a
+			// request past either limit is refused by the daemon itself, with the error that names the field.
+			expect(accepted.status).toBe(200);
+			expect(accepted.json.results).toHaveLength(MAX_SEMANTIC_BATCH);
+			expect(tooManyQueries.status).toBe(400);
+			expect(tooManyQueries.json.error.code).toBe('BATCH_TOO_LARGE');
+			expect(tooManyQueries.json.error.details).toMatchObject({ field: 'queries', max: MAX_SEMANTIC_BATCH });
+			expect(tooDeep.status).toBe(400);
+			expect(tooDeep.json.error.code).toBe('INVALID_REQUEST');
+			expect(tooDeep.json.error.message).toContain('top');
+		} finally {
+			await daemon.stop();
+		}
+	});
+
+	it('shape the semantic request and no other, from real text', () => {
+		const corpus = loadCorpus(DEFAULT_CORPUS_PATH);
+		const shape = { top: 50, batch: 7 };
+
+		const semantic = JSON.parse(planRequest('semantic', corpus, createRandom(9), shape).body);
+		const defaulted = JSON.parse(planRequest('semantic', corpus, createRandom(9)).body);
+
+		expect(semantic.queries).toHaveLength(7);
+		expect(semantic.queries.every((query: string) => corpus.queries.includes(query))).toBe(true);
+		expect(semantic.top).toBe(50);
+		expect(semantic.semantic).toBe(true);
+		expect(defaulted.queries).toHaveLength(1);
+		expect(defaulted.top).toBe(10);
+		for (const endpoint of ['suggest', 'validate'] as const) {
+			expect(planRequest(endpoint, corpus, createRandom(9), shape)).toEqual(
+				planRequest(endpoint, corpus, createRandom(9)),
+			);
+		}
+		expect(JSON.parse(planRequest('suggest', corpus, createRandom(9), shape).body).top).toBe(10);
+	});
+});
+
+describe('summarizeReach', () => {
+	it('counts the queries with fewer than top suggestions, from counts worked out by hand', () => {
+		// Seven queries at top 10: 3, 0, 9, and 7 are below it; 10 is not; one query has no answer.
+		const report = summarizeReach(10, [10, 3, 0, 9, 10, null, 7]);
+
+		expect(report).toEqual({ top: 10, queries: 7, answered: 6, belowTop: 4, share: 0.6667, errors: 1 });
+	});
+
+	it('gives a share of 0 when every query fills the list, and 1 when none does', () => {
+		expect(summarizeReach(5, [5, 5, 6]).share).toBe(0);
+		expect(summarizeReach(5, [4, 0, 1]).share).toBe(1);
+	});
+
+	it('gives no share, and counts every query as an error, when nothing was answered', () => {
+		expect(summarizeReach(10, [null, null])).toEqual({
+			top: 10,
+			queries: 2,
+			answered: 0,
+			belowTop: 0,
+			share: null,
+			errors: 2,
+		});
+		expect(summarizeReach(10, [])).toMatchObject({ queries: 0, answered: 0, share: null, errors: 0 });
+	});
+});
+
+describe('the reach check', () => {
+	it('sends every corpus query once with semantic search off, in batches, from a client of its own', async () => {
+		const daemon = await startDaemon();
+		try {
+			const corpus = loadCorpus(DEFAULT_CORPUS_PATH);
+
+			const reach = await runReachCheck(new URL(daemon.url), corpus, 10);
+
+			expect(reach.top).toBe(10);
+			expect(reach.queries).toBe(206);
+			expect(reach.answered).toBe(206);
+			expect(reach.errors).toBe(0);
+			expect(reach.belowTop).toBeGreaterThan(0);
+			expect(reach.belowTop).toBeLessThan(206);
+			expect(reach.share).toBe(Math.round((reach.belowTop / 206) * 10_000) / 10_000);
+			const posts = daemon.logLines().filter((line) => line.msg === 'request' && line.method === 'POST');
+			expect(posts).toHaveLength(Math.ceil(206 / REACH_BATCH));
+			expect(posts.reduce((sum, line) => sum + Number(line.items), 0)).toBe(206);
+			// Semantic search was off in every request: no log line carries a semantic status.
+			expect(posts.every((line) => line.semantic === undefined && line.status === 200)).toBe(true);
+			// The address is outside the range of the load clients, so the check spends none of their budget.
+			expect(net.isIPv4(REACH_CLIENT)).toBe(true);
+			expect(Array.from({ length: MAX_CLIENTS }, (_, i) => clientAddress(i))).not.toContain(REACH_CLIENT);
+		} finally {
+			await daemon.stop();
+		}
+	}, 60_000);
+
+	it('finds that a larger top sends more of the real queries to the embedder', async () => {
+		const daemon = await startDaemon();
+		try {
+			const corpus = loadCorpus(DEFAULT_CORPUS_PATH);
+
+			const atTen = await runReachCheck(new URL(daemon.url), corpus, 10);
+			const atFifty = await runReachCheck(new URL(daemon.url), corpus, 50);
+
+			// On the real engine and the 206 real queries, about a quarter of the queries fall short of 10
+			// results and nearly all of them fall short of 50.
+			expect(atTen.share).toBeGreaterThan(0.1);
+			expect(atTen.share).toBeLessThan(0.45);
+			expect(atFifty.share).toBeGreaterThan(0.9);
+			// A few queries do fill 50 results. A request sent without its top would get at most 10 and make
+			// every query look short of 50, so a share below 1 shows that the top went to the daemon.
+			expect(atFifty.belowTop).toBeLessThan(atFifty.answered);
+			// A query short of 10 results is short of 50 as well, so the count can only grow.
+			expect(atFifty.belowTop).toBeGreaterThan(atTen.belowTop);
+		} finally {
+			await daemon.stop();
+		}
+	}, 60_000);
+
+	it('counts the queries as errors when the daemon refuses them', async () => {
+		// The bundled test configuration allows 20 queries in a request; this daemon allows 5 and rejects each batch.
+		const daemon = await startDaemon({ HED_LSP_MAX_QUERIES: '5' });
+		try {
+			const reach = await runReachCheck(new URL(daemon.url), loadCorpus(DEFAULT_CORPUS_PATH), 10);
+
+			expect(reach).toEqual({ top: 10, queries: 206, answered: 0, belowTop: 0, share: null, errors: 206 });
+		} finally {
+			await daemon.stop();
+		}
+	}, 60_000);
+});
+
 interface ProcessResult {
 	code: number | null;
 	stdout: string;
@@ -556,6 +786,7 @@ describe('the compiled harness', () => {
 				expect(endpoint.errorRate, name).toBe(0);
 				expect(endpoint.status, name).toEqual({ '200': endpoint.requests });
 				expect(endpoint.rejections, name).toEqual({ '429': {}, '503': {} });
+				expect(endpoint.withoutRetryAfter, name).toEqual({ '429': {}, '503': {} });
 				const { p50, p95, p99, max } = endpoint.latencyMs;
 				for (const value of [p50, p95, p99, max]) {
 					expect(typeof value).toBe('number');
@@ -605,6 +836,91 @@ describe('the compiled harness', () => {
 			expect(help.stdout).toBe(HELP);
 		} finally {
 			await daemon.stop();
+		}
+	}, 60_000);
+
+	it('reports the reach and the semantic shape when asked, and no reach when not asked', async () => {
+		const daemon = await startDaemon();
+		try {
+			const asked = await runHarness([
+				'--url',
+				daemon.url,
+				'--duration',
+				'0.5',
+				'--mix',
+				'semantic=1',
+				'--semantic-top',
+				'50',
+				'--semantic-batch',
+				'7',
+				'--reach-check',
+			]);
+			const plain = await runHarness(['--url', daemon.url, '--duration', '0.3', '--mix', 'validate=1']);
+
+			expect(asked.code).toBe(0);
+			const report = JSON.parse(asked.stdout);
+			expect(report.reach).toMatchObject({ top: 50, queries: 206, answered: 206, errors: 0 });
+			expect(report.reach.share).toBeGreaterThan(0.9);
+			expect(report.params.semanticTop).toBe(50);
+			expect(report.params.batch).toEqual({ suggest: 5, validate: 10, semantic: 7 });
+			expect(asked.stderr).toMatch(/reach at top 50: \d+(\.\d)?% of 206 answered queries/);
+			// Each semantic request of the run carried 7 queries.
+			const semanticPosts = daemon
+				.logLines()
+				.filter((line) => line.msg === 'request' && line.method === 'POST' && line.semantic !== undefined);
+			expect(semanticPosts.length).toBe(report.endpoints.semantic.requests);
+			expect(semanticPosts.every((line) => line.items === 7)).toBe(true);
+
+			expect(plain.code).toBe(0);
+			const plainReport = JSON.parse(plain.stdout);
+			expect(plainReport).not.toHaveProperty('reach');
+			expect(plainReport.params.semanticTop).toBe(10);
+			expect(plainReport.params.batch).toEqual({ suggest: 5, validate: 10, semantic: 1 });
+			expect(plain.stderr).not.toMatch(/reach at top/);
+		} finally {
+			await daemon.stop();
+		}
+	}, 60_000);
+
+	it('records the Retry-After of the refusals of a real daemon, the 429 answers and the OVERLOADED 503 answers', async () => {
+		// One request at a time on a bucket of 50 units, at 10 units a request, is limited from the sixth request on.
+		const limiting = await startDaemon({ HED_LSP_RATE_ITEMS_PER_SEC: '1', HED_LSP_RATE_ITEMS_BURST: '50' });
+		// One request in flight for each client, and sixteen workers that share one address.
+		const crowded = await startDaemon({ HED_LSP_MAX_IN_FLIGHT_PER_CLIENT: '1' });
+		try {
+			const limited = await runHarness([
+				'--url',
+				limiting.url,
+				'--duration',
+				'1',
+				'--concurrency',
+				'1',
+				'--mix',
+				'validate=1',
+			]);
+			const overloaded = await runHarness([
+				'--url',
+				crowded.url,
+				'--duration',
+				'1.5',
+				'--concurrency',
+				'16',
+				'--clients',
+				'1',
+				'--mix',
+				'suggest=1',
+			]);
+
+			const rate = JSON.parse(limited.stdout).endpoints.validate;
+			const busy = JSON.parse(overloaded.stdout).endpoints.suggest;
+			// The refusals are real, and the daemon sent each of them a Retry-After of at least one second.
+			expect(rate.rejections['429'].RATE_LIMITED).toBeGreaterThan(0);
+			expect(rate.withoutRetryAfter).toEqual({ '429': {}, '503': {} });
+			expect(busy.rejections['503'].OVERLOADED).toBeGreaterThan(0);
+			expect(busy.withoutRetryAfter).toEqual({ '429': {}, '503': {} });
+		} finally {
+			await limiting.stop();
+			await crowded.stop();
 		}
 	}, 60_000);
 

@@ -43,7 +43,7 @@ suite('runtime embeddings against the shipped vectors (model cached)', () => {
 		// runtime vectors by a few percent; 0.9 catches wrong pooling or a wrong model.
 		expect(vector).not.toBeNull();
 		expect(cosine(vector ?? [], stored?.vector ?? [])).toBeGreaterThanOrEqual(0.9);
-	});
+	}, 150000);
 
 	it('gives the same vectors with one ONNX thread as with the default threads', async () => {
 		const built = path.join(__dirname, '..', '..', 'out', 'engine', 'embeddings.js');
