@@ -269,8 +269,8 @@ jobs:
           done
 
       # The Docker branches of the probe: it kills the load container when it aborts, and it aborts when a container
-      # that ran at its start has stopped. The probe has no --duration in the second run but the bound of 40 s,
-      # so a probe that misses the stop ends with status 0 and the step fails.
+      # that ran at its start has stopped. The second run is bounded by --duration 40, so a probe that misses the stop
+      # ends with status 0 at that bound, and the step fails.
       - name: Check that the probe kills the load container and notices a stopped one
         run: |
           set -euo pipefail
