@@ -37,8 +37,12 @@ const DEFAULT_RATES = { HED_LSP_RATE_ITEMS_PER_SEC: '100', HED_LSP_RATE_ITEMS_BU
 
 /** A daemon that trusts the sender of every request, as it trusts Apache or the gateway of its network. */
 const TRUSTING = { ...DEFAULT_RATES, HED_LSP_TRUSTED_PROXIES: '127.0.0.1' };
-/** A daemon that trusts no one, so it ignores X-Forwarded-For, as it does behind a proxy that is not trusted. */
-const NOT_TRUSTING = { ...DEFAULT_RATES, HED_LSP_TRUSTED_PROXIES: '' };
+/**
+ * A daemon that trusts no one, so it ignores X-Forwarded-For, as it does behind a proxy that is not trusted.
+ * It refills one unit a second, so that its bucket cannot refill between the three requests of the check on a slow
+ * machine: at the default rate, a request that took a second would get through, and the test would depend on speed.
+ */
+const NOT_TRUSTING = { HED_LSP_RATE_ITEMS_PER_SEC: '1', HED_LSP_RATE_ITEMS_BURST: '1000', HED_LSP_TRUSTED_PROXIES: '' };
 
 /**
  * A real HTTP forwarder in front of a daemon that holds every answer for `delayMs`, as a slow network
