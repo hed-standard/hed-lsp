@@ -76,7 +76,8 @@ ROLLBACK=0
 CPUS="$DEFAULT_CPUS"
 MEMORY=""
 IMAGE=""
-# The options that a rollback must repeat, as the operator gave them.
+# The options that a rollback repeats. Only --no-read-only: it is a host fallback, and a rollback needs it too. The limits
+# are not carried, so a rollback takes them from the settings file and never restores the limit that just failed.
 CARRY=()
 
 die() {
@@ -99,7 +100,6 @@ while [ "$#" -gt 0 ]; do
 		--cpus | --memory)
 			[ "$#" -ge 2 ] || die "$1 needs a value"
 			if [ "$1" = "--cpus" ]; then CPUS="$2"; else MEMORY="$2"; fi
-			CARRY+=("$1" "$2")
 			shift
 			;;
 		-h | --help)
@@ -344,7 +344,7 @@ fi
 
 echo "Starting $NAME"
 if ! CONTAINER_ID="$("${RUN_COMMAND[@]}")"; then
-	fail_deploy "docker run failed, and no container is running"
+	fail_deploy "docker run failed"
 fi
 echo "Started ${CONTAINER_ID:0:12}"
 

@@ -685,7 +685,7 @@ This is the text for this runbook and, later, for the notice in the client.
 | Full removal | `docker rm -f hed-lsp` (and `hed-lsp-seed` if it exists) first, because Docker refuses to remove the network or the volume while a container, even a stopped one, uses it; then `docker network rm hed-lsp` and `docker volume rm hed-lsp-cache`; remove the snippet and the `Include` line, reload | About 1 minute |
 
 The image of the record stays on the host, tagged, with a gzipped tarball of it in `~/hed-lsp-state/images/`, and the last two are kept.
-`deploy.sh --rollback` takes the same options as a deploy (`--cpus`, `--memory`, `--no-read-only`), and a failed deploy prints the command with the options of that run.
+`deploy.sh --rollback` repeats `--no-read-only` when the deploy that failed had it, and a failed deploy prints the command with that option. A rollback takes `--cpus` and `--memory` from the settings file, so it never restores a limit that failed; to roll back with a limit other than the settings file's, pass it to the rollback too.
 A rollback that is started from a healthy container records that container's image in turn, so a second `--rollback` goes forward again.
 Rehearse a rollback before Stage 2.
 

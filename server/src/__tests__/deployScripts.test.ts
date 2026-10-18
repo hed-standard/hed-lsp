@@ -319,7 +319,7 @@ describe('deploy.sh --rollback', () => {
 		expect(result.stderr).toContain('takes no image');
 	});
 
-	it('plans the same steps for the recorded image, repeats the options of the run, and writes nothing', async () => {
+	it('plans the same steps for the recorded image, repeats --no-read-only but not the limits, and writes nothing', async () => {
 		const dir = stateDir();
 		record(dir, `${RECORDED}\n`);
 		const before = snapshot(dir);
@@ -335,7 +335,9 @@ describe('deploy.sh --rollback', () => {
 		expect(result.stdout).toContain(`records the image ${RECORDED}`);
 		expect(result.stdout).toMatch(/--entrypoint node sha256:5e5e\w+ -e '/);
 		expect(result.stdout).toContain(`  ${RECORDED} \n`);
-		expect(result.stdout).toMatch(/^\+ \S+\/deploy\.sh --rollback --cpus 2 --no-read-only\s*$/m);
+		// The limits are not repeated: a rollback takes them from the settings file, so a limit that failed is never restored.
+		expect(result.stdout).toMatch(/^\+ \S+\/deploy\.sh --rollback --no-read-only\s*$/m);
+		expect(result.stdout).not.toMatch(/^\+ \S+\/deploy\.sh --rollback .*--cpus/m);
 		expect(snapshot(dir)).toEqual(before);
 	});
 
