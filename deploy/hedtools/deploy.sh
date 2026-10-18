@@ -229,7 +229,8 @@ if [ "$DRY_RUN" = 1 ]; then
 	RECORD_WRITE="printf '%s\\n' <image ID of the running container> > $RECORD_FILE"
 	echo "+ $RECORD_WRITE"
 	echo "+ docker tag <image ID of the running container> $PREVIOUS_TAG"
-	echo "# 4. When the container exists: drain it and remove it."
+	echo "# 4. When the container exists: turn its restarts off, stop it, and remove it."
+	show docker update --restart no "$NAME"
 	show docker stop "$NAME"
 	show docker rm "$NAME"
 	echo "# 5. Start the new container."
@@ -338,8 +339,14 @@ if docker container inspect "$NAME" >/dev/null 2>&1; then
 		echo "The running container is not healthy (${OLD_STATE#* }), so the rollback record and the tag are left as they are"
 	fi
 	echo "Stopping $NAME (it drains for up to 8 s)"
-	# A container in a restart loop may not answer a stop ("did not receive an exit event"), and it has nothing to
-	# drain. It is removed by force then, because replacing it is what a rollback is for.
+	# A container in a restart loop cannot be stopped between two restarts: Docker answers "is not running" or "did not
+	# receive an exit event". So its restart policy goes first, the restart under way is waited out, and then it is
+	# stopped (a healthy one drains). If Docker still refuses, it is removed by force, which replacing it needs.
+	docker update --restart no "$NAME" >/dev/null
+	DEADLINE=$((SECONDS + 30))
+	while [ "$(docker container inspect --format '{{.State.Restarting}}' "$NAME")" = "true" ] && [ "$SECONDS" -lt "$DEADLINE" ]; do
+		sleep 0.5
+	done
 	if docker stop "$NAME" >/dev/null 2>&1; then
 		docker rm "$NAME" >/dev/null
 	else

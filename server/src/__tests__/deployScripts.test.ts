@@ -250,6 +250,7 @@ describe('deploy.sh --dry-run', () => {
 			'+ docker volume create ',
 			`> ${path.join(dir, 'previous-image-id')}`,
 			'+ docker tag <image ID of the running container> hed-lsp-daemon:previous',
+			'+ docker update --restart no hed-lsp',
 			'+ docker stop hed-lsp',
 			'+ docker rm hed-lsp',
 			'+ docker run -d --name hed-lsp ',
