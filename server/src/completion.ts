@@ -6,9 +6,10 @@
 import { type CompletionItem, CompletionItemKind, InsertTextFormat, type Position } from 'vscode-languageserver';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import { getContentOffset, getHedRegionAtPosition, getTagAtOffset, parseJsonForHedStrings } from './documentParser.js';
-import { embeddingsManager, type SemanticMatch } from './embeddings.js';
-import { schemaManager } from './schemaManager.js';
-import { SEMANTIC_MAPPINGS } from './semanticMappings.js';
+import { embeddingsManager, type SemanticMatch } from './engine/embeddings.js';
+import { lookupOwn } from './engine/keywordLookup.js';
+import { schemaManager } from './engine/schemaManager.js';
+import { SEMANTIC_MAPPINGS } from './engine/semanticMappings.js';
 import { getTsvHedRegionAtPosition, isTsvDocument, parseTsvForHedStrings } from './tsvParser.js';
 import type { HedRegion, HedTag } from './types.js';
 
@@ -491,22 +492,23 @@ async function getSemanticSuggestions(query: string): Promise<SemanticMatch[]> {
 		console.log('[HED] Embedding search failed, falling back to static mappings');
 	}
 
-	// Fallback to static mappings
-	const lowerQuery = query.toLowerCase();
-	if (SEMANTIC_MAPPINGS[lowerQuery]) {
-		const results: SemanticMatch[] = [];
-		for (const tagName of SEMANTIC_MAPPINGS[lowerQuery]) {
-			results.push({
-				tag: tagName,
-				longForm: tagName,
-				prefix: '',
-				similarity: 0.8, // High similarity for static mappings
-			});
-		}
-		return results;
-	}
+	return staticMappingMatches(query);
+}
 
-	return [];
+/**
+ * Static keyword matches from SEMANTIC_MAPPINGS, used when embedding search fails.
+ */
+export function staticMappingMatches(query: string): SemanticMatch[] {
+	const mapped = lookupOwn(SEMANTIC_MAPPINGS, query.toLowerCase());
+	if (!mapped) {
+		return [];
+	}
+	return mapped.map((tagName) => ({
+		tag: tagName,
+		longForm: tagName,
+		prefix: '',
+		similarity: 0.8, // High similarity for static mappings
+	}));
 }
 
 /**

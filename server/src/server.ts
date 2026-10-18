@@ -20,15 +20,17 @@ import {
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { completionTriggerCharacters, provideCompletions, resolveCompletionItem } from './completion.js';
 import { provideDefinition } from './definitionProvider.js';
+import { validateDocument } from './diagnostics.js';
 import { parseJsonForHedStrings } from './documentParser.js';
-import { embeddingsManager } from './embeddings.js';
+import { embeddingsManager } from './engine/embeddings.js';
+import { lineText, setLogger } from './engine/log.js';
+import { schemaManager } from './engine/schemaManager.js';
+import { resolveSchemaOption } from './engine/schemaVersion.js';
+import { suggestBatch } from './engine/suggestionEngine.js';
 import { provideHover } from './hover.js';
-import { schemaManager } from './schemaManager.js';
 import { provideSemanticTokens, semanticTokensLegend } from './semanticTokens.js';
-import { suggestBatch } from './suggestionEngine.js';
 import { isTsvDocument, parseTsvForHedStrings } from './tsvParser.js';
 import { defaultSettings, type HedLspSettings, type HedRegion } from './types.js';
-import { validateDocument } from './validation.js';
 
 /**
  * Get HED regions from a document (JSON or TSV).
@@ -44,6 +46,14 @@ function getHedRegions(document: TextDocument): HedRegion[] {
 
 // Create a connection using Node's IPC transport
 const connection = createConnection(ProposedFeatures.all);
+
+// Engine log lines go to the console as one string each, so the console never applies printf
+// formatting to a path. Under --stdio the LSP library sends console output to the client as log
+// messages; under IPC info lines go to stdout and error lines go to stderr.
+setLogger({
+	info: (message, detail) => console.log(lineText(message, detail)),
+	error: (message, detail) => console.error(lineText(message, detail)),
+});
 
 // Create a document manager
 const documents = new TextDocuments(TextDocument);
@@ -373,7 +383,7 @@ connection.onDefinition((params: TextDocumentPositionParams) => {
  */
 interface HedSuggestParams {
 	queries: string[];
-	schema?: string;
+	schema?: string | string[];
 	top?: number;
 	semantic?: boolean;
 }
@@ -383,8 +393,9 @@ connection.onRequest('hed/suggest', async (params: HedSuggestParams): Promise<Re
 		return {};
 	}
 	try {
+		// A request without a schema means the schema this server is configured for, not the engine default.
 		return await suggestBatch(params.queries, {
-			schema: params.schema,
+			schema: resolveSchemaOption(params.schema, schemaManager.getCurrentVersion()),
 			top: params.top,
 			semantic: params.semantic,
 		});

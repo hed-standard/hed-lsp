@@ -7,10 +7,11 @@
  * Usage:
  *   hed-suggest "button press"
  *   hed-suggest --json "button press" "visual flash"
- *   hed-suggest --schema 8.4.0 --top 5 "response"
+ *   hed-suggest --schema 8.5.0 --top 5 "response"
  */
 
-import { type SuggestionOptions, suggestBatch } from './suggestionEngine.js';
+import { DEFAULT_HED_SCHEMA } from './engine/schemaVersion.js';
+import { type SuggestionOptions, suggestBatch } from './engine/suggestionEngine.js';
 
 interface CliOptions extends SuggestionOptions {
 	json: boolean;
@@ -20,7 +21,7 @@ interface CliOptions extends SuggestionOptions {
 function parseArgs(args: string[]): { options: CliOptions; queries: string[] } {
 	const options: CliOptions = {
 		json: false,
-		schema: '8.4.0',
+		schema: DEFAULT_HED_SCHEMA,
 		top: 10,
 		semantic: false,
 		help: false,
@@ -37,7 +38,7 @@ function parseArgs(args: string[]): { options: CliOptions; queries: string[] } {
 				i++;
 				options.schema = args[i];
 			} else {
-				console.error('Warning: --schema requires a version argument, using default 8.4.0');
+				console.error(`Warning: --schema requires a version argument, using default ${DEFAULT_HED_SCHEMA}`);
 			}
 		} else if (arg === '--top' || arg === '-n') {
 			if (i + 1 < args.length && !args[i + 1].startsWith('-')) {
@@ -69,7 +70,7 @@ Usage:
 
 Options:
   -j, --json         Output results as JSON
-  -s, --schema VER   Use specific schema version (default: 8.4.0)
+  -s, --schema VER   Use specific schema version (default: ${DEFAULT_HED_SCHEMA})
   -n, --top N        Return top N suggestions (default: 10)
   --semantic         Use semantic search (requires model download)
   -h, --help         Show this help message

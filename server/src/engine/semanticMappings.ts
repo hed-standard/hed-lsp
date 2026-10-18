@@ -2,7 +2,9 @@
  * Semantic word mappings: common terms to their HED equivalents.
  * Maps words that users might type to similar HED tags.
  *
- * Used by both the LSP completion provider and the CLI tool.
+ * Used by both the LSP completion provider and the CLI tool. This is the
+ * suggestion map; the embedding anchors live in anchorKeywords.ts and their
+ * targets intentionally differ, so keep the two maps separate.
  */
 export const SEMANTIC_MAPPINGS: Record<string, string[]> = {
 	// Buildings and places

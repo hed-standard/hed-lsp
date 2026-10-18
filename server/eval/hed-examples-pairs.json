@@ -1,0 +1,2460 @@
+{
+  "version": 2,
+  "schema": "8.5.0",
+  "source": {
+    "name": "hed-examples",
+    "commit": "336a4fccaec59b4924c8f37c50967fa480538ccf",
+    "dirty": true,
+    "description": "BIDS sidecar level descriptions paired with HED strings"
+  },
+  "skipped": {
+    "parseErrors": 56,
+    "noLeafTags": 57
+  },
+  "pairs": [
+    {
+      "id": "pair-0001",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "A target in the attended to modality has been detected.",
+      "hed": "(Detect, Target)",
+      "expected": [
+        "Detect",
+        "Target"
+      ]
+    },
+    {
+      "id": "pair-0002",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "An event presentation that should not have been made.",
+      "hed": "Sensory-event, Sensory-presentation, Mishap",
+      "expected": [
+        "Mishap",
+        "Sensory-event",
+        "Sensory-presentation"
+      ]
+    },
+    {
+      "id": "pair-0003",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "Auditory and visual presentation of a hear cue.",
+      "hed": "Sensory-event, cue, (Word, Label/Word-hear), Auditory-presentation, Visual-presentation",
+      "expected": [
+        "Auditory-presentation",
+        "Cue",
+        "Sensory-event",
+        "Visual-presentation",
+        "Word"
+      ]
+    },
+    {
+      "id": "pair-0004",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "Auditory and visual presentation of a look cue.",
+      "hed": "Sensory-event, cue, (Word, Label/Word-look), Auditory-presentation, Visual-presentation",
+      "expected": [
+        "Auditory-presentation",
+        "Cue",
+        "Sensory-event",
+        "Visual-presentation",
+        "Word"
+      ]
+    },
+    {
+      "id": "pair-0005",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "Cue indicating participant should focus on auditory stimuli.",
+      "hed": "(Cue, Instructional, Focused-attention, Auditory-presentation)",
+      "expected": [
+        "Auditory-presentation",
+        "Cue",
+        "Focused-attention",
+        "Instructional"
+      ]
+    },
+    {
+      "id": "pair-0006",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "Cue indicating participant should focus on visual stimuli.",
+      "hed": "(Cue, Instructional, Focused-attention, Visual-presentation)",
+      "expected": [
+        "Cue",
+        "Focused-attention",
+        "Instructional",
+        "Visual-presentation"
+      ]
+    },
+    {
+      "id": "pair-0007",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "Experimental condition in which participant only pays attention to auditory stimuli.",
+      "hed": "(Condition-variable/Auditory-focus, (Focused-attention, Auditory-presentation))",
+      "expected": [
+        "Auditory-presentation",
+        "Focused-attention"
+      ]
+    },
+    {
+      "id": "pair-0008",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "Experimental condition in which participant only pays attention to visual stimuli.",
+      "hed": "(Condition-variable/Visual-focus, (Focused-attention, Visual-presentation))",
+      "expected": [
+        "Focused-attention",
+        "Visual-presentation"
+      ]
+    },
+    {
+      "id": "pair-0009",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "Experimental condition in which participant shifts attention based on instructions.",
+      "hed": "(Condition-variable/Shift-focus, (Switch-attention, Auditory-presentation, Visual-presentation))",
+      "expected": [
+        "Auditory-presentation",
+        "Switch-attention",
+        "Visual-presentation"
+      ]
+    },
+    {
+      "id": "pair-0010",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "Indicates that the stimulus should be attended to.",
+      "hed": "Attend-to",
+      "expected": [
+        "Attend-to"
+      ]
+    },
+    {
+      "id": "pair-0011",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "Participant presses a button.",
+      "hed": "Agent-action, Participant-response, (Experiment-participant, (Press, Mouse-button))",
+      "expected": [
+        "Agent-action",
+        "Experiment-participant",
+        "Mouse-button",
+        "Participant-response",
+        "Press"
+      ]
+    },
+    {
+      "id": "pair-0012",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "Participant should focus only on auditory stimuli",
+      "hed": "(Selective-attention, Auditory-presentation)",
+      "expected": [
+        "Auditory-presentation",
+        "Selective-attention"
+      ]
+    },
+    {
+      "id": "pair-0013",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "Participant should focus only on visual stimuli.",
+      "hed": "(Selective-attention, Visual-presentation)",
+      "expected": [
+        "Selective-attention",
+        "Visual-presentation"
+      ]
+    },
+    {
+      "id": "pair-0014",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "Pause the recording of the experiment.",
+      "hed": "Experiment-control, Pause",
+      "expected": [
+        "Experiment-control",
+        "Pause"
+      ]
+    },
+    {
+      "id": "pair-0015",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "Presentation of a 500 Hz tone.",
+      "hed": "Sensory-event, Experimental-stimulus, Auditory-presentation, (Tone, Frequency/500 Hz)",
+      "expected": [
+        "Auditory-presentation",
+        "Experimental-stimulus",
+        "Sensory-event",
+        "Tone"
+      ]
+    },
+    {
+      "id": "pair-0016",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "Presentation of a 550 Hz tone.",
+      "hed": "Sensory-event, Experimental-stimulus, Auditory-presentation, (Tone, Frequency/550 Hz)",
+      "expected": [
+        "Auditory-presentation",
+        "Experimental-stimulus",
+        "Sensory-event",
+        "Tone"
+      ]
+    },
+    {
+      "id": "pair-0017",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "Presentation of a dark blue square.",
+      "hed": "Sensory-event, Experimental-stimulus, Visual-presentation, (Square, DarkBlue, (Center-of, Computer-screen))",
+      "expected": [
+        "Center-of",
+        "Computer-screen",
+        "DarkBlue",
+        "Experimental-stimulus",
+        "Sensory-event",
+        "Square",
+        "Visual-presentation"
+      ]
+    },
+    {
+      "id": "pair-0018",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "Presentation of a light blue square.",
+      "hed": "Sensory-event, Experimental-stimulus, Visual-presentation, (Square, LightBlue, (Center-of, Computer-screen))",
+      "expected": [
+        "Center-of",
+        "Computer-screen",
+        "Experimental-stimulus",
+        "LightBlue",
+        "Sensory-event",
+        "Square",
+        "Visual-presentation"
+      ]
+    },
+    {
+      "id": "pair-0019",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "Stimulus that is a non-target.",
+      "hed": "Non-target",
+      "expected": [
+        "Non-target"
+      ]
+    },
+    {
+      "id": "pair-0020",
+      "dataset": "datasets/eeg_ds002893s_hed_attention_shift",
+      "split": "dev",
+      "query": "Stimulus that is designated as the one to be looked for.",
+      "hed": "Target, Oddball",
+      "expected": [
+        "Oddball",
+        "Target"
+      ]
+    },
+    {
+      "id": "pair-0021",
+      "dataset": "datasets/eeg_ds003645s_hed",
+      "split": "test",
+      "query": "Display a face at the beginning of the recording.",
+      "hed": "Sensory-event, Experimental-stimulus, (Def/Face-image, Onset), (Def/Blink-inhibition-task,Onset), (Def/Fixation-task, Onset)",
+      "expected": [
+        "Experimental-stimulus",
+        "Onset",
+        "Sensory-event"
+      ]
+    },
+    {
+      "id": "pair-0022",
+      "dataset": "datasets/eeg_ds003645s_hed",
+      "split": "test",
+      "query": "Display a face to mark end of pre-stimulus and start of blink-inhibition.",
+      "hed": "Sensory-event, Experimental-stimulus, (Def/Face-image, Onset), (Def/Blink-inhibition-task,Onset),(Def/Cross-only, Offset)",
+      "expected": [
+        "Experimental-stimulus",
+        "Offset",
+        "Onset",
+        "Sensory-event"
+      ]
+    },
+    {
+      "id": "pair-0023",
+      "dataset": "datasets/eeg_ds003645s_hed",
+      "split": "test",
+      "query": "Display a white circle to mark end of the stimulus and blink inhibition.",
+      "hed": "Sensory-event, (Intended-effect, Cue), (Def/Circle-only, Onset), (Def/Face-image, Offset), (Def/Blink-inhibition-task, Offset), (Def/Fixation-task, Offset)",
+      "expected": [
+        "Cue",
+        "Intended-effect",
+        "Offset",
+        "Onset",
+        "Sensory-event"
+      ]
+    },
+    {
+      "id": "pair-0024",
+      "dataset": "datasets/eeg_ds003645s_hed",
+      "split": "test",
+      "query": "Display only a white cross to mark start of trial and fixation.",
+      "hed": "Sensory-event, (Intended-effect, Cue), (Def/Cross-only, Onset), (Def/Fixation-task, Onset),  (Def/Circle-only, Offset)",
+      "expected": [
+        "Cue",
+        "Intended-effect",
+        "Offset",
+        "Onset",
+        "Sensory-event"
+      ]
+    },
+    {
+      "id": "pair-0025",
+      "dataset": "datasets/eeg_ds003645s_hed",
+      "split": "test",
+      "query": "Experiment participant presses a key with left index finger.",
+      "hed": "Agent-action, Participant-response, Def/Press-left-finger",
+      "expected": [
+        "Agent-action",
+        "Participant-response"
+      ]
+    },
+    {
+      "id": "pair-0026",
+      "dataset": "datasets/eeg_ds003645s_hed",
+      "split": "test",
+      "query": "Experiment participant presses a key with right index finger.",
+      "hed": "Agent-action, Participant-response, Def/Press-right-finger",
+      "expected": [
+        "Agent-action",
+        "Participant-response"
+      ]
+    },
+    {
+      "id": "pair-0027",
+      "dataset": "datasets/eeg_ds003645s_hed",
+      "split": "test",
+      "query": "Experiment participant presses both keys .",
+      "hed": "Agent-action, Indeterminate-action, (Press, Keyboard-key)",
+      "expected": [
+        "Agent-action",
+        "Indeterminate-action",
+        "Keyboard-key",
+        "Press"
+      ]
+    },
+    {
+      "id": "pair-0028",
+      "dataset": "datasets/eeg_ds003645s_hed",
+      "split": "test",
+      "query": "Setup for experiment with pressing key with left index finger means a face with above average symmetry.",
+      "hed": "Experiment-structure, (Def/Left-sym-cond, Onset), (Def/Initialize-recording, Onset)",
+      "expected": [
+        "Experiment-structure",
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0029",
+      "dataset": "datasets/eeg_ds003645s_hed",
+      "split": "test",
+      "query": "Setup for experiment with pressing key with right index finger means a face with above average symmetry.",
+      "hed": "Experiment-structure, (Def/Right-sym-cond, Onset), (Def/Initialize-recording, Onset)",
+      "expected": [
+        "Experiment-structure",
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0030",
+      "dataset": "datasets/eeg_ds003645s_hed_column",
+      "split": "dev",
+      "query": "female",
+      "hed": "Female",
+      "expected": [
+        "Female"
+      ]
+    },
+    {
+      "id": "pair-0031",
+      "dataset": "datasets/eeg_ds003645s_hed_column",
+      "split": "dev",
+      "query": "male",
+      "hed": "Male",
+      "expected": [
+        "Male"
+      ]
+    },
+    {
+      "id": "pair-0032",
+      "dataset": "datasets/eeg_ds003645s_hed_demo",
+      "split": "test",
+      "query": "A well-known face belonging to a famous person.",
+      "hed": "(Famous, Face)",
+      "expected": [
+        "Face",
+        "Famous"
+      ]
+    },
+    {
+      "id": "pair-0033",
+      "dataset": "datasets/eeg_ds003645s_hed_demo",
+      "split": "test",
+      "query": "Alert",
+      "hed": "Alert",
+      "expected": [
+        "Alert"
+      ]
+    },
+    {
+      "id": "pair-0034",
+      "dataset": "datasets/eeg_ds003645s_hed_demo",
+      "split": "test",
+      "query": "Display a white circle to mark end of the stimulus and blink inhibition.",
+      "hed": "Sensory-event, (Intended-effect, Cue), (Def/Circle-only, Onset), (Def/Face-image, Offset)",
+      "expected": [
+        "Cue",
+        "Intended-effect",
+        "Offset",
+        "Onset",
+        "Sensory-event"
+      ]
+    },
+    {
+      "id": "pair-0035",
+      "dataset": "datasets/eeg_ds003645s_hed_demo",
+      "split": "test",
+      "query": "Display only a white cross to mark start of trial and fixation.",
+      "hed": "Sensory-event, (Intended-effect, Cue), (Def/Cross-only, Onset),  (Def/Circle-only, Offset)",
+      "expected": [
+        "Cue",
+        "Intended-effect",
+        "Offset",
+        "Onset",
+        "Sensory-event"
+      ]
+    },
+    {
+      "id": "pair-0036",
+      "dataset": "datasets/eeg_ds003645s_hed_demo",
+      "split": "test",
+      "query": "Extremely alert",
+      "hed": "(Alert, High)",
+      "expected": [
+        "Alert",
+        "High"
+      ]
+    },
+    {
+      "id": "pair-0037",
+      "dataset": "datasets/eeg_ds003645s_hed_demo",
+      "split": "test",
+      "query": "Extremely sleepy, can't keep awake",
+      "hed": "Asleep",
+      "expected": [
+        "Asleep"
+      ]
+    },
+    {
+      "id": "pair-0038",
+      "dataset": "datasets/eeg_ds003645s_hed_demo",
+      "split": "test",
+      "query": "Familiar because seen before but not famous.",
+      "hed": "(Familiar, Face)",
+      "expected": [
+        "Face",
+        "Familiar"
+      ]
+    },
+    {
+      "id": "pair-0039",
+      "dataset": "datasets/eeg_ds003645s_hed_demo",
+      "split": "test",
+      "query": "Neither alert nor sleepy",
+      "hed": "Awake",
+      "expected": [
+        "Awake"
+      ]
+    },
+    {
+      "id": "pair-0040",
+      "dataset": "datasets/eeg_ds003645s_hed_demo",
+      "split": "test",
+      "query": "Not known at all.",
+      "hed": "(Unfamiliar, Face)",
+      "expected": [
+        "Face",
+        "Unfamiliar"
+      ]
+    },
+    {
+      "id": "pair-0041",
+      "dataset": "datasets/eeg_ds003645s_hed_demo",
+      "split": "test",
+      "query": "Rather alert",
+      "hed": "(Alert, Low)",
+      "expected": [
+        "Alert",
+        "Low"
+      ]
+    },
+    {
+      "id": "pair-0042",
+      "dataset": "datasets/eeg_ds003645s_hed_demo",
+      "split": "test",
+      "query": "Setup for experiment where pressing key with left index finger means a face with above average symmetry.",
+      "hed": "Experiment-structure, Condition-variable/Left-key-for-sym-face, Description/Left index finger key press indicates a face with above average symmetry.",
+      "expected": [
+        "Experiment-structure"
+      ]
+    },
+    {
+      "id": "pair-0043",
+      "dataset": "datasets/eeg_ds003645s_hed_demo",
+      "split": "test",
+      "query": "Setup for experiment where pressing key with right index finger means a face with above average symmetry.",
+      "hed": "Experiment-structure, Condition-variable/Right-key-for-sym-face, Description/Right index finger key press indicates a face with above average symmetry.",
+      "expected": [
+        "Experiment-structure"
+      ]
+    },
+    {
+      "id": "pair-0044",
+      "dataset": "datasets/eeg_ds003645s_hed_demo",
+      "split": "test",
+      "query": "Sleepy but no effort to keep awake",
+      "hed": "Drowsy",
+      "expected": [
+        "Drowsy"
+      ]
+    },
+    {
+      "id": "pair-0045",
+      "dataset": "datasets/eeg_ds003645s_hed_demo",
+      "split": "test",
+      "query": "Sleepy, but some effort to keep awake",
+      "hed": "(Drowsy, Medium)",
+      "expected": [
+        "Drowsy",
+        "Medium"
+      ]
+    },
+    {
+      "id": "pair-0046",
+      "dataset": "datasets/eeg_ds003645s_hed_demo",
+      "split": "test",
+      "query": "Some signs of sleepiness",
+      "hed": "(Drowsy, Low)",
+      "expected": [
+        "Drowsy",
+        "Low"
+      ]
+    },
+    {
+      "id": "pair-0047",
+      "dataset": "datasets/eeg_ds003645s_hed_demo",
+      "split": "test",
+      "query": "Very alert",
+      "hed": "(Alert, Medium)",
+      "expected": [
+        "Alert",
+        "Medium"
+      ]
+    },
+    {
+      "id": "pair-0048",
+      "dataset": "datasets/eeg_ds003645s_hed_demo",
+      "split": "test",
+      "query": "Very sleepy, great effort to keep awake, fighting sleep",
+      "hed": "(Drowsy, High)",
+      "expected": [
+        "Drowsy",
+        "High"
+      ]
+    },
+    {
+      "id": "pair-0049",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "All at high-perturbation rate with low visual complexity.",
+      "hed": "(Def/Tile-change,  (Condition-Variable/High-perturbation-rate, Condition-variable/Low-visual-complexity, Label/Tile0), Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0050",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "All at high-perturbation rate.",
+      "hed": "(Def/Tile-change,  (Condition-Variable/High_perturbation_rate, Condition-variable/Low_visual_complexity), Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0051",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Beginning of a cue tone instance.",
+      "hed": "(Def/Cue-sound, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0052",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Beginning of non-cue tone instance.",
+      "hed": "(Def/Non-cue-sound, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0053",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Beginning of non-cue tone instance.",
+      "hed": "(Def/Non-cue-sound, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0054",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Driver has completed the lane position correction.",
+      "hed": "(Def/Course-correction, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0055",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Driver starts correcting lane position.",
+      "hed": "(Def/Course-correction, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0056",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "End driving car forward.",
+      "hed": "(Def/Drive-forward, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0057",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "End driving car forward.",
+      "hed": "(Def/Drive-vehicle, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0058",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "End of a cue tone instance.",
+      "hed": "(Def/Cue-sound, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0059",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "End of a left perturbation cued by a sound.",
+      "hed": "(Def/Left-perturb, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0060",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "End of a right perturbation cued by a sound.",
+      "hed": "(Def/Right-perturb, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0061",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "End of a trial",
+      "hed": "(Def/Trial-marker, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0062",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "End of a trial.",
+      "hed": "(Def/Trial-marker, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0063",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "End of left perturbation",
+      "hed": "(Def/Left-perturb, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0064",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "End of left perturbation.",
+      "hed": "(Def/Left-perturb, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0065",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "End of non-cue tone instance.",
+      "hed": "(Def/Non-cue-sound, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0066",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "End of right perturbation",
+      "hed": "(Def/Right-perturb, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0067",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "End of right perturbation.",
+      "hed": "(Def/Right-perturb, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0068",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "End showing a 25 MPH sign.",
+      "hed": "(Def/Show-25mph-sign, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0069",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "End showing a 45 MPH sign.",
+      "hed": "(Def/Show-speed-sign/45, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0070",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Left perturbation no duration - considered a recording error.",
+      "hed": "(Experiment-control, Mishap)",
+      "expected": [
+        "Experiment-control",
+        "Mishap"
+      ]
+    },
+    {
+      "id": "pair-0071",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Left perturbation with cue no duration - considered a recording error.",
+      "hed": "(Experiment-control, Mishap)",
+      "expected": [
+        "Experiment-control",
+        "Mishap"
+      ]
+    },
+    {
+      "id": "pair-0072",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Non-cue tone zero duration - considered a recording error.",
+      "hed": "(Experiment-control, Mishap)",
+      "expected": [
+        "Experiment-control",
+        "Mishap"
+      ]
+    },
+    {
+      "id": "pair-0073",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Right perturation no duration - considered a recording error.",
+      "hed": "(Experiment-control, Mishap)",
+      "expected": [
+        "Experiment-control",
+        "Mishap"
+      ]
+    },
+    {
+      "id": "pair-0074",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Right perturbation with cue no duration - considered a recording error.",
+      "hed": "(Experiment-control, Mishap)",
+      "expected": [
+        "Experiment-control",
+        "Mishap"
+      ]
+    },
+    {
+      "id": "pair-0075",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Scenario is a straight road",
+      "hed": "(Paved-terrain, Label/Straight_road)",
+      "expected": [
+        "Paved-terrain"
+      ]
+    },
+    {
+      "id": "pair-0076",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Start driving car forward.",
+      "hed": "(Def/Drive-forward, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0077",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Start driving car forward.",
+      "hed": "(Def/Drive-vehicle, (Forward), Onset)",
+      "expected": [
+        "Forward",
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0078",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Start of a left perturbation cued by a sound.",
+      "hed": "(Def/Left-perturb, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0079",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Start of a left perturbation cued by a sound.",
+      "hed": "(Def/Left-perturb, Onset), Def/Cue-sound",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0080",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Start of a right perturbation cued by a sound.",
+      "hed": "(Def/Right-perturb, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0081",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Start of a right perturbation cued by a sound.",
+      "hed": "(Def/Right-perturb, Onset), Def/Cue-sound",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0082",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Start of a trial",
+      "hed": "(Def/Trial-marker, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0083",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Start of a trial.",
+      "hed": "(Def/Trial-marker, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0084",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Start of left perturbation",
+      "hed": "(Def/Left-perturb, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0085",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Start of left perturbation.",
+      "hed": "(Def/Left-perturb, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0086",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Start of right perturbation",
+      "hed": "(Def/Right-perturb, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0087",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Start of right perturbation.",
+      "hed": "(Def/Right-perturb, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0088",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Start showing a 25 MPH sign.",
+      "hed": "(Def/Show-25mph-sign, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0089",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Start showing a 45 MPH sign.",
+      "hed": "(Def/Show-speed-sign/45, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0090",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Vehicle approached within 3 meters of obstacle resulting in near miss.",
+      "hed": "Sensory-event, Visual-presentation, Near-miss, (Object, (Close-to, Vehicle))",
+      "expected": [
+        "Close-to",
+        "Near-miss",
+        "Object",
+        "Sensory-event",
+        "Vehicle",
+        "Visual-presentation"
+      ]
+    },
+    {
+      "id": "pair-0091",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Vehicle moves into the defined lane of travel from either the left or right side of the lane",
+      "hed": "Agent-action, Experiment-participant, (Operate, (Vehicle, (Within, Lane)))",
+      "expected": [
+        "Agent-action",
+        "Experiment-participant",
+        "Lane",
+        "Operate",
+        "Vehicle",
+        "Within"
+      ]
+    },
+    {
+      "id": "pair-0092",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Vehicle moves into the defined lane of travel from either the left or right side of the lane.",
+      "hed": "Agent-action, Experiment-participant, (Operate, (Vehicle, (Within, Lane)))",
+      "expected": [
+        "Agent-action",
+        "Experiment-participant",
+        "Lane",
+        "Operate",
+        "Vehicle",
+        "Within"
+      ]
+    },
+    {
+      "id": "pair-0093",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Vehicle moves left of the defined lane of travel",
+      "hed": "Agent-action, Experiment-participant, (Operate, (Vehicle, (To-left-of, Lane)))",
+      "expected": [
+        "Agent-action",
+        "Experiment-participant",
+        "Lane",
+        "Operate",
+        "To-left-of",
+        "Vehicle"
+      ]
+    },
+    {
+      "id": "pair-0094",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Vehicle moves left of the defined lane of travel.",
+      "hed": "Agent-action, Experiment-participant, (Operate, (Vehicle, (To-left-of, Lane)))",
+      "expected": [
+        "Agent-action",
+        "Experiment-participant",
+        "Lane",
+        "Operate",
+        "To-left-of",
+        "Vehicle"
+      ]
+    },
+    {
+      "id": "pair-0095",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Vehicle moves right of the defined lane of travel",
+      "hed": "Agent-action, Experiment-participant, (Operate, (Vehicle, (To-right-of, Lane)))",
+      "expected": [
+        "Agent-action",
+        "Experiment-participant",
+        "Lane",
+        "Operate",
+        "To-right-of",
+        "Vehicle"
+      ]
+    },
+    {
+      "id": "pair-0096",
+      "dataset": "datasets/eeg_ds004105s_hed",
+      "split": "dev",
+      "query": "Vehicle moves right of the defined lane of travel.",
+      "hed": "Agent-action, Experiment-participant, (Operate, (Vehicle, (To-right-of, Lane)))",
+      "expected": [
+        "Agent-action",
+        "Experiment-participant",
+        "Lane",
+        "Operate",
+        "To-right-of",
+        "Vehicle"
+      ]
+    },
+    {
+      "id": "pair-0097",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Button press allow access.",
+      "hed": "Agent-action, Participant-response, (Press, Push-button), (Allow, Label/Area_access)",
+      "expected": [
+        "Agent-action",
+        "Allow",
+        "Participant-response",
+        "Press",
+        "Push-button"
+      ]
+    },
+    {
+      "id": "pair-0098",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Button press deny access.",
+      "hed": "Agent-action, Participant-response, (Press, Push-button), (Deny, Label/Area_access)",
+      "expected": [
+        "Agent-action",
+        "Deny",
+        "Participant-response",
+        "Press",
+        "Push-button"
+      ]
+    },
+    {
+      "id": "pair-0099",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "End advanced guard duty scenario.",
+      "hed": "(Def/Advanced-guard-scenario, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0100",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "End advanced guard duty scenario.",
+      "hed": "(Def/Experiment/Advanced-guard-scenario, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0101",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "End of EEG system failure.",
+      "hed": "(Def/System-failure/EEG, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0102",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "End of eye tracking system failure.",
+      "hed": "(Def/System-failure/Eye-tracking, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0103",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "End of system failure.",
+      "hed": "(Def/System-failure, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0104",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "End showing image incorrect access level.",
+      "hed": "(Def/Show-image, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0105",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "End showing image incorrect access level.",
+      "hed": "(Def/Show-image-invalid-level, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0106",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "End showing image of expired ID.",
+      "hed": "(Def/Show-image, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0107",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "End showing image of expired ID.",
+      "hed": "(Def/Show-image-invalid-expired, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0108",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "End showing image with no watermark.",
+      "hed": "(Def/Show-image, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0109",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "End showing image with no watermark.",
+      "hed": "(Def/Show-image-invalid-watermark, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0110",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "End showing image with photo ID mismatch.",
+      "hed": "(Def/Show-image, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0111",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "End showing image with photo ID mismatch.",
+      "hed": "(Def/Show-image-invalid-mismatch, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0112",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "End showing image with suspicious DOB.",
+      "hed": "(Def/Show-image, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0113",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "End showing image with suspicious DOB.",
+      "hed": "(Def/Show-image-invalid-dob, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0114",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "End showing of a valid image",
+      "hed": "(Def/Show-image, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0115",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "End showing of a valid image",
+      "hed": "(Def/Show-image-valid, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0116",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "End taking survey.",
+      "hed": "(Def/Take-survey, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0117",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start advanced guard duty scenario.",
+      "hed": "(Def/Advanced-guard-scenario, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0118",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start advanced guard duty scenario.",
+      "hed": "(Def/Experiment/Advanced-guard-scenario, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0119",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start block of images from Area A.",
+      "hed": "(Def/Environmental-area/Area-A, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0120",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start block of images from Area A.",
+      "hed": "(Def/Room-area/Area_A, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0121",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start block of images from Area B.",
+      "hed": "(Def/Environmental-area/Area-B, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0122",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start block of images from Area B.",
+      "hed": "(Def/Room-area/Area_B, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0123",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start block of images from Area C.",
+      "hed": "(Def/Environmental-area/Area-C, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0124",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start block of images from Area C.",
+      "hed": "(Def/Room-area/Area_C, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0125",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start block of images from Area D.",
+      "hed": "(Def/Environmental-area/Area-D, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0126",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start block of images from Area D.",
+      "hed": "(Def/Room-area/Area_D, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0127",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start block of images from Area E.",
+      "hed": "(Def/Environmental-area/Area-E, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0128",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start block of images from Area E.",
+      "hed": "(Def/Room-area/Area_E, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0129",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start of EEG system failure.",
+      "hed": "(Def/System-failure/EEG, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0130",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start of a system failure.",
+      "hed": "(Def/System-failure, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0131",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start of eye tracking system failure.",
+      "hed": "(Def/System-failure/Eye-tracking, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0132",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start showing image incorrect access level.",
+      "hed": "(Def/Show-image, (Invalid, Label/No_access_to_level), Onset)",
+      "expected": [
+        "Invalid",
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0133",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start showing image incorrect access level.",
+      "hed": "(Def/Show-image-invalid-level, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0134",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start showing image of expired ID",
+      "hed": "(Def/Show-image, (Invalid, Label/Expired_ID), Onset)",
+      "expected": [
+        "Invalid",
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0135",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start showing image of expired ID",
+      "hed": "(Def/Show-image-invalid-expired, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0136",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start showing image with no watermark.",
+      "hed": "(Def/Show-image, (Invalid, Label/No_watermark), Onset)",
+      "expected": [
+        "Invalid",
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0137",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start showing image with no watermark.",
+      "hed": "(Def/Show-image-invalid-watermark, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0138",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start showing image with photo ID mismatch.",
+      "hed": "(Def/Show-image, (Invalid, Label/Photo_mismatch), Onset)",
+      "expected": [
+        "Invalid",
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0139",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start showing image with photo ID mismatch.",
+      "hed": "(Def/Show-image-invalid-mismatch, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0140",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start showing image with suspicious DOB.",
+      "hed": "(Def/Show-image, (Invalid, Label/Suspicious_DOB), Onset)",
+      "expected": [
+        "Invalid",
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0141",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start showing image with suspicious DOB.",
+      "hed": "(Def/Show-image-invalid-dob, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0142",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start showing of a valid image",
+      "hed": "(Def/Show-image, (Valid), Onset)",
+      "expected": [
+        "Onset",
+        "Valid"
+      ]
+    },
+    {
+      "id": "pair-0143",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start showing of a valid image",
+      "hed": "(Def/Show-image-valid, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0144",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Start taking survey",
+      "hed": "(Def/Take-survey, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0145",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Stop block of images from Area A.",
+      "hed": "(Def/Environmental-area/Area-A, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0146",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Stop block of images from Area A.",
+      "hed": "(Def/Room-area/Area_A, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0147",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Stop block of images from Area B.",
+      "hed": "(Def/Environmental-area/Area-B, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0148",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Stop block of images from Area B.",
+      "hed": "(Def/Room-area/Area_B, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0149",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Stop block of images from Area C.",
+      "hed": "(Def/Environmental-area/Area-C, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0150",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Stop block of images from Area C.",
+      "hed": "(Def/Room-area/Area_C, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0151",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Stop block of images from Area D.",
+      "hed": "(Def/Environmental-area/Area-D, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0152",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Stop block of images from Area D.",
+      "hed": "(Def/Room-area/Area_D, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0153",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Stop block of images from Area E.",
+      "hed": "(Def/Environmental-area/Area-E, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0154",
+      "dataset": "datasets/eeg_ds004106s_hed",
+      "split": "test",
+      "query": "Stop block of images from Area E.",
+      "hed": "(Def/Room-area/Area_E, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0155",
+      "dataset": "datasets/eeg_ds004117s_hed_sternberg",
+      "split": "dev",
+      "query": "Cue to indicate that a probe letter is coming.",
+      "hed": "(Cue, Recall)",
+      "expected": [
+        "Cue",
+        "Recall"
+      ]
+    },
+    {
+      "id": "pair-0156",
+      "dataset": "datasets/eeg_ds004117s_hed_sternberg",
+      "split": "dev",
+      "query": "Feedback that the last participant response was correct.",
+      "hed": "(Feedback, Correct-action)",
+      "expected": [
+        "Correct-action",
+        "Feedback"
+      ]
+    },
+    {
+      "id": "pair-0157",
+      "dataset": "datasets/eeg_ds004117s_hed_sternberg",
+      "split": "dev",
+      "query": "Feedback that the last participant response was incorrect.",
+      "hed": "(Feedback, Incorrect-action)",
+      "expected": [
+        "Feedback",
+        "Incorrect-action"
+      ]
+    },
+    {
+      "id": "pair-0158",
+      "dataset": "datasets/eeg_ds004117s_hed_sternberg",
+      "split": "dev",
+      "query": "Indicates participant should fixate.",
+      "hed": "(Instructional, Fixate)",
+      "expected": [
+        "Fixate",
+        "Instructional"
+      ]
+    },
+    {
+      "id": "pair-0159",
+      "dataset": "datasets/eeg_ds004117s_hed_sternberg",
+      "split": "dev",
+      "query": "Participant correctly indicated that the probe was a target.",
+      "hed": "(Target, Correct-action)",
+      "expected": [
+        "Correct-action",
+        "Target"
+      ]
+    },
+    {
+      "id": "pair-0160",
+      "dataset": "datasets/eeg_ds004117s_hed_sternberg",
+      "split": "dev",
+      "query": "Participant indicated that the probe was a target but the probe was not a target.",
+      "hed": "(Target, Incorrect-action)",
+      "expected": [
+        "Incorrect-action",
+        "Target"
+      ]
+    },
+    {
+      "id": "pair-0161",
+      "dataset": "datasets/eeg_ds004117s_hed_sternberg",
+      "split": "dev",
+      "query": "The participant correctly indicated that the probe was not a target.",
+      "hed": "(Non-target, Correct-action)",
+      "expected": [
+        "Correct-action",
+        "Non-target"
+      ]
+    },
+    {
+      "id": "pair-0162",
+      "dataset": "datasets/eeg_ds004117s_hed_sternberg",
+      "split": "dev",
+      "query": "The participant indicated that the probe was not a target but the probe was a target.",
+      "hed": "(Non-target, Incorrect-action)",
+      "expected": [
+        "Incorrect-action",
+        "Non-target"
+      ]
+    },
+    {
+      "id": "pair-0163",
+      "dataset": "datasets/eeg_ds004117s_hed_sternberg",
+      "split": "dev",
+      "query": "The participant presses a button to indicate ready.",
+      "hed": "(Appropriate-action, Label/Indicate-ready)",
+      "expected": [
+        "Appropriate-action"
+      ]
+    },
+    {
+      "id": "pair-0164",
+      "dataset": "datasets/eeg_ds004117s_hed_sternberg",
+      "split": "dev",
+      "query": "The probe letter was a target to be remembered.",
+      "hed": "(Cue, Target)",
+      "expected": [
+        "Cue",
+        "Target"
+      ]
+    },
+    {
+      "id": "pair-0165",
+      "dataset": "datasets/eeg_ds004117s_hed_sternberg",
+      "split": "dev",
+      "query": "The probe letter was not shown in the trial.",
+      "hed": "(Cue, Non-target)",
+      "expected": [
+        "Cue",
+        "Non-target"
+      ]
+    },
+    {
+      "id": "pair-0166",
+      "dataset": "datasets/eeg_ds004117s_hed_sternberg",
+      "split": "dev",
+      "query": "This event is part of a bad or incomplete trial. Some of the expected trial events are missing.",
+      "hed": "(Invalid, Experimental-trial)",
+      "expected": [
+        "Experimental-trial",
+        "Invalid"
+      ]
+    },
+    {
+      "id": "pair-0167",
+      "dataset": "datasets/eeg_ds004117s_hed_sternberg",
+      "split": "dev",
+      "query": "This probe letter is a target.",
+      "hed": "Target",
+      "expected": [
+        "Target"
+      ]
+    },
+    {
+      "id": "pair-0168",
+      "dataset": "datasets/eeg_ds004117s_hed_sternberg",
+      "split": "dev",
+      "query": "This probe letter is not a target.",
+      "hed": "Non-target",
+      "expected": [
+        "Non-target"
+      ]
+    },
+    {
+      "id": "pair-0169",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "End of experimental block",
+      "hed": "(Def/Exp_block, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0170",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "End of rest block",
+      "hed": "(Def/Rest_block, Offset)",
+      "expected": [
+        "Offset"
+      ]
+    },
+    {
+      "id": "pair-0171",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "End of the pre-scan training block",
+      "hed": "Experiment-structure",
+      "expected": [
+        "Experiment-structure"
+      ]
+    },
+    {
+      "id": "pair-0172",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Experiment-controller used keyboard",
+      "hed": "Agent-action, (((Human-agent, Experiment-controller)), (Press , Push-button))",
+      "expected": [
+        "Agent-action",
+        "Experiment-controller",
+        "Human-agent",
+        "Press",
+        "Push-button"
+      ]
+    },
+    {
+      "id": "pair-0173",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Start of experimental block",
+      "hed": "(Def/Exp_block, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0174",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Start of rest block",
+      "hed": "(Def/Rest_block, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0175",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Start of the survey block",
+      "hed": "(Def/Survey_block, Onset)",
+      "expected": [
+        "Onset"
+      ]
+    },
+    {
+      "id": "pair-0176",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Subject is presented with black central dot indicating they should fixate",
+      "hed": "Sensory-event, (Visual-presentation, Computer-screen), (Background-view, White), ((Circle, Black), Foreground-view, (Center-of, Computer-screen)), (Instructional, (Fixate, Circle))",
+      "expected": [
+        "Background-view",
+        "Black",
+        "Center-of",
+        "Circle",
+        "Computer-screen",
+        "Fixate",
+        "Foreground-view",
+        "Instructional",
+        "Sensory-event",
+        "Visual-presentation",
+        "White"
+      ]
+    },
+    {
+      "id": "pair-0177",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Subject is presented with blank screen for longer period of time indicating they should do nothing for a while",
+      "hed": "Sensory-event, (Visual-presentation, Computer-screen), (Background-view, White), (Instructional, (Rest))",
+      "expected": [
+        "Background-view",
+        "Computer-screen",
+        "Instructional",
+        "Rest",
+        "Sensory-event",
+        "Visual-presentation",
+        "White"
+      ]
+    },
+    {
+      "id": "pair-0178",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Subject is presented with brief white screen indicating they should be ready for the next trial",
+      "hed": "Sensory-event, (Visual-presentation, Computer-screen), (Background-view, White), (Instructional, (Attend-to, Computer-screen))",
+      "expected": [
+        "Attend-to",
+        "Background-view",
+        "Computer-screen",
+        "Instructional",
+        "Sensory-event",
+        "Visual-presentation",
+        "White"
+      ]
+    },
+    {
+      "id": "pair-0179",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Subject is presented with information on how they performed during the last experimental block",
+      "hed": "Sensory-event, (Visual-presentation, Computer-screen), (Textblock, Black, Foreground-view), (Background-view, White), Feedback",
+      "expected": [
+        "Background-view",
+        "Black",
+        "Computer-screen",
+        "Feedback",
+        "Foreground-view",
+        "Sensory-event",
+        "Textblock",
+        "Visual-presentation",
+        "White"
+      ]
+    },
+    {
+      "id": "pair-0180",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Subject is presented with left pointing red arrow indicating a stop trial",
+      "hed": "Sensory-event, Experimental-stimulus, (Visual-presentation, Computer-screen), (2D-shape/Arrow, Leftward), (Red, Stop-signal)",
+      "expected": [
+        "Arrow",
+        "Computer-screen",
+        "Experimental-stimulus",
+        "Leftward",
+        "Red",
+        "Sensory-event",
+        "Stop-signal",
+        "Visual-presentation"
+      ]
+    },
+    {
+      "id": "pair-0181",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Subject is presented with left pointing white arrow indicating they should press the left button",
+      "hed": "Sensory-event, Experimental-stimulus, (Visual-presentation, Computer-screen), (2D-shape/Arrow, Leftward), (White, Go-signal)",
+      "expected": [
+        "Arrow",
+        "Computer-screen",
+        "Experimental-stimulus",
+        "Go-signal",
+        "Leftward",
+        "Sensory-event",
+        "Visual-presentation",
+        "White"
+      ]
+    },
+    {
+      "id": "pair-0182",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Subject is presented with right pointing red arrow indicating a stop-trial",
+      "hed": "Sensory-event, Experimental-stimulus, (Visual-presentation, Computer-screen), (2D-shape/Arrow, Rightward), (Red, Stop-signal)",
+      "expected": [
+        "Arrow",
+        "Computer-screen",
+        "Experimental-stimulus",
+        "Red",
+        "Rightward",
+        "Sensory-event",
+        "Stop-signal",
+        "Visual-presentation"
+      ]
+    },
+    {
+      "id": "pair-0183",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Subject is presented with right pointing white arrow indicating they should press the right button",
+      "hed": "Sensory-event, Experimental-stimulus, (Visual-presentation, Computer-screen), (2D-shape/Arrow, Rightward), (White, Go-signal)",
+      "expected": [
+        "Arrow",
+        "Computer-screen",
+        "Experimental-stimulus",
+        "Go-signal",
+        "Rightward",
+        "Sensory-event",
+        "Visual-presentation",
+        "White"
+      ]
+    },
+    {
+      "id": "pair-0184",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Subject is questioned on how frustrated they felt during the experiment",
+      "hed": "Sensory-event, (Visual-presentation, Computer-screen), (Textblock, Black, Foreground-view), (Background-view, White), (Query, (Agent-emotional-state/Frustrated))",
+      "expected": [
+        "Background-view",
+        "Black",
+        "Computer-screen",
+        "Foreground-view",
+        "Frustrated",
+        "Query",
+        "Sensory-event",
+        "Textblock",
+        "Visual-presentation",
+        "White"
+      ]
+    },
+    {
+      "id": "pair-0185",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Subject is questioned on how motivated they felt after making errors",
+      "hed": "Sensory-event, (Visual-presentation, Computer-screen), (Textblock, Black, Foreground-view), (Background-view, White), (Query, Label/How-errors-affect-motivation-next-trials)",
+      "expected": [
+        "Background-view",
+        "Black",
+        "Computer-screen",
+        "Foreground-view",
+        "Query",
+        "Sensory-event",
+        "Textblock",
+        "Visual-presentation",
+        "White"
+      ]
+    },
+    {
+      "id": "pair-0186",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Subject is questioned on how stressed they feel",
+      "hed": "Sensory-event, (Visual-presentation, Computer-screen), (Textblock, Black, Foreground-view), (Background-view, White), (Query, (Agent-emotional-state/Stressed))",
+      "expected": [
+        "Background-view",
+        "Black",
+        "Computer-screen",
+        "Foreground-view",
+        "Query",
+        "Sensory-event",
+        "Stressed",
+        "Textblock",
+        "Visual-presentation",
+        "White"
+      ]
+    },
+    {
+      "id": "pair-0187",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Subject is questioned on whether errors made in the task affected their behaviour on the next trials",
+      "hed": "Sensory-event, (Visual-presentation, Computer-screen), (Textblock, Black, Foreground-view), (Background-view, White),  (Query, Label/How-errors-affect-performance-next-trials-3)",
+      "expected": [
+        "Background-view",
+        "Black",
+        "Computer-screen",
+        "Foreground-view",
+        "Query",
+        "Sensory-event",
+        "Textblock",
+        "Visual-presentation",
+        "White"
+      ]
+    },
+    {
+      "id": "pair-0188",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Subject is questioned on whether errors made in the task affected their behaviour on the next trials",
+      "hed": "Sensory-event, (Visual-presentation, Computer-screen), (Textblock, Black, Foreground-view), (Background-view, White), (Query,  Label/How-errors-affect-performance-next-trials-2)",
+      "expected": [
+        "Background-view",
+        "Black",
+        "Computer-screen",
+        "Foreground-view",
+        "Query",
+        "Sensory-event",
+        "Textblock",
+        "Visual-presentation",
+        "White"
+      ]
+    },
+    {
+      "id": "pair-0189",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Subject is questioned on whether errors made in the task affected their behaviour on the next trials",
+      "hed": "Sensory-event, (Visual-presentation, Computer-screen), (Textblock, Black, Foreground-view), (Background-view, White), (Query, Label/How-errors-affect-performance-next-trials-1)",
+      "expected": [
+        "Background-view",
+        "Black",
+        "Computer-screen",
+        "Foreground-view",
+        "Query",
+        "Sensory-event",
+        "Textblock",
+        "Visual-presentation",
+        "White"
+      ]
+    },
+    {
+      "id": "pair-0190",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Subject presses a button to indicate ok",
+      "hed": "Agent-action, (((Human-agent, Experiment-participant), Index-finger), (Press , Push-button)), Task-activity, Parameter-label/Indicate-done, Label/Button-3",
+      "expected": [
+        "Agent-action",
+        "Experiment-participant",
+        "Human-agent",
+        "Index-finger",
+        "Press",
+        "Push-button",
+        "Task-activity"
+      ]
+    },
+    {
+      "id": "pair-0191",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Subject presses button to indicate a white left pointing arrow was presented",
+      "hed": "Agent-action, (((Human-agent, Experiment-participant), Index-finger), (Press , Push-button)), Participant-response, (Intended-effect, ((Leftward, 2D-shape/Arrow), Go-signal)), Label/Button-1",
+      "expected": [
+        "Agent-action",
+        "Arrow",
+        "Experiment-participant",
+        "Go-signal",
+        "Human-agent",
+        "Index-finger",
+        "Intended-effect",
+        "Leftward",
+        "Participant-response",
+        "Press",
+        "Push-button"
+      ]
+    },
+    {
+      "id": "pair-0192",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Subject presses button to indicate a white right pointing arrow was presented",
+      "hed": "Agent-action, (((Human-agent, Experiment-participant), Index-finger), (Press , Push-button)), Participant-response, (Intended-effect, ((Rightward, 2D-shape/Arrow), Go-signal)), Label/Button-2",
+      "expected": [
+        "Agent-action",
+        "Arrow",
+        "Experiment-participant",
+        "Go-signal",
+        "Human-agent",
+        "Index-finger",
+        "Intended-effect",
+        "Participant-response",
+        "Press",
+        "Push-button",
+        "Rightward"
+      ]
+    },
+    {
+      "id": "pair-0193",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Subject presses button to move on screen slider to the left",
+      "hed": "Sensory-event, Experimental-stimulus, (Visual-presentation, Computer-screen), (2D-shape/Arrow, Leftward), Task-activity, ((Move, Input-device/Slider), Leftward), Label/Button-1",
+      "expected": [
+        "Arrow",
+        "Computer-screen",
+        "Experimental-stimulus",
+        "Input-device",
+        "Leftward",
+        "Move",
+        "Sensory-event",
+        "Task-activity",
+        "Visual-presentation"
+      ]
+    },
+    {
+      "id": "pair-0194",
+      "dataset": "datasets/fmri_soccer21s_hed",
+      "split": "test",
+      "query": "Subject presses button to move on screen slider to the right",
+      "hed": "Agent-action, (((Human-agent, Experiment-participant), Index-finger), (Press , Push-button)), Task-activity, ((Move, Input-device/Slider), Rightward), Label/Button-2",
+      "expected": [
+        "Agent-action",
+        "Experiment-participant",
+        "Human-agent",
+        "Index-finger",
+        "Input-device",
+        "Move",
+        "Press",
+        "Push-button",
+        "Rightward",
+        "Task-activity"
+      ]
+    },
+    {
+      "id": "pair-0195",
+      "dataset": "src/data/bids_data",
+      "split": "dev",
+      "query": "BCI predicts participant raised left hand",
+      "hed": "Description/BCI predicts participant raised left hand, Computed-prediction, (Computational-evidence, (Hand, (Left-side-of, Torso)))",
+      "expected": [
+        "Computational-evidence",
+        "Computed-prediction",
+        "Hand",
+        "Left-side-of",
+        "Torso"
+      ]
+    },
+    {
+      "id": "pair-0196",
+      "dataset": "src/data/bids_data",
+      "split": "dev",
+      "query": "BCI predicts participant raised right hand",
+      "hed": "Description/BCI predicts participant raised right hand, Computed-prediction, (Computational-evidence, (Hand, (Right-side-of, Torso)))",
+      "expected": [
+        "Computational-evidence",
+        "Computed-prediction",
+        "Hand",
+        "Right-side-of",
+        "Torso"
+      ]
+    },
+    {
+      "id": "pair-0197",
+      "dataset": "src/data/bids_data",
+      "split": "dev",
+      "query": "Bar disappears cueing the subject to make a choice about which hand to raise",
+      "hed": "Description/Onset of the go signal which is the disappearance of the cue bar, Sensory-event, (Visual-presentation, Experimental-stimulus, Instructional, Rectangle)",
+      "expected": [
+        "Experimental-stimulus",
+        "Instructional",
+        "Rectangle",
+        "Sensory-event",
+        "Visual-presentation"
+      ]
+    },
+    {
+      "id": "pair-0198",
+      "dataset": "src/data/bids_data",
+      "split": "dev",
+      "query": "Computational prediction arrived on time",
+      "hed": "Description/Computational prediction arrived on time, (Software-agent, Predict)",
+      "expected": [
+        "Predict",
+        "Software-agent"
+      ]
+    },
+    {
+      "id": "pair-0199",
+      "dataset": "src/data/bids_data",
+      "split": "dev",
+      "query": "Computational prediction was late so random prediction was used.",
+      "hed": "Description/Computational prediction was late so random prediction was used., Time-out, (Random, Predict)",
+      "expected": [
+        "Predict",
+        "Random",
+        "Time-out"
+      ]
+    },
+    {
+      "id": "pair-0200",
+      "dataset": "src/data/bids_data",
+      "split": "dev",
+      "query": "Subject presses both buttons causing cue bar to start count-down display",
+      "hed": "Description/Subject presses both buttons causing cue bar to start count-down display, (Sensory-event, Visual-presentation, Cue, ((Rectangle, (Position, (Center-of, Computer-screen)), (Size, Decreasing)))), (Agent-action, Experiment-participant, (Press, Hold-down, (Mouse-button, (Left-side-of, Computer-mouse))), (Press, Hold-down, (Mouse-button, (Right-side-of, Computer-mouse))))",
+      "expected": [
+        "Agent-action",
+        "Center-of",
+        "Computer-mouse",
+        "Computer-screen",
+        "Cue",
+        "Decreasing",
+        "Experiment-participant",
+        "Hold-down",
+        "Left-side-of",
+        "Mouse-button",
+        "Position",
+        "Press",
+        "Rectangle",
+        "Right-side-of",
+        "Sensory-event",
+        "Size",
+        "Visual-presentation"
+      ]
+    },
+    {
+      "id": "pair-0201",
+      "dataset": "src/data/bids_data",
+      "split": "dev",
+      "query": "Subject raised left hand and computer presented image of left hand.",
+      "hed": "Description/Computer presented image of left hand thereby matching a previously raised left hand, (Sensory-event, Visual-presentation, (Drawing, ID/left_hand.png, (Hand, (Left-side-of, Torso))), (Feedback, (Intended-effect, Penalty)))",
+      "expected": [
+        "Drawing",
+        "Feedback",
+        "Hand",
+        "Intended-effect",
+        "Left-side-of",
+        "Penalty",
+        "Sensory-event",
+        "Torso",
+        "Visual-presentation"
+      ]
+    },
+    {
+      "id": "pair-0202",
+      "dataset": "src/data/bids_data",
+      "split": "dev",
+      "query": "Subject raised left hand and computer presented image of right hand.",
+      "hed": "Description/Computer presented image of left hand thereby not matching previously raised right hand, (Sensory-event, Visual-presentation, (Drawing, ID/right_hand.png, (Hand, (Left-side-of, Torso))), (Feedback, (Intended-effect, Reward)))",
+      "expected": [
+        "Drawing",
+        "Feedback",
+        "Hand",
+        "Intended-effect",
+        "Left-side-of",
+        "Reward",
+        "Sensory-event",
+        "Torso",
+        "Visual-presentation"
+      ]
+    },
+    {
+      "id": "pair-0203",
+      "dataset": "src/data/bids_data",
+      "split": "dev",
+      "query": "Subject raised right hand and computer presented image of left hand.",
+      "hed": "Description/Computer presented image of right hand thereby not matching a previously raised left hand, (Sensory-event, Visual-presentation, (Drawing, ID/right_hand.png, (Hand, (Right-side-of, Torso))), (Feedback, (Intended-effect, Reward)))",
+      "expected": [
+        "Drawing",
+        "Feedback",
+        "Hand",
+        "Intended-effect",
+        "Reward",
+        "Right-side-of",
+        "Sensory-event",
+        "Torso",
+        "Visual-presentation"
+      ]
+    },
+    {
+      "id": "pair-0204",
+      "dataset": "src/data/bids_data",
+      "split": "dev",
+      "query": "Subject raised right hand and computer presented image of right hand.",
+      "hed": "Description/Computer presented image of right hand thereby matching a previously raised right hand, Sensory-event, Visual-presentation, (Drawing, ID/right_hand.png, (Hand, (Right-side-of, Torso))), (Feedback, (Intended-effect, Penalty))",
+      "expected": [
+        "Drawing",
+        "Feedback",
+        "Hand",
+        "Intended-effect",
+        "Penalty",
+        "Right-side-of",
+        "Sensory-event",
+        "Torso",
+        "Visual-presentation"
+      ]
+    },
+    {
+      "id": "pair-0205",
+      "dataset": "src/data/bids_data",
+      "split": "dev",
+      "query": "Subject releases left button and raises left hand",
+      "hed": "Description/Subject raised left hand thereby releasing left button, Agent-action, Experiment-participant, (Lift, (Hand, (Left-side-of, Torso))), (Release, (Mouse-button, (Left-side-of, Computer-mouse)))",
+      "expected": [
+        "Agent-action",
+        "Computer-mouse",
+        "Experiment-participant",
+        "Hand",
+        "Left-side-of",
+        "Lift",
+        "Mouse-button",
+        "Release",
+        "Torso"
+      ]
+    },
+    {
+      "id": "pair-0206",
+      "dataset": "src/data/bids_data",
+      "split": "dev",
+      "query": "Subject releases right button and raises right hand",
+      "hed": "Description/Subject raised right hand thereby releasing right button, Agent-action, (Experiment-participant, (Lift, (Hand, (Right-side-of, Torso)))), ((Release, (Mouse-button, (Right-side-of, Computer-mouse))))",
+      "expected": [
+        "Agent-action",
+        "Computer-mouse",
+        "Experiment-participant",
+        "Hand",
+        "Lift",
+        "Mouse-button",
+        "Release",
+        "Right-side-of",
+        "Torso"
+      ]
+    }
+  ]
+}

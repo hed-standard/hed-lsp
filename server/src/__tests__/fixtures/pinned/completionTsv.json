@@ -1,0 +1,93 @@
+[
+  {
+    "label": "Visual-presentation",
+    "kind": 12,
+    "sortText": "2-visual-presentation",
+    "insertText": "Visual-presentation",
+    "detail": "Property/Sensory-property/Sensory-presentation/Visual-presentation"
+  },
+  {
+    "label": "Visual-attribute",
+    "kind": 12,
+    "sortText": "2-visual-attribute",
+    "insertText": "Visual-attribute",
+    "detail": "Property/Sensory-property/Sensory-attribute/Visual-attribute"
+  },
+  {
+    "label": "sc:Activation-of-pre-existing-epileptogenic-area",
+    "kind": 12,
+    "sortText": "2-sc:activation-of-pre-existing-epileptogenic-area",
+    "insertText": "sc:Activation-of-pre-existing-epileptogenic-area",
+    "detail": "sc:Feature-property/Modulators-property/Intermittent-photic-stimulation-effect/Activation-of-pre-existing-epileptogenic-area"
+  },
+  {
+    "label": "sc:Semiology-visual",
+    "kind": 12,
+    "sortText": "2-sc:semiology-visual",
+    "insertText": "sc:Semiology-visual",
+    "detail": "sc:Feature-property/Episode-property/Seizure-semiology/Semiology-sensory/Semiology-visual"
+  },
+  {
+    "label": "Spread-hands/Visual-pre",
+    "kind": 15,
+    "sortText": "3-spread-hands",
+    "insertText": "Spread-hands/Visual-pre",
+    "detail": "Extend Spread-hands with \"Visual-pre\""
+  },
+  {
+    "label": "Press-foot/Visual-pre",
+    "kind": 15,
+    "sortText": "3-press-foot",
+    "insertText": "Press-foot/Visual-pre",
+    "detail": "Extend Press-foot with \"Visual-pre\""
+  },
+  {
+    "label": "Press/Visual-pre",
+    "kind": 15,
+    "sortText": "3-press",
+    "insertText": "Press/Visual-pre",
+    "detail": "Extend Press with \"Visual-pre\""
+  },
+  {
+    "label": "Predict/Visual-pre",
+    "kind": 15,
+    "sortText": "3-predict",
+    "insertText": "Predict/Visual-pre",
+    "detail": "Extend Predict with \"Visual-pre\""
+  },
+  {
+    "label": "Audiovisual-clip/Visual-pre",
+    "kind": 15,
+    "sortText": "3-audiovisual-clip",
+    "insertText": "Audiovisual-clip/Visual-pre",
+    "detail": "Extend Audiovisual-clip with \"Visual-pre\""
+  },
+  {
+    "label": "Visualization/Visual-pre",
+    "kind": 15,
+    "sortText": "3-visualization",
+    "insertText": "Visualization/Visual-pre",
+    "detail": "Extend Visualization with \"Visual-pre\""
+  },
+  {
+    "label": "Outline-visualization/Visual-pre",
+    "kind": 15,
+    "sortText": "3-outline-visualization",
+    "insertText": "Outline-visualization/Visual-pre",
+    "detail": "Extend Outline-visualization with \"Visual-pre\""
+  },
+  {
+    "label": "Point-light-visualization/Visual-pre",
+    "kind": 15,
+    "sortText": "3-point-light-visualization",
+    "insertText": "Point-light-visualization/Visual-pre",
+    "detail": "Extend Point-light-visualization with \"Visual-pre\""
+  },
+  {
+    "label": "Stick-figure-visualization/Visual-pre",
+    "kind": 15,
+    "sortText": "3-stick-figure-visualization",
+    "insertText": "Stick-figure-visualization/Visual-pre",
+    "detail": "Extend Stick-figure-visualization with \"Visual-pre\""
+  }
+]

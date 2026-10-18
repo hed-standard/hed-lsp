@@ -1,0 +1,18 @@
+[
+  {
+    "severity": 1,
+    "code": "TAG_INVALID",
+    "message": "ERROR: [TAG_INVALID] Invalid tag - \"Not-a-real-tag-xyz\". Tag extensions must have a parent in the HED schema.  (For more information on this HED error, see https://hed-specification.readthedocs.io/en/latest/Appendix_B.html#tag-invalid.)",
+    "range": {
+      "start": {
+        "line": 3,
+        "character": 31
+      },
+      "end": {
+        "line": 3,
+        "character": 49
+      }
+    },
+    "source": "hed"
+  }
+]

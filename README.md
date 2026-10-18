@@ -144,10 +144,24 @@ hed-suggest --semantic "participant action"
 | Option | Description |
 |--------|-------------|
 | `-j, --json` | Output results as JSON |
-| `-s, --schema VER` | Use specific schema version (default: 8.4.0) |
+| `-s, --schema VER` | Use specific schema version (default: 8.5.0) |
 | `-n, --top N` | Return top N suggestions (default: 10) |
 | `--semantic` | Use semantic search with embeddings |
 | `-h, --help` | Show help message |
+
+## HTTP Daemon
+
+The same engine is available over HTTP, for editors, web pages, and services that cannot run a language server.
+`GET /v1/health`, `GET /v1/schemas`, `POST /v1/validate`, and `POST /v1/suggest` return JSON, with public limits and no API keys.
+
+```bash
+cd server
+bun run compile
+node out/daemon/main.js   # listens on 127.0.0.1:38530
+```
+
+A container image is built by CI for `linux/amd64`.
+See [docs/daemon.md](docs/daemon.md) for the API reference, the limits, what is logged, and how to run the image.
 
 ## Development
 
@@ -178,12 +192,13 @@ hed-lsp/
 │       └── extension.ts
 ├── server/              # LSP server implementation
 │   └── src/
+│       ├── engine/          # Pure engine (no LSP imports): validation, suggestions, schema, embeddings
 │       ├── server.ts        # LSP connection and handlers
 │       ├── cli.ts           # hed-suggest CLI tool
-│       ├── validation.ts    # HED validation
+│       ├── daemon/          # HTTP daemon: v1 API, limits, load harness
+│       ├── diagnostics.ts   # Validation to editor diagnostics
 │       ├── completion.ts    # Autocomplete provider
 │       ├── hover.ts         # Hover documentation
-│       ├── embeddings.ts    # Semantic search
 │       └── definitionProvider.ts
 ├── docs/                # Architecture documentation
 └── .github/             # CI/CD workflows

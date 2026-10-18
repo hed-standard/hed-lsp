@@ -26,6 +26,17 @@ tsconfig.json
 server/out/*.js
 !server/out/server.js
 server/out/__tests__/**
+server/out/eval/**
+server/out/engine/**
+# The HTTP daemon and its container image are not part of the extension
+server/out/daemon/**
+Dockerfile
+.dockerignore
+# The hedtools deploy files run on the host, not in the extension
+deploy/**
+server/eval/**
+# transformers.js writes model downloads here when no cache directory is set; never ship them
+server/node_modules/@huggingface/transformers/.cache/**
 client/out/*.js
 !client/out/extension.js
 

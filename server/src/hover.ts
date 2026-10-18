@@ -6,7 +6,7 @@
 import { type Hover, type MarkupContent, MarkupKind, type Position } from 'vscode-languageserver';
 import type { TextDocument } from 'vscode-languageserver-textdocument';
 import { getContentOffset, getHedRegionAtPosition, getTagAtOffset, parseJsonForHedStrings } from './documentParser.js';
-import { schemaManager } from './schemaManager.js';
+import { schemaManager } from './engine/schemaManager.js';
 import { getTsvHedRegionAtPosition, isTsvDocument, parseTsvForHedStrings } from './tsvParser.js';
 import type { HedRegion } from './types.js';
 
