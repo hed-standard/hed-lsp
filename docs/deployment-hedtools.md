@@ -258,7 +258,7 @@ The harness container also starts with `--init`, so that it passes Ctrl-C and `d
 The emergency stop, from another terminal, is `docker kill hed-lsp-load`, which ends the harness at once; the probe sees the harness end and `measure.sh` stops it.
 Only `kill -9` of `measure.sh` cannot be caught: then the harness ends at the duration of its step, and the probe and the sampler end by themselves 5 minutes after the step would have ended.
 
-Rehearse the stop before the first real run: start `measure.sh --rehearsal 30 s0-c4`, press Ctrl-C after a few seconds, and check that nothing is left with `docker ps --filter name=hed-lsp-load` and `pgrep -fl neighbor-probe`, which must print nothing.
+Rehearse the stop before the first real run: start `measure.sh --rehearsal 30 s0-c4`, press Ctrl-C after a few seconds, and check that nothing is left with `docker ps -aq --filter name=hed-lsp-load` and `pgrep -fl neighbor-probe`, which must print nothing. (`docker ps` without `-q` always prints a header line, so it cannot show "nothing".)
 
 Copy the results to a machine with Bun and judge them:
 
