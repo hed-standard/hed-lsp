@@ -390,8 +390,13 @@ jobs:
           deploy/hedtools/deploy.sh --memory 6m "$IMAGE_ID" > "$RUNNER_TEMP/failed-deploy.txt" 2>&1 || status=$?
           cat "$RUNNER_TEMP/failed-deploy.txt"
           if [ "$status" != 1 ]; then echo "the failed deploy ended with status $status, not 1"; exit 1; fi
-          grep -F 'crash loop' "$RUNNER_TEMP/failed-deploy.txt"
+          # A 6 MB limit fails either in docker run (the container is killed before Docker sets up its network) or in a
+          # crash loop that the poll finds. Both exit 1 with the rollback command, and that command may not repeat the limit.
+          grep -E -q 'crash loop|docker run failed' "$RUNNER_TEMP/failed-deploy.txt" || { echo "the failed deploy names no failure"; exit 1; }
           grep -F 'deploy.sh --rollback' "$RUNNER_TEMP/failed-deploy.txt"
+          if grep -F 'Roll back to the last good image with:' "$RUNNER_TEMP/failed-deploy.txt" | grep -q -- '--memory'; then
+            echo "the rollback command repeats the memory limit of the failed deploy"; exit 1
+          fi
           # The healthy container was recorded before it was replaced, so the record is the second image.
           if [ "$(tr -d '[:space:]' < "$HED_LSP_STATE_DIR/previous-image-id")" != "$OTHER_IMAGE_ID" ]; then echo "the record is not the second image"; exit 1; fi
           deploy/hedtools/deploy.sh --rollback
