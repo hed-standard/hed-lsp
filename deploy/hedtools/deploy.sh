@@ -338,8 +338,14 @@ if docker container inspect "$NAME" >/dev/null 2>&1; then
 		echo "The running container is not healthy (${OLD_STATE#* }), so the rollback record and the tag are left as they are"
 	fi
 	echo "Stopping $NAME (it drains for up to 8 s)"
-	docker stop "$NAME" >/dev/null
-	docker rm "$NAME" >/dev/null
+	# A container in a restart loop may not answer a stop ("did not receive an exit event"), and it has nothing to
+	# drain. It is removed by force then, because replacing it is what a rollback is for.
+	if docker stop "$NAME" >/dev/null 2>&1; then
+		docker rm "$NAME" >/dev/null
+	else
+		echo "docker stop did not stop $NAME, so it is removed by force"
+		docker rm --force "$NAME" >/dev/null
+	fi
 fi
 
 echo "Starting $NAME"
