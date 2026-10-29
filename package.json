@@ -136,9 +136,9 @@
 		"spellcheck": "cspell \"**/*.{ts,md}\""
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.5.15",
+		"@biomejs/biome": "^2.6.3",
 		"@types/node": "^26.6.5",
-		"cspell": "^10.3.6",
+		"cspell": "^10.4.0",
 		"esbuild": "^0.28.2",
 		"typescript": "^7.0.2"
 	},
